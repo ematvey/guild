@@ -97,6 +97,160 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Code mode groups tools into namespaces (2026-11-05).** The `codemode`
+  section listed every script-callable tool flat under one token budget,
+  so the tail of the list dropped out silently and generic names (`send`,
+  `list`, `close`) carried no context. Tools are now grouped: Guild's
+  built-ins (`subagents`, `conversations`, `routines`, `skills`,
+  `chat_history`, `files`), one namespace per Integration (its slug, with
+  its description and guide hint), and one per user MCP server. The section
+  lists every namespace before completing any, and scripts find the rest
+  with `describeNamespace()` and `searchTools(q, { namespace })`. Calls
+  stay flat (`tools.<name>`): pi-codemode namespaces group tools for
+  discovery only. pi groups by name prefix and fixes namespaces at
+  install, so `harness/codemode-namespaces.ts` pins each member by its full
+  name and resolves the groups per conversation for each render and call;
+  no tool was renamed. Nested `tools.<ns>.<tool>` objects would need an
+  upstream pi-codemode change.
+
+- **A chat counts as read only while its window has focus (2026-11-05).**
+  Phone pushes went missing for answers and routine deliveries. The
+  device side was fine: a probe signed with the server's VAPID pair got
+  201 from Apple and showed on the iPhone, and the turn-end hook fires
+  in worker mode for plain turns and routine runs alike. The cause was
+  the read check: a finished turn pushes only if the owner's read marker
+  has not passed it after a 4 s grace, and a client marked the open chat
+  read whenever `document.visibilityState` was `visible` — true for any
+  desktop window that is not minimized, a tab on another monitor, an app
+  left open on the digest feed overnight. That client "read" every answer
+  and the push was dropped. The read gate is now visible **and**
+  `document.hasFocus()`, and a window regaining focus (or becoming
+  visible) re-reads the open chat, so its dot clears when the member comes
+  back. Reproduced on dev with an untouched open browser on a QA chat
+  (`read == endSeq`, no send); regression test in
+  `use-member-socket.test.tsx`.
+- **Generated UI: the full component set, images, and an org remote-image
+  policy (2026-11-05).** The library grew from 28 to 55 components to
+  cover OpenUI's reference set: Accordion, Modal, Carousel, Steps,
+  EntityList, CodeBlock, Image, ImageGallery, FollowUps, Scatter/Radar/
+  Radial/StackedBar charts, a horizontal BarChart, and the inputs
+  RadioGroup, CheckBoxGroup, Switch, Slider, DatePicker, OptionCards,
+  Chips and EditableTable. `$variables` and the built-in functions are on;
+  Query/Mutation stay off. The prompt section is now about 18.5k
+  characters (~4.5k tokens), static and cached. Left out as duplicates of
+  what exists: the vendor's composite card blocks, InlineHeader, Label,
+  IconButton, MarkDownRenderer. Images: attachments (`attachment:<id>`,
+  from `send_file`) and inline `data:image` always load; remote http(s)
+  images follow a new org setting, `remote_images` (`auto` default,
+  `click`, `never`), set on a new admin Settings → Security page and pushed
+  on `workspace_identity`. Chat Markdown images follow the same policy
+  (they used to be link placeholders only). A remote image is a request
+  whose URL its host sees, so injected content can exfiltrate through it;
+  `auto` is the product owner's choice, `click`/`never` are there for orgs
+  that want the stricter trade-off.
+- **Generated UI blocks take one answer (2026-11-05).** A form or a set of
+  choice buttons stayed live after it was used, so it could be submitted
+  again and again. A block is now a dialog: the first user message after
+  its message (a click on one of its buttons, or anything typed) settles
+  its buttons and fields, and the button whose message matches the answer
+  stays marked. Derived from the transcript (`answersAfter` over the
+  render blocks), so it needs no stored state and holds on reload and on
+  every device; a click also settles the block locally at once, before
+  the echo arrives. Tabs and `@OpenUrl` buttons stay usable. The prompt
+  tells the agent to send a new block to ask again.
+- **Generated UI: agents write OpenUI Lang blocks the client renders as
+  components (2026-11-05).** Answers with several numbers, comparisons,
+  trends or a need for structured input read badly as Markdown. An agent
+  can now put an `openui` fenced block in a reply: a program in OpenUI
+  Lang (Thesys, MIT, `@openuidev/lang-core` and `react-lang` 1.1.0, pinned)
+  over Guild's own component library, `packages/genui`. That package holds
+  the component schemas and the prompt section; the server teaches it in a
+  static `<generated_ui>` block of the agent's instructions (about 2.5k
+  tokens; no Tool calls, no `$` bindings, no builtin functions, to keep it
+  small), and the desktop maps each component to a React renderer on the
+  app kit (`views/genui`). The block rides the message text, so it streams,
+  persists and syncs like any message: no new frame or event. A per-agent
+  switch, `agents.generative_ui` (migration 0115), on by default and off
+  for spawned threads, whose replies go to an agent. Kept out of the
+  vendor's stack: the hosted gateway and Autofix (Org traffic stays on the
+  Org gateway), `AgentInterface`/`fetchLLM` (the thread stays on the member
+  socket), `Query`/`Mutation` (no `toolProvider`, so a block never runs a
+  Tool past Approvals), and the dev-mode inspector that loads from a CDN
+  (`lib/openui-devtools-off.ts`). `@ToAssistant` sends through the
+  composer's send path with explicit text (queued while busy, the draft
+  untouched) and appends the submitted form's values; `@OpenUrl` takes only
+  http(s)/mailto. lang-core's postinstall reports installs to its vendor;
+  npm 11 blocks it by default and the image sets
+  `OPENUI_TELEMETRY_DISABLED`.
+- **Test connection tests the form, not only what is stored
+  (2026-11-05).** An admin pasted a Stripe key and pressed Test
+  connection before saving; the test ran against the stored row, which
+  had no key, and Stripe answered 401. `POST /admin/integrations/:id/test`
+  now takes the form's unsaved `{ config, secrets }` and lays them over
+  the stored row in memory, writing nothing; the configuration page sends
+  them while the form is dirty. An MCP test names missing required secrets
+  by label before calling out. Enabling an MCP plugin required every
+  secret field, including optional ones (Stripe's connected account); it
+  now requires only the required fields.
+- **MCP plugins: the SDK wraps a remote MCP server, built in or published;
+  Stripe is a built-in (2026-11-05).** Adding a known vendor MCP server
+  (Stripe) meant every admin typing its URL, header shape and key format
+  into Add MCP server. `@guild/integration-sdk` now has a second plugin
+  shape, `mcpIntegration({...})`: metadata, settings fields, `mcp: { url,
+  headers, envelope }`, optional `tool_classes`, and no code or tool list.
+  The same module serves two ways. Built in: listed in
+  `integrations/index.ts` like any built-in; the loader validates it at
+  startup as a registry manifest (header templates must name secret
+  fields) and `approvedManifest` returns it first, so every MCP path (stub
+  create seeding `config.mcp`, live discovery, curation, test connection)
+  serves it with no publishing. Its slug is reserved against registry
+  items, uploads, catalogs and org MCP servers. Published:
+  `guild-plugin pack` writes a code-free bundle (manifest, README, logo)
+  that installs as an MCP item, and the shop now reads such an item's logo
+  and readme from its bundle. A same-day `catalog/` folder of
+  manifest.json stubs in this repo was dropped for this. Discovered tools
+  arrive disabled. That exposed a class hole: an MCP tool with no curated
+  class and no manifest declaration ran as `read`, so `stripe_api_write`
+  would have passed a read-only ceiling. The fallback is now the
+  suggestion the create form already used (server
+  `readOnlyHint`/`destructiveHint`, then a read verb in the name, else
+  `write`), at turn time and in the tools listing. Header templates carry
+  literal text (`Bearer {stripe_key}`) so the admin pastes only the key;
+  an optional secret makes an optional header (`Stripe-Account`). A
+  built-in's `config.mcp` is copied into the row at create, so a later
+  release that changes the server URL or headers does not reach existing
+  rows. Known gap.
+
+- **Integration access: audiences and explicit Agent Integration lists
+  (2026-11-04).** An enabled Integration used to reach every Member, gated
+  only by role × class (`member` read, `admin` all) and each Agent's
+  allowlist, where `tools_mode = all` picked up every Integration. Nine of
+  ten built-ins call their vendor with one shared token, so that gate was
+  the only boundary, and it could not keep HubSpot (revenue, deals) to
+  Sales. Now an Integration has an audience (`org` with a ceiling, `team`
+  grants with ceilings, or `admins`; new ones start at `admins`), and an
+  Agent lists its Integrations explicitly, each with a class ceiling. The
+  Agent's list supersedes the caller: whoever can use the Agent reaches what
+  it lists. The audience is checked when someone adds or raises an entry.
+  Where an Agent's audience is wider than an Integration's, the Agent and
+  the Integration's new Access tab warn, naming who gains what; nothing
+  composes the two at call time. `all` covers built-in and Trait tools
+  only. The per-role `tool_policy` is gone. The script API uses the
+  caller's own audience ceiling. Migration 0114 keeps today's reach:
+  existing Integrations become `org` at the class members had, `all`
+  Agents list every enabled Integration, `selected` Agents list the
+  Integrations whose tools they selected; shared Agents take the member
+  ceiling, so an admin using a shared Agent may lose a write tool until
+  someone raises its entry. Live state: `agent_list` carries
+  `integrations` and `integration_warnings`, and a new `integration_access`
+  frame carries what each Member may attach (`guild_agents` notify on the
+  new tables). Google Workspace no longer falls back to the admin email
+  when a call has no Member identity: it refuses. Known gap: a shared
+  Agent's Workspace carries what one caller fetched to the next. Spec:
+  `docs/specs/2026-11-04-integration-access.md`; phases 2 (several
+  connections per vendor) and 3 (member identity by impersonation or
+  vendor permission checks) are open.
+
 - **Reading an agent never creates a thread (2026-11-04).** Listing an
   agent's threads created the reader's Main thread, so an admin who opened
   another Member's agent got an empty "Main thread" that stayed in their

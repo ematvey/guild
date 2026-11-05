@@ -5,6 +5,9 @@
 // so platform/ never imports the services it wires. `start()` is the one
 // bootstrap: every migration, the boot repairs, then the runtime.
 
+import { IntegrationAccessStore } from "./platform/store/integration-access.js";
+import type { IntegrationDisplay } from "./platform/domain/integration-access.js";
+import { integrationShop } from "./integrations/admin.js";
 import type { Config } from "./config.js";
 import { createPlatformPool, type PlatformPool } from "./platform/db.js";
 import { applyPlatformMigrations } from "./platform/migrations.js";
@@ -259,6 +262,18 @@ export class PlatformContext implements PlatformStores {
         identity: this.identity,
         skills: this.skills,
         trace: this.trace,
+        integrationAccess: new IntegrationAccessStore(this.pool),
+        integrationDisplay: async (orgId) => {
+          const shown = new Map<string, IntegrationDisplay>();
+          for (const item of await integrationShop(this, orgId)) {
+            if (item["configured"] !== true) continue;
+            shown.set(item["name"] as string, {
+              title: item["title"] as string,
+              summary: item["summary"] as string,
+            });
+          }
+          return shown;
+        },
       },
       log,
     );

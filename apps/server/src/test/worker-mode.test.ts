@@ -598,7 +598,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     const vendorBase = `http://127.0.0.1:${(vendor.address() as AddressInfo).port}`;
 
     await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'slack', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+      "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
       [
         stack.orgId,
         JSON.stringify({
@@ -612,6 +612,21 @@ describe("worker-per-chat (fork supervisor)", () => {
       "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
       [stack.orgId, encryptSecret(master, "xoxb-test")],
     );
+
+    // The chat runs on the member's personal Agent, which reaches Slack
+    // only once it lists it.
+    const memberAuth = auth(stack.memberToken);
+    const agents = await stack.env.app.inject({ method: "GET", url: "/api/v1/agents", headers: memberAuth });
+    const personal = (JSON.parse(agents.body) as { agents: { id: string; is_personal: boolean }[] }).agents.find(
+      (agent) => agent.is_personal,
+    )!;
+    const listed = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/agents/${personal.id}`,
+      headers: memberAuth,
+      payload: { integrations: [{ slug: "slack", ceiling: "read" }] },
+    });
+    expect(listed.statusCode).toBe(200);
 
     const chatId = await createChat("worker kill mid integration call");
     stack.mock.setResponses([

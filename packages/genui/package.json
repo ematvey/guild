@@ -1,0 +1,14 @@
+{
+  "name": "@guild/genui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Generated UI: the OpenUI Lang component library agents write in a reply. Component schemas and the prompt section, shared by the server (prompt) and the desktop (renderers).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@openuidev/lang-core": "1.1.0",
+    "zod": "^4.1.12"
+  }
+}

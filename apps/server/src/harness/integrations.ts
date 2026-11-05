@@ -10,7 +10,7 @@
 // process-global and extensions are static code, so the per-conversation extension
 // is (re)installed at each turn start (registry.install replaces in place)
 // and each conversation is configured with an exact extension selection +
-// role-filtered tool allow-list (`pi.agent`). The tool calls ride the
+// scope-filtered tool allow-list (`pi.agent`). The tool calls ride the
 // existing durable turn stream untouched.
 
 import type { ChatStore } from "../platform/store/chats.js";
@@ -25,6 +25,7 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
+import type { ToolGroup } from "./codemode-namespaces.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
@@ -41,7 +42,8 @@ import {
   type IntegrationToolInfo,
   type IntegrationTurn,
 } from "../integrations/plugins.js";
-import { toolAllowed, toolCurate } from "../integrations/policy.js";
+import { scopeCeiling, toolCurate, toolOffered, TRAITS_ONLY, type IntegrationScope } from "../integrations/policy.js";
+import { IntegrationAccessStore } from "../platform/store/integration-access.js";
 
 /** The coding tools every chat carries (pi-durable CodingTools); the
  *  per-conversation tool allow-list must name them explicitly. */
@@ -58,6 +60,12 @@ interface TurnSnapshot {
   chatId: string;
   turns: IntegrationTurn[];
   caller: IntegrationCaller | null;
+  scope: IntegrationScope;
+}
+
+/** Whether a snapshot's Turn may call one tool. */
+function offered(snapshot: TurnSnapshot, turn: IntegrationTurn, info: IntegrationToolInfo): boolean {
+  return toolOffered(turn, info, scopeCeiling(snapshot.scope, turn.slug, info), snapshot.caller?.role ?? "member");
 }
 
 /** The narrow gateway slice the runtime needs (structurally the
@@ -76,6 +84,22 @@ export interface IntegrationsRuntimeDeps {
   chats: Pick<ChatStore, "orgOf" | "ownerOf">;
   log: Logger;
   chatOfConversation(conversationId: number): Promise<string | null>;
+  /** The reach of a chat's Agent; defaults to the agent row read. */
+  scopeOf?(chatId: string): Promise<IntegrationScope>;
+}
+
+/** The reach of the Agent a chat belongs to: its Trait allowlist and its
+ *  Integration entries. A chat with no Agent reaches Trait tools only. */
+export async function integrationScopeForChat(
+  access: Pick<IntegrationAccessStore, "chatAgentReach">,
+  chatId: string,
+): Promise<IntegrationScope> {
+  const reach = await access.chatAgentReach(chatId);
+  if (reach === null) return TRAITS_ONLY;
+  return {
+    traits: reach.tools_mode === "all" ? "all" : new Set(reach.tools),
+    integrations: new Map(reach.entries.map((entry) => [entry.slug, entry.ceiling])),
+  };
 }
 
 /** The system-prompt index line for one enabled integration (spec §7.1). */
@@ -159,10 +183,14 @@ export class IntegrationsRuntime {
    *  cheap gate-classifier short-circuit for coding tools. */
   private readonly knownToolNames = new Set<string>();
 
+  private readonly access: IntegrationAccessStore;
+
   constructor(
     private readonly deps: IntegrationsRuntimeDeps,
     private readonly registry: Registry<ToolRegistration>,
-  ) {}
+  ) {
+    this.access = new IntegrationAccessStore(deps.pool);
+  }
 
   extensionName(orgId: string, conversationId?: number): string {
     return `guild-integrations:${orgId}${conversationId === undefined ? "" : `:${conversationId}`}`;
@@ -183,46 +211,38 @@ export class IntegrationsRuntime {
 
   /** Resolve the desired tool surface before admission or resume. Empty
    * selections clear persisted tools; transient resolution failures propagate.
-   * `allowedToolNames` narrows the surface for agent chats: an integration
-   * with no selected tool disappears entirely, and an integration's
-   * discovery list only shows the tools the agent may call. */
-  async prepareTurn(
-    conversationId: number,
-    chatId: string,
-    orgId: string,
-    allowedToolNames?: ReadonlySet<string>,
-  ): Promise<TurnPreparation> {
-    let turns: IntegrationTurn[] = [];
+   * The chat's Agent decides the reach: an Integration outside it, or with no
+   * offered tool, disappears entirely, and an Integration's discovery list
+   * shows only the tools the Turn may call. */
+  async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
+    let resolved: IntegrationTurn[] = [];
     try {
-      turns = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
+      resolved = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
     } catch (error) {
       this.warn(`integrations resolve failed: ${(error as Error).message}`);
       throw error;
     }
-    if (allowedToolNames !== undefined) {
-      turns = turns
-        .map((turn) => ({
-          ...turn,
-          tools: turn.tools.filter((info) => allowedToolNames.has(info.spec.name)),
-        }))
-        .filter((turn) => turn.tools.length > 0);
-    }
-    const caller = await this.chatCaller(chatId);
-    this.snapshots.set(conversationId, { orgId, chatId, turns, caller });
+    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
+    const draft: TurnSnapshot = { orgId, chatId, turns: [], caller, scope };
+    const turns = resolved
+      .map((turn) => ({ ...turn, tools: turn.tools.filter((info) => offered(draft, turn, info)) }))
+      .filter((turn) => turn.tools.length > 0);
+    this.snapshots.set(conversationId, { ...draft, turns });
     if (turns.length === 0) {
       // Empty desired state must clear persisted choices, also after restart.
       return { extensions: [], tools: [] };
     }
     const extension = this.installOrgExtension(orgId, turns, conversationId);
     const tools: ToolRegistration[] = [];
-    const role = caller?.role ?? "member";
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
-      for (const info of turn.tools) {
-        if (toolAllowed(turn, info, role)) tools.push(this.integrationTool(info));
-      }
+      for (const info of turn.tools) tools.push(this.integrationTool(info));
     }
     return { extensions: [extension], tools };
+  }
+
+  private scopeOf(chatId: string): Promise<IntegrationScope> {
+    return this.deps.scopeOf?.(chatId) ?? integrationScopeForChat(this.access, chatId);
   }
 
   /** Resolve the chat owner's current role and acting identity. */
@@ -315,7 +335,7 @@ export class IntegrationsRuntime {
     return registration;
   }
 
-  /** `{slug}_list_tools`: the role-filtered tool specs as compact JSON. */
+  /** `{slug}_list_tools`: the tool specs the Turn may call, as compact JSON. */
   private listToolsTool(turn: IntegrationTurn): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(
       {
@@ -329,9 +349,8 @@ export class IntegrationsRuntime {
         if (snapshotTurn === undefined) {
           return { content: `integration ${turn.slug} is not enabled for this conversation`, isError: true };
         }
-        const role = snapshot?.caller?.role ?? "member";
         const specs = snapshotTurn.tools
-          .filter((info) => toolAllowed(snapshotTurn, info, role))
+          .filter((info) => offered(snapshot!, snapshotTurn, info))
           .map((info) => ({
             name: info.spec.name,
             description: info.spec.description,
@@ -363,6 +382,22 @@ export class IntegrationsRuntime {
     );
   }
 
+  /** The conversation's codemode namespaces: one per enabled integration,
+   *  holding its discovery tools and the tools the Turn may call. */
+  async toolGroups(conversationId: number): Promise<ToolGroup[]> {
+    const snapshot = await this.snapshotFor(conversationId);
+    if (snapshot === undefined) return [];
+    return snapshot.turns.map((turn) => {
+      const [listTools, guide] = autoToolNames(turn);
+      return {
+        name: turn.slug,
+        description: turn.description,
+        ...(turn.executor === "mcp" ? { instructions: `Usage guide: \`await tools.${guide}()\`.` } : {}),
+        tools: [listTools, guide, ...turn.tools.map((info) => info.spec.name)],
+      };
+    });
+  }
+
   private integrationTool(info: IntegrationToolInfo): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(info.spec, async (args, callId, conversationId, signal) => {
       return this.executeToolCall(conversationId, callId, info.spec.name, args, signal);
@@ -391,8 +426,8 @@ export class IntegrationsRuntime {
     } catch {
       turns = [];
     }
-    const caller = await this.chatCaller(chatId);
-    const snapshot: TurnSnapshot = { orgId, chatId, turns, caller };
+    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
+    const snapshot: TurnSnapshot = { orgId, chatId, turns, caller, scope };
     this.snapshots.set(conversationId, snapshot);
     if (turns.length > 0) this.installOrgExtension(orgId, turns, conversationId);
     return snapshot;
@@ -403,7 +438,8 @@ export class IntegrationsRuntime {
     const declared = await this.snapshotFor(conversationId);
     if (!declared) return undefined;
     const turns = await resolveIntegrations(this.deps.gateway, declared.orgId, (message) => this.warn(message));
-    return { ...declared, turns, caller: await this.chatCaller(declared.chatId) };
+    const [caller, scope] = await Promise.all([this.chatCaller(declared.chatId), this.scopeOf(declared.chatId)]);
+    return { ...declared, turns, caller, scope };
   }
 
   /** The approval-gate classification of one call: Guild-provided
@@ -455,8 +491,7 @@ export class IntegrationsRuntime {
       return { content: `unknown server tool ${callName}`, isError: true };
     }
     const { turn, info } = target;
-    const role = snapshot.caller?.role ?? "member";
-    if (!toolAllowed(turn, info, role)) {
+    if (!offered(snapshot, turn, info)) {
       return { content: "not permitted by integration policy", isError: true };
     }
     const raw = info.raw;
@@ -569,4 +604,3 @@ export class IntegrationsRuntime {
 }
 
 export { parseAutoTool, integrationTarget };
-

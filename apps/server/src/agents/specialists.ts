@@ -4,6 +4,8 @@
 
 import type { AgentStore } from "./store.js";
 import type { AgentToolRef } from "./types.js";
+import type { IntegrationAccessStore } from "../platform/store/integration-access.js";
+import type { AgentIntegrationEntry } from "../platform/domain/integration-access.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { agentWorkspaceDir, seedAgentWorkspace } from "./workspace-config.js";
 import { writeWorkspaceFile } from "./workspace-fs.js";
@@ -41,6 +43,9 @@ export interface SpecialistDefinition {
   name: string;
   description: string;
   tools: AgentToolRef[];
+  /** The Integrations the specialist works through, each with its ceiling;
+   *  an Integration the org has not installed is skipped. */
+  integrations: AgentIntegrationEntry[];
   playbook: string;
   notesIndex: string;
 }
@@ -257,15 +262,10 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "conversations_search",
       "conversation_read",
       "subagents",
-      "github_search_repositories",
-      "github_get_file",
-      "github_list_issues",
-      "github_list_pulls",
-      "github_api",
-      "gitlab_list_projects",
-      "gitlab_list_issues",
-      "gitlab_list_mrs",
-      "gitlab_api",
+    ],
+    integrations: [
+      { slug: "github", ceiling: "write" },
+      { slug: "gitlab", ceiling: "write" },
     ],
     playbook: SOURCE_PLAYBOOK,
     notesIndex: SOURCE_NOTES,
@@ -288,12 +288,10 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "conversation_read",
       "send_message",
       "subagents",
-      "langfuse_list_traces",
-      "langfuse_get_trace",
-      "langfuse_get_prompt",
-      "langfuse_api",
-      "slack_conversations_history",
-      "slack_post_message",
+    ],
+    integrations: [
+      { slug: "langfuse", ceiling: "write" },
+      { slug: "slack", ceiling: "write" },
     ],
     playbook: OPS_PLAYBOOK,
     notesIndex: OPS_NOTES,
@@ -315,12 +313,10 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
       "conversation_read",
       "send_message",
       "subagents",
-      "hubspot_search_contacts",
-      "hubspot_search_companies",
-      "hubspot_search_deals",
-      "hubspot_update_deal",
-      "hubspot_api",
-      "slack_conversations_history",
+    ],
+    integrations: [
+      { slug: "hubspot", ceiling: "write" },
+      { slug: "slack", ceiling: "read" },
     ],
     playbook: CLIENTS_PLAYBOOK,
     notesIndex: CLIENTS_NOTES,
@@ -330,6 +326,7 @@ export const SPECIALIST_PACK: SpecialistDefinition[] = [
 export interface SpecialistsDeps {
   store: AgentStore;
   workspaceRoot: string;
+  access: Pick<IntegrationAccessStore, "audiences" | "setAgentIntegrations">;
 }
 
 export interface InstallSpecialistsInput {
@@ -389,6 +386,14 @@ export async function installSpecialists(
       });
       updated.push(specialist.name);
     }
+
+    const installed = await deps.access.audiences(input.orgId);
+    await deps.access.setAgentIntegrations(
+      input.orgId,
+      agent.id,
+      specialist.integrations.filter((entry) => installed.has(entry.slug)),
+      { id: actor.id, role: actor.role, team_ids: new Set() },
+    );
 
     const dir = agentWorkspaceDir(deps.workspaceRoot, input.orgId, agent.id);
     await seedAgentWorkspace(dir);

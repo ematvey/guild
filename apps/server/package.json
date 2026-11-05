@@ -1,7 +1,7 @@
 {
   "name": "@guild/server",
   "private": true,
-  "version": "0.6.64",
+  "version": "0.6.71",
   "type": "module",
   "description": "Guild cloud server (TypeScript, on pi-durable).",
   "scripts": {
@@ -19,6 +19,7 @@
     "@earendil-works/pi-durable": "1.3.0",
     "@fastify/http-proxy": "^11.6.3",
     "@fastify/websocket": "^11.3.3",
+    "@guild/genui": "file:../../packages/genui",
     "@guild/integration-sdk": "file:../../packages/integration-sdk",
     "@guild/wire": "file:../../packages/wire",
     "@node-rs/argon2": "^2.2.1",

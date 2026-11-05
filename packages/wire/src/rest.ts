@@ -166,6 +166,9 @@ export interface Agent {
   model_alias: string | null;
   tools: string[];
   tools_mode: "selected" | "all";
+  /** Replies may carry Generated UI (`openui` blocks) the client renders
+   *  as components. */
+  generative_ui: boolean;
   visibility: AgentVisibility;
   /** The agent's sandbox budget. */
   resources: Json;
@@ -174,10 +177,46 @@ export interface Agent {
   is_personal: boolean;
   /** Teams granted use of a team-visibility agent. */
   team_ids: string[];
+  /** The Integrations the agent's Turns see, each with its class ceiling.
+   *  Integrations are never implied by `tools_mode`. */
+  integrations: AgentIntegration[];
+  /** Where the agent gives someone more of an Integration than the
+   *  Integration's audience grants them. */
+  integration_warnings: IntegrationWarning[];
   deleted_at: string | null;
   purge_after: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A tool's risk class: read < write < admin. */
+export type ToolClass = "read" | "write" | "admin";
+
+/** One entry of an agent's Integration list. */
+export interface AgentIntegration {
+  slug: string;
+  ceiling: ToolClass;
+}
+
+/** One subject the agent gives more of an Integration than the
+ *  Integration's audience grants them. */
+export interface IntegrationWarning {
+  integration: string;
+  subject: "org" | "team" | "member";
+  subject_id: string | null;
+  subject_label: string;
+  ceiling: ToolClass;
+  granted: ToolClass | null;
+}
+
+/** An Integration the member may add to an agent they manage, with the
+ *  highest class they may give. */
+export interface AttachableIntegration {
+  slug: string;
+  title: string;
+  summary: string;
+  enabled: boolean;
+  ceiling: ToolClass;
 }
 
 /** One agent run. `agent_name` and `routine_name` are joined display names. */

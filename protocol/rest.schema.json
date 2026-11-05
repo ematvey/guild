@@ -48,6 +48,10 @@
     "SubagentNode": { "$ref": "#/$defs/SubagentNode" },
     "EventRow": { "$ref": "#/$defs/EventRow" },
     "Agent": { "$ref": "#/$defs/Agent" },
+    "ToolClass": { "$ref": "#/$defs/ToolClass" },
+    "AgentIntegration": { "$ref": "#/$defs/AgentIntegration" },
+    "IntegrationWarning": { "$ref": "#/$defs/IntegrationWarning" },
+    "AttachableIntegration": { "$ref": "#/$defs/AttachableIntegration" },
     "AgentRun": { "$ref": "#/$defs/AgentRun" },
     "AgentThread": { "$ref": "#/$defs/AgentThread" },
     "AgentRoutine": { "$ref": "#/$defs/AgentRoutine" },
@@ -874,10 +878,52 @@
         "created_at": { "$ref": "#/$defs/DateTime" }
       }
     },
+    "ToolClass": {
+      "description": "A tool's risk class: read < write < admin.",
+      "type": "string",
+      "enum": ["read", "write", "admin"]
+    },
+    "AgentIntegration": {
+      "description": "One entry of an agent's Integration list.",
+      "type": "object",
+      "required": ["slug", "ceiling"],
+      "additionalProperties": false,
+      "properties": {
+        "slug": { "type": "string" },
+        "ceiling": { "$ref": "#/$defs/ToolClass" }
+      }
+    },
+    "IntegrationWarning": {
+      "description": "One subject (every member, a team or one member) the agent gives more of an Integration than the Integration's audience grants them.",
+      "type": "object",
+      "required": ["integration", "subject", "subject_id", "subject_label", "ceiling", "granted"],
+      "additionalProperties": false,
+      "properties": {
+        "integration": { "type": "string" },
+        "subject": { "type": "string", "enum": ["org", "team", "member"] },
+        "subject_id": { "type": ["string", "null"] },
+        "subject_label": { "type": "string" },
+        "ceiling": { "$ref": "#/$defs/ToolClass" },
+        "granted": { "anyOf": [{ "$ref": "#/$defs/ToolClass" }, { "type": "null" }] }
+      }
+    },
+    "AttachableIntegration": {
+      "description": "An Integration the member may add to an agent they manage, with the highest class they may give.",
+      "type": "object",
+      "required": ["slug", "title", "summary", "enabled", "ceiling"],
+      "additionalProperties": false,
+      "properties": {
+        "slug": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "ceiling": { "$ref": "#/$defs/ToolClass" }
+      }
+    },
     "Agent": {
       "description": "One persistent agent as its viewers see it: the `agent_list` frame row and the body of the agent reads and writes.",
       "type": "object",
-      "required": ["id", "org_id", "owner_user_id", "owner_label", "owner_email", "owner_avatar_url", "name", "description", "model", "model_alias", "tools", "tools_mode", "visibility", "resources", "status", "is_personal", "team_ids", "deleted_at", "purge_after", "created_at", "updated_at"],
+      "required": ["id", "org_id", "owner_user_id", "owner_label", "owner_email", "owner_avatar_url", "name", "description", "model", "model_alias", "tools", "tools_mode", "generative_ui", "visibility", "resources", "status", "is_personal", "team_ids", "integrations", "integration_warnings", "deleted_at", "purge_after", "created_at", "updated_at"],
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/Uuid" },
@@ -892,11 +938,22 @@
         "model_alias": { "type": ["string", "null"], "description": "The org's display name for the model; null falls back to the id." },
         "tools": { "type": "array", "items": { "type": "string" } },
         "tools_mode": { "type": "string", "enum": ["selected", "all"] },
+        "generative_ui": { "type": "boolean", "description": "Replies may carry Generated UI (`openui` blocks) the client renders as components." },
         "visibility": { "type": "string", "enum": ["private", "team", "org"] },
         "resources": { "$ref": "#/$defs/Json", "description": "The agent's sandbox budget." },
         "status": { "type": "string", "enum": ["active", "archived", "deleting", "deleted"] },
         "is_personal": { "type": "boolean", "description": "The user's personal agent: always private, never deleted." },
         "team_ids": { "type": "array", "items": { "type": "string" }, "description": "Teams granted use of a team-visibility agent." },
+        "integrations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AgentIntegration" },
+          "description": "The Integrations the agent's Turns see, each with its class ceiling. Integrations are never implied by `tools_mode`."
+        },
+        "integration_warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IntegrationWarning" },
+          "description": "Where the agent gives someone more of an Integration than the Integration's audience grants them."
+        },
         "deleted_at": { "type": ["string", "null"], "format": "date-time" },
         "purge_after": { "type": ["string", "null"], "format": "date-time" },
         "created_at": { "$ref": "#/$defs/DateTime" },

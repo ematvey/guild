@@ -24,7 +24,7 @@ Revoking a Member's credentials bumps their generation and revokes every session
 | Role | May |
 | --- | --- |
 | member | Use the Agents visible to them, own their Threads, Machines, Projects, API keys and MCP servers, install skills, and read their own usage and activity |
-| admin | Also manage Members, Teams, Integrations, Model routes, the registry and Org prompts; manage every non-personal Agent; read the whole Org's usage and activity, and read any Member's Thread |
+| admin | Also manage Members, Teams, Integrations and their audiences, Model routes, the registry and Org prompts; manage every non-personal Agent; read the whole Org's usage and activity, and read any Member's Thread |
 
 An admin's read of another Member's Thread is a read only. Every write to a Thread belongs to its owner. The last admin of an Org cannot be demoted or deleted.
 
@@ -74,11 +74,23 @@ Every Run starts through one path, and that path refuses before creating a Run r
 
 The Tools a Turn may call are the intersection of three things:
 
-1. **The Agent's allowlist:** all tools, or a selected list.
+1. **The Agent's reach:** its built-in allowlist (all tools, or a selected list), which also decides the Trait tools, and its explicit Integration list, each entry with a class ceiling (`read` < `write` < `admin`). `all` never covers Integrations: an Integration reaches an Agent only when someone adds it.
 2. **The Org's curation:** a built-in Integration tool is on unless an admin turned it off; an MCP tool is off until an admin turns it on.
-3. **The Member's role:** tool classes are `read` < `write` < `admin`. By default a member gets `read` and an admin gets all. An Org can narrow this per role. `admin`-class tools are admin-only, always.
+3. **`admin`-class tools are admin-only,** whatever the Agent's ceiling says.
 
-An Integration call acts as the Member's own mapped identity; overriding it is admin-only. Integration secrets and MCP headers are encrypted at rest. They are decrypted only at call time and never appear in a snapshot, a prompt or a client.
+The Agent's list supersedes the caller's own access: everyone who can use the Agent reaches what it lists. Who may use the Agent is its visibility and grants.
+
+### Integration audiences
+
+An Integration has an audience: `org` (every member, up to an Org-wide ceiling), `team` (the granted Teams, each with its ceiling) or `admins`. A new Integration starts at `admins`. Ceilings in an audience are `read` or `write`; an admin always counts as `admin`.
+
+The audience is checked when someone adds an Integration to an Agent or raises an entry's ceiling: the Member must manage the Agent and their own audience ceiling must be at least the entry's. Lowering or removing an entry needs only manage. Narrowing an audience removes no entry.
+
+Where an Agent gives someone more of an Integration than its audience grants them, the Agent and the Integration's Access tab show a warning naming who (every member, a Team, or a Member granted the Agent by name, its owner included) and what. Nothing composes the two at call time.
+
+A script calling the integration tool API has no Agent between it and the Integration, so the caller's own audience ceiling decides.
+
+An Integration call acts as the Member's own mapped identity; overriding it is admin-only. An Integration that impersonates (Google Workspace) refuses a call without a Member identity. Integration secrets and MCP headers are encrypted at rest. They are decrypted only at call time and never appear in a snapshot, a prompt or a client.
 
 ## Exec policy and Approvals
 
@@ -112,10 +124,14 @@ An admin reads the whole Org's usage, Runs, traces and conversations. A Member r
 | Admins seeing personal Agents | A personal Agent is the Member's private assistant, so admins get a 404 |
 | Linking an OIDC login to a password account by email | An email match is not proof of ownership |
 | Passing credentials to a child Run | A child acts for the same Member under its own Agent's allowlist. Nothing is handed down |
+| Composing an Agent's and its caller's Integration access at call time | Two Members would get different tools from one Agent, and the Workspace carries data across them anyway. The warning makes the mismatch visible |
+| Guild-side argument filters (repo, channel or pipeline allowlists) | Per vendor, easy to get wrong, and the raw `api` tool goes around them. The vendor token is the scope |
 | Blocking a request on the IdP recheck | An IdP outage would become a Guild outage |
 | A static allow that skips the gate for compound commands | Shell features can hide a second command, so they fall back to `prompt` |
 
 ## Known gaps
+
+- An Agent's Workspace is shared by everyone who uses it, so what one caller's Turn fetches from an Integration and writes there, a later caller can read. The Agent is the unit of access; the audience warnings are the check.
 
 - The schema still allows grant roles other than `user`; such a row grants nothing. Only team grants are written today.
 - The `deleted` Agent status exists in the type, but a purge removes the row instead.

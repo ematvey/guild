@@ -1,7 +1,7 @@
 {
   "name": "guild-desktop",
   "private": true,
-  "version": "0.6.64",
+  "version": "0.6.71",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,8 +12,10 @@
   },
   "dependencies": {
     "@grafana/faro-web-sdk": "^2.12.1",
+    "@guild/genui": "file:../../packages/genui",
     "@guild/ui": "file:../../packages/ui",
     "@guild/wire": "file:../../packages/wire",
+    "@openuidev/react-lang": "1.1.0",
     "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.4.2",

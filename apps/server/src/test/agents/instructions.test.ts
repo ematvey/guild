@@ -15,6 +15,28 @@ const FULL = {
 };
 
 describe("composeAgentInstructions", () => {
+  it("teaches Generated UI to an agent that has it on", () => {
+    const text = composeAgentInstructions({ name: "Echo", is_personal: false, generative_ui: true }, config(FULL));
+    expect(text).toContain("<generated_ui>");
+    expect(text).toContain("fenced code block tagged `openui`");
+    expect(text).toContain("Metric(label: string");
+    expect(text.indexOf("<generated_ui>")).toBeLessThan(text.indexOf("Never delete without asking."));
+  });
+
+  it("leaves Generated UI out when off, and for a spawned child", () => {
+    expect(composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL))).not.toContain(
+      "<generated_ui>",
+    );
+    const child = composeAgentInstructions(
+      { name: "Echo", is_personal: false, generative_ui: true },
+      config(FULL),
+      undefined,
+      false,
+      { parent_name: "Lead", depth: 1, can_spawn: false },
+    );
+    expect(child).not.toContain("<generated_ui>");
+  });
+
   it("names the agent and its workspace", () => {
     const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
     expect(text).toContain("You are Echo, a persistent agent in Guild.");

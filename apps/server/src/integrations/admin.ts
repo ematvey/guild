@@ -5,17 +5,18 @@
 
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
-import { isToolClass, toolClassOf } from "../platform/domain/tool-class.js";
+import { toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import { builtinByName } from "./loader.js";
+import { BUILTIN_MCP, builtinByName, builtinMcpByName } from "./loader.js";
 import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { mcpConnect } from "./mcp.js";
-import { manifestSecretNames, namespacedTool, registryManifest, registryManifestIfApproved } from "./plugins.js";
+import { approvedManifest, namespacedTool, requireApprovedManifest, requiredSecretNames } from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
 import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
+import { parseBundle, readBundleFile } from "../platform/bundle.js";
 
 /** The stores the admin paths read and write. */
 export interface IntegrationAdminDeps {
@@ -35,7 +36,7 @@ async function latestIntegrationManifest(
   slug: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return await registryManifestIfApproved(gateway, orgId, slug);
+    return await approvedManifest(gateway, orgId, slug);
   } catch {
     return null;
   }
@@ -49,7 +50,7 @@ async function saveManifest(
   slug: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return await registryManifestIfApproved(gateway, orgId, slug);
+    return await approvedManifest(gateway, orgId, slug);
   } catch (error) {
     throw ApiError.badRequest(`invalid registry manifest: ${(error as Error).message}`);
   }
@@ -92,6 +93,40 @@ function shopEntry(
     config: row?.config ?? {},
     enabled: row?.enabled ?? false,
   };
+}
+
+/** The storefront files of an MCP item's approved bundle (logo.svg,
+ *  README.md), per bundle hash: the hash pins the bytes. */
+const mcpStoreFiles = new Map<string, Promise<{ logo: string; readme: string }>>();
+
+async function mcpBundleFiles(
+  gateway: IntegrationAdminDeps,
+  orgId: string,
+  slug: string,
+): Promise<{ logo: string; readme: string }> {
+  const empty = { logo: "", readme: "" };
+  try {
+    const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
+    if (approved === null) return empty;
+    const [version, sha256] = approved;
+    let files = mcpStoreFiles.get(sha256);
+    if (files === undefined) {
+      files = (async () => {
+        const stored = await gateway.registry.getVersion(orgId, "integration", slug, version);
+        if (stored.bundle_sha256 !== sha256) return empty;
+        const parsed = await parseBundle(await gateway.objects.get(stored.object_key));
+        return {
+          logo: readBundleFile(parsed, "logo.svg")?.toString("utf8") ?? "",
+          readme: readBundleFile(parsed, "README.md")?.toString("utf8") ?? "",
+        };
+      })();
+      files.catch(() => mcpStoreFiles.delete(sha256));
+      mcpStoreFiles.set(sha256, files);
+    }
+    return await files;
+  } catch {
+    return empty;
+  }
 }
 
 /** The labels of the required settings and credentials a row has not
@@ -156,12 +191,44 @@ export async function integrationShop(
       ),
     );
   }
+  for (const builtin of BUILTIN_MCP) {
+    const m = builtin.manifest;
+    const auth = m["auth"] as { secret_names: string[] };
+    const row = rowByName.get(builtin.name) ?? null;
+    items.push(
+      shopEntry(
+        {
+          name: builtin.name,
+          title: m["title"] as string,
+          version: m["version"] as string,
+          publisher: m["publisher"] as string,
+          summary: m["summary"] as string,
+          description: m["description"] as string,
+          docs_url: (m["docs_url"] as string | null) ?? null,
+          logo: builtin.logo,
+          categories: ["mcp", ...((m["categories"] as string[]) ?? [])],
+          traits: {},
+          secret_names: auth.secret_names,
+          settings: m["settings"] ?? null,
+          source: "builtin",
+          readme: builtin.readme,
+          tools: [],
+        },
+        row,
+        row === null ? [] : await gateway.integrationSecrets.names(orgId, builtin.name),
+      ),
+    );
+  }
   for (const item of await gateway.registry.listItems(orgId, "integration")) {
-    if (item.review_status !== "approved") continue;
+    if (item.review_status !== "approved" || builtinMcpByName(item.slug) !== undefined) continue;
     const manifest = await latestIntegrationManifest(gateway, orgId, item.slug);
     if (manifest === null || manifest["mcp"] === null || manifest["mcp"] === undefined) continue;
     const auth = (manifest["auth"] ?? null) as Record<string, unknown> | null;
     const secretNames = Array.isArray(auth?.["secret_names"]) ? (auth["secret_names"] as string[]) : [];
+    const files = await mcpBundleFiles(gateway, orgId, item.slug);
+    const declared = Array.isArray(manifest["categories"])
+      ? (manifest["categories"] as unknown[]).filter((c): c is string => typeof c === "string" && c !== "mcp")
+      : [];
     items.push(
       shopEntry(
         {
@@ -177,13 +244,16 @@ export async function integrationShop(
                 : "",
           description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
           docs_url: typeof manifest["docs_url"] === "string" ? (manifest["docs_url"] as string) : null,
-          logo: typeof manifest["logo"] === "string" ? (manifest["logo"] as string) : "",
-          categories: ["mcp"],
+          logo: typeof manifest["logo"] === "string" && manifest["logo"] !== "" ? (manifest["logo"] as string) : files.logo,
+          categories: ["mcp", ...declared],
           traits: {},
           secret_names: secretNames,
           settings: manifest["settings"] ?? null,
           source: "mcp",
-          readme: typeof manifest["readme"] === "string" ? (manifest["readme"] as string) : "",
+          readme:
+            typeof manifest["readme"] === "string" && manifest["readme"] !== ""
+              ? (manifest["readme"] as string)
+              : files.readme,
           tools: [],
         },
         rowByName.get(item.slug) ?? null,
@@ -261,7 +331,7 @@ export async function integrationTools(
   }
   let manifest: Record<string, unknown>;
   try {
-    manifest = await registryManifest(gateway, orgId, integrationRow.name);
+    manifest = await requireApprovedManifest(gateway, orgId, integrationRow.name);
   } catch (error) {
     throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
   }
@@ -295,7 +365,7 @@ export async function integrationTools(
     curatedToolJson(
       t.name,
       integrationRow.name,
-      mcpToolClass(rowConfig, manifest, t.name),
+      mcpToolClass(rowConfig, manifest, t),
       t.description,
       true,
       rowConfig,
@@ -327,8 +397,7 @@ function readMcpUrl(config: Record<string, unknown>): string | null {
 // ---------- integration save path (create/update with connection tests) ----------
 
 /** Validates an MCP plugin row's config: mcp.url must be an absolute http(s)
- *  URL when present; tool_policy role keys ⊆ {member, admin} with class
- *  lists ⊆ {read, write, admin}. */
+ *  URL when present; header templates must parse. */
 function validateMcpConfig(config: Record<string, unknown>): void {
   const mcp = config["mcp"];
   const url =
@@ -344,22 +413,6 @@ function validateMcpConfig(config: Record<string, unknown>): void {
       validateHeaderTemplates(templates);
     } catch (error) {
       throw ApiError.badRequest((error as Error).message);
-    }
-  }
-  const policy = config["tool_policy"];
-  if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
-    for (const [role, classes] of Object.entries(policy as Record<string, unknown>)) {
-      if (role !== "member" && role !== "admin") {
-        throw ApiError.badRequest("tool_policy role keys must be member or admin");
-      }
-      if (!Array.isArray(classes)) {
-        throw ApiError.badRequest("tool_policy role value must be a class list");
-      }
-      for (const c of classes) {
-        if (!isToolClass(c)) {
-          throw ApiError.badRequest("tool_policy classes must be read, write, or admin");
-        }
-      }
     }
   }
 }
@@ -416,7 +469,6 @@ export async function saveIntegration(
         ? {
             mcp: manifest["mcp"],
             auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" },
-            tool_policy: {},
           }
         : {};
     await gateway.integrations.upsert(orgId, name, config, false);
@@ -449,7 +501,7 @@ export async function saveIntegration(
     }
     validateMcpConfig(config);
     const enabled = typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
-    const declared = manifestSecretNames(registryManifestValue ?? {});
+    const declared = requiredSecretNames(registryManifestValue ?? {});
     if (enabled && readMcpUrl(config) === null) {
       throw ApiError.badRequest("mcp plugin needs an mcp.url before enabling");
     }
@@ -557,30 +609,66 @@ export async function saveIntegration(
   );
 }
 
-/** Runs the integration's connection test against what is stored: the
- *  saved config and secrets, nothing submitted, nothing written. Throws the
- *  same errors a save would; resolves with the elapsed milliseconds. */
+/** The settings-field labels of the named secrets, the name where a field
+ *  has none. */
+function secretLabels(manifest: Record<string, unknown>, names: string[]): string[] {
+  const settings = manifest["settings"] as { fields?: { name?: unknown; label?: unknown }[] } | undefined;
+  const fields = Array.isArray(settings?.fields) ? settings.fields : [];
+  return names.map((n) => {
+    const label = fields.find((f) => f.name === n)?.label;
+    return typeof label === "string" && label !== "" ? label : n;
+  });
+}
+
+/** Credentials and settings from an unsaved form, laid over the stored
+ *  row for one connection test. */
+export interface IntegrationTestDraft {
+  config?: Record<string, unknown>;
+  secrets?: Record<string, unknown>;
+}
+
+/** Runs the integration's connection test against the stored config and
+ *  secrets with the draft laid over them in memory; nothing is written.
+ *  Draft config merges shallowly over the stored row for an MCP plugin and
+ *  replaces it for a code plugin, as a save would; draft secrets override
+ *  the stored ones of the same name. Throws the same errors a
+ *  save would; resolves with the elapsed milliseconds. */
 export async function testIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
   name: string,
   existing: { config: unknown },
+  draft: IntegrationTestDraft = {},
 ): Promise<number> {
   const started = Date.now();
-  const config = (existing.config ?? {}) as Record<string, unknown>;
-  const secrets = await gateway.integrationSecrets.resolve(
+  const stored = (existing.config ?? {}) as Record<string, unknown>;
+  let secrets = await gateway.integrationSecrets.resolve(
     orgId,
     name,
     await gateway.integrationSecrets.names(orgId, name),
     gateway.masterKey(),
   );
+  for (const [k, v] of Object.entries(draft.secrets ?? {})) {
+    if (typeof v !== "string" || v === "") continue;
+    secrets = secrets.filter(([n]) => n !== k);
+    secrets.push([k, v]);
+  }
   const manifest = await saveManifest(gateway, orgId, name);
-  const mcpUrl = readMcpUrl(config);
-  if ((manifest !== null && manifest["mcp"] != null) || mcpUrl !== null) {
+  const isMcp = (manifest !== null && manifest["mcp"] != null) || readMcpUrl(stored) !== null;
+  if (isMcp) {
+    const config: Record<string, unknown> = { ...stored };
+    for (const [k, v] of Object.entries(draft.config ?? {})) if (k !== "tools") config[k] = v;
+    validateMcpConfig(config);
+    const mcpUrl = readMcpUrl(config);
     if (mcpUrl === null) throw ApiError.badRequest("no MCP server URL is configured");
+    const missing = requiredSecretNames(manifest ?? {}).filter((n) => !secrets.some(([s]) => s === n));
+    if (missing.length > 0) {
+      throw ApiError.conflict("missing_secrets", `missing secrets: ${secretLabels(manifest ?? {}, missing).join(", ")}`);
+    }
     await mcpTestConnection(config, mcpUrl, secrets, orgId);
     return Date.now() - started;
   }
+  const config = draft.config ?? stored;
   const connector = await connectorOrError(gateway, orgId, name);
   if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
   const missing = connector.fields

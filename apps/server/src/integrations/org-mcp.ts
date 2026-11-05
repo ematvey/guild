@@ -22,9 +22,10 @@ import type { IntegrationSecretStore, IntegrationStore } from "../platform/store
 import type { TeamStore } from "../platform/store/teams.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { builtinByName } from "./loader.js";
+import { isBuiltinSlug } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
+import { suggestedToolClass } from "./policy.js";
 
 export interface OrgMcpDeps {
   readonly integrations: IntegrationStore;
@@ -56,19 +57,6 @@ export interface ProbedTool {
 
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const TOOL_NAME = /^[a-zA-Z0-9_.-]+$/;
-const READ_VERB =
-  /^(get|list|search|read|fetch|find|query|describe|lookup|show|view|count|check|retrieve|browse)([_.-]|[A-Z]|$)/i;
-
-/** The class a tool starts with: the server's own hints first (read-only →
- *  read, destructive → write), then a read verb at the start of its name;
- *  anything else is write, so a member's default read-only policy never
- *  reaches a tool nobody looked at. */
-export function suggestedToolClass(tool: McpTool): ToolClass {
-  if (tool.annotations?.readOnlyHint === true) return "read";
-  if (tool.annotations?.destructiveHint === true) return "write";
-  return READ_VERB.test(tool.name) ? "read" : "write";
-}
-
 function str(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === "string" ? value.trim() : "";
@@ -180,7 +168,7 @@ export async function createOrgMcp(
   if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
   }
-  if (builtinByName(slug) !== undefined) {
+  if (isBuiltinSlug(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if ((await deps.integrations.getByName(orgId, slug)) !== null) {
@@ -241,7 +229,6 @@ export async function createOrgMcp(
   const config = {
     mcp: manifest.mcp,
     auth: manifest.auth,
-    tool_policy: {},
     tools: Object.fromEntries(
       [...selection].map(([name, s]) => [name, { enabled: s.enabled, approval: "default", class: s.cls }]),
     ),

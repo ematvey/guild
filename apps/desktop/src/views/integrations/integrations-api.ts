@@ -148,6 +148,31 @@ export const catalogLandingPath = (catalogId: string, slug: string, version: str
     version !== null ? `?version=${encodeURIComponent(version)}` : ""
   }`;
 
-export function testIntegration(id: string): Promise<TestResult> {
-  return request<TestResult>("POST", `${SETTINGS_PATHS.integrations}/${id}/test`, {});
+/** Unsaved form values a connection test lays over the stored row. */
+export interface TestDraft {
+  config?: Record<string, unknown>;
+  secrets?: Record<string, string>;
+}
+
+export function testIntegration(id: string, draft: TestDraft = {}): Promise<TestResult> {
+  return request<TestResult>("POST", `${SETTINGS_PATHS.integrations}/${id}/test`, draft);
+}
+
+export type AccessAudience = "org" | "team" | "admins";
+
+/** One Integration's audience as its Access tab edits it. */
+export interface IntegrationAccess {
+  audience: AccessAudience;
+  org_ceiling: "read" | "write";
+  grants: { team_id: string; ceiling: "read" | "write" }[];
+  teams: { id: string; name: string }[];
+}
+
+export const integrationAccessPath = (id: string) => `${SETTINGS_PATHS.integrations}/${id}/access`;
+
+export function putIntegrationAccess(
+  id: string,
+  body: { audience: AccessAudience; org_ceiling: "read" | "write"; grants: IntegrationAccess["grants"] },
+): Promise<IntegrationAccess> {
+  return request<IntegrationAccess>("PUT", integrationAccessPath(id), body);
 }

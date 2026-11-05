@@ -132,7 +132,7 @@ beforeAll(async () => {
   const { masterKeyBytes, encryptSecret } = await import("../platform/crypto.js");
   const master = masterKeyBytes(stack.env.config.masterKeyHex);
   await stack.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'atlassian', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'atlassian', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
     [orgId, JSON.stringify({ site: vendorBase, email: "bot@example.test" })],
   );
   await stack.env.db.query(
@@ -140,7 +140,7 @@ beforeAll(async () => {
     [orgId, encryptSecret(master, "atlassian-token")],
   );
   await stack.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'slack', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
     [
       orgId,
       JSON.stringify({
@@ -156,7 +156,27 @@ beforeAll(async () => {
     "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
     [orgId, encryptSecret(master, "xoxb-1")],
   );
+  // A chat runs on its Member's personal Agent, which reaches no
+  // Integration until someone adds it.
+  await giveIntegrations(memberToken, [{ slug: "atlassian", ceiling: "read" }]);
+  await giveIntegrations(stack.adminToken, [{ slug: "slack", ceiling: "write" }]);
 }, 60_000);
+
+/** Sets the Integration list of the caller's personal Agent. */
+async function giveIntegrations(token: string, entries: { slug: string; ceiling: string }[]): Promise<void> {
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const list = await stack.env.app.inject({ method: "GET", url: "/api/v1/agents", headers });
+  const personal = (JSON.parse(list.body) as { agents: { id: string; is_personal: boolean }[] }).agents.find(
+    (agent) => agent.is_personal,
+  )!;
+  const res = await stack.env.app.inject({
+    method: "PATCH",
+    url: `/api/v1/agents/${personal.id}`,
+    headers,
+    payload: { integrations: entries },
+  });
+  if (res.statusCode !== 200) throw new Error(`integrations PATCH ${res.statusCode}: ${res.body}`);
+}
 
 afterAll(async () => {
   await stack.close();
@@ -252,8 +272,8 @@ describe("M8: integrations chat runtime", () => {
         unknown
       >[];
       const names = specs.map((s) => s["name"]);
-      // Read-class connector tools for the member; write-class tools
-      // (confluence_create_page, api) are role-filtered out; the list_tools
+      // Read-class connector tools within the personal Agent's read
+      // ceiling; write-class tools (confluence_create_page, api) are out; the list_tools
       // JSON carries connector specs only (the guide auto is a registered
       // tool, not a spec).
       for (const expected of [
@@ -271,6 +291,13 @@ describe("M8: integrations chat runtime", () => {
       expect(typeof spec["description"]).toBe("string");
       expect((spec["parameters"] as Record<string, unknown>)["type"]).toBe("object");
       expect(spec["kind"]).toBeUndefined();
+
+      // The integration's tools are one codemode namespace, headed by its slug.
+      const system = (stack.mock.requests.at(-1)!.body["messages"] as { role: string; content: unknown }[])
+        .filter((m) => m.role === "system")
+        .map((m) => String(m.content))
+        .join("\n");
+      expect(system).toMatch(/^## atlassian( \(some tools not listed\))?$/m);
 
       // Auto tools are not audited; the runtime extension is in the system
       // prompt (the tool result meta carries the guild wiring).

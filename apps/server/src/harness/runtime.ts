@@ -26,7 +26,7 @@ import {
   type Registry,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
-import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import { BUILTIN_TOOL_GROUPS, createNamespacedCodemodeExtension } from "./codemode-namespaces.js";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { UserMessage } from "@earendil-works/pi-ai";
@@ -441,14 +441,17 @@ export class GuildRuntime {
     // models: false — guild's gateway carries only chat models, so the
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
-    // The default 3000-char inline budget drops the tail of the callable
-    // list (thread_history) once the agent tool set grows, so the section
-    // gets 500 more characters.
-    this.codemodeExtension = createCodemodeExtension({
-      sandbox: this.codemodeSandbox,
-      models: false,
-      inlineBudget: 3500,
-    });
+    // The default 3000-token inline budget drops the tail of the callable
+    // list once the agent tool set grows, so the section gets 500 more;
+    // namespaces keep every group represented within it.
+    this.codemodeExtension = createNamespacedCodemodeExtension(
+      { sandbox: this.codemodeSandbox, models: false, inlineBudget: 3500 },
+      async (conversationId) => [
+        ...BUILTIN_TOOL_GROUPS,
+        ...(await this.integrationsRuntime.toolGroups(conversationId)),
+        ...(await this.userMcpRuntime.toolGroups(conversationId)),
+      ],
+    );
     this.registry.install(this.codemodeExtension);
     this.turnTools = new TurnTools({
       config,

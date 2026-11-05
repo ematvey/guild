@@ -330,11 +330,17 @@ export function useOutgoing(deps: OutgoingDeps) {
     }
   };
 
-  const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
+  /** Sends the composer's draft, or `message` in its place: a message
+   *  that comes from the transcript (a Generated UI button) leaves the
+   *  draft and its files alone, and queues while a turn runs. */
+  const send = async (mode: "normal" | "queue" | "steer" = "normal", message?: string) => {
     if (!mountedRef.current || !filesReady) return;
-    const text = promptRef.current.trim();
-    if ((!text && pendingRef.current.length === 0) || !model) return;
-    if (text.toLowerCase() === "/compact") {
+    const fromComposer = message === undefined;
+    const text = fromComposer ? promptRef.current.trim() : message.trim();
+    const attachments = fromComposer ? pendingRef.current : [];
+    if ((!text && attachments.length === 0) || !model) return;
+    if (!fromComposer && busy && mode === "normal") mode = "queue";
+    if (fromComposer && text.toLowerCase() === "/compact") {
       if (!chatId) {
         toast.error("Compact needs an existing chat — send a message first");
         return;
@@ -366,7 +372,7 @@ export function useOutgoing(deps: OutgoingDeps) {
       return;
     }
     const retry = [...outgoingRef.current.values()].find(
-      (c) => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current),
+      (c) => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, attachments),
     );
     if (retry) {
       await deliverOutgoing(retry);
@@ -398,7 +404,7 @@ export function useOutgoing(deps: OutgoingDeps) {
         HAS_ENGINE ? machineId() : "",
       ),
       sendMode: busy ? (mode === "steer" ? "steer" : "queue") : undefined,
-      attachments: pendingRef.current,
+      attachments,
     });
     outgoingRef.current.set(command.id, command);
     // Persist the immutable file snapshot before detaching the composer.

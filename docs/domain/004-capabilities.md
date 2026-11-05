@@ -1,6 +1,6 @@
 # 004 Capabilities
 
-Capabilities are what a Turn can use: the model behind each Step, the Tools it can call and the Skills it can load. The Org supplies all three. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
+Capabilities are what a Turn can use: the model behind each Step, the Tools it can call, the Skills it can load and the Generated UI it can write. The Org supplies all of them. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
 
 ## Concepts
 
@@ -10,9 +10,10 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Model route | One model name mapped to a Provider, with prices, limits and an optional monthly quota | Unique per (Org, model). Disabled or keyless routes refuse calls. The model id is the wire identifier; the alias is only a display name | The Org decides which models exist and what they cost |
 | Usage event | One model request's tokens and cost, attributed to Org, Member, Team and key | Written for every gateway call, including a stream aborted after its first frame | Spend is visible and enforceable |
 | Tool | One capability the model can call | Is a built-in tool, an Integration tool, a Member's MCP tool or a Skill tool. Reaches a Turn only through the access rules of 002 | Everything an Agent does outside the model |
-| Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
+| Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Has an audience that decides who may add it to an Agent (see 002). Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
+| Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Takes one answer: the first user message after it settles its controls. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
 
 ## Models and the gateway
@@ -35,16 +36,18 @@ An Agent has exactly one model. A new personal Agent takes the first enabled rou
 A Turn's tool set is assembled at admission, in this order:
 
 1. **Base tools,** narrowed by the Agent's allowlist. Code mode is always kept.
-2. **Integration tools,** narrowed by the allowlist. An Integration with no selected tool disappears.
+2. **Integration tools:** the Integrations in the Agent's Integration list, each narrowed to the classes within its entry's ceiling. Trait tools follow the allowlist instead. An Integration with no offered tool disappears.
 3. **The Member's own MCP servers.**
 4. **Workspace tools:** on a Machine-bound Thread, the `agent_*` tools, which sit outside the allowlist.
 5. **Conversation tools,** narrowed by the allowlist.
 
 File and shell tools are called directly. Integration and MCP tools are called through code mode: the model writes a short script that calls `tools.<name>`, and each nested call is gated on its own.
 
+Code mode lists the tools a script can call grouped into namespaces: groups of Guild's own tools, one per Integration (named by its slug), and one per MCP server. A namespace only groups tools for discovery; a script still calls each tool as `tools.<name>`.
+
 ### The allowlist
 
-An Agent's allowlist is `all` or `selected`. `all` means every built-in tool plus every Integration tool the Org enables, resolved at each Turn, so a new Integration reaches the Agent without an edit. A personal Agent starts with `all`.
+An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and Trait tool, resolved at each Turn, so a tool added in a later release reaches the Agent without an edit. It never covers an Integration's own tools: those reach an Agent only through its Integration list (see 002). A personal Agent starts with `all` and no Integration.
 
 | Group | Tools |
 | --- | --- |
@@ -64,13 +67,13 @@ An Integration is a plugin with a manifest: its fields, its Tools, its Traits an
 
 | Kind | Where it comes from | How it runs |
 | --- | --- | --- |
-| Built-in | A plugin folder compiled into the server | In the server process. A Tool's class is its code declaration |
+| Built-in | A plugin folder compiled into the server: code, or an MCP plugin wrapping a remote MCP server | A code built-in runs in the server process, and a Tool's class is its code declaration. An MCP built-in serves its manifest as an approved MCP item would, with no publishing, and runs as the MCP kind below |
 | Plugin | An approved registry item whose bundle carries a `plugin.js` (`runtime: "code"`), built against `@guild/integration-sdk`. It may not reuse a built-in slug | In a worker thread of the server, loaded from the approved bundle bytes (checked against the approved hash). A Tool's class is its code declaration |
-| MCP | An approved registry item naming a remote MCP server. An admin connects one from the Integrations page, which publishes and approves the item in the same step | On the remote server, only while the approval covers the item's latest version and hash. A Tool's class is the admin's choice for that row, else the manifest's, else `read` |
+| MCP | An approved registry item naming a remote MCP server. An admin connects one from the Integrations page, which publishes and approves the item in the same step, or installs an MCP plugin bundle (`mcpIntegration` packed with no code) from a catalog, a file or a URL | On the remote server, only while the approval covers the item's latest version and hash. Its Tools are discovered live. A Tool's class is the admin's choice for that row, else the manifest's (`tool_classes`), else the class the server's read-only and destructive hints suggest, else `read` for a name that starts with a read verb and `write` for any other |
 
 A Plugin reaches an Org's registry three ways, all ending in the same install: an admin installs a version from one of the Org's catalogs, uploads a `.guildplugin` file, or names a bundle URL; or a publisher pushes it with `guild-plugin publish` and an admin approves it. Install checks the bundle, starts it once, publishes it, approves its exact hash and adds a disabled row. The Org never depends on the source afterwards. Approval is the trust decision: the worker contains a Plugin's crashes and hangs, but it is not a sandbox.
 
-A catalog is a static index (`guild-plugin-catalog/1`) listing plugins, their versions, each bundle's sha256 and its location. Each Org keeps its own catalog list. A catalog is read from a public URL, or from a file in a GitHub or GitLab repository through the Org's own GitHub or GitLab Integration token, so private repositories work. A bundle the catalog names by relative path is read through the same source; its bytes must match the listed sha256.
+A catalog is a static index (`guild-plugin-catalog/1`) listing plugins, their versions, each bundle's sha256 and its location. It lists code Plugins and MCP plugin bundles alike, and both install through the same path. Each Org keeps its own catalog list. A catalog is read from a public URL, or from a file in a GitHub or GitLab repository through the Org's own GitHub or GitLab Integration token, so private repositories work. A bundle the catalog names by relative path is read through the same source; its bytes must match the listed sha256.
 
 An Integration speaks to two readers. Its manifest `description` is what the agent reads; its `README.md` (beside a built-in's plugin folder, or inside a Plugin's bundle) is the landing page an admin reads before installing. Each settings field may carry an `obtain` note on where the value comes from, shown beside the field. The Integrations page lists what is installed and what the catalog offers. A catalog entry's landing page is read from the bundle the catalog lists (checked against its sha256, never run) before any install. An installed Integration reads as one of: needs setup (a required setting or credential is missing), off, failing (its last call failed), active or idle. An admin can test its connection against what is stored at any time. Usage is read from the `integration.tool_called` audit events, which record the tool, caller, outcome, latency and error of every call.
 
@@ -80,7 +83,7 @@ Each Trait has one provider per Turn: the Integration the Org bound to it when t
 
 An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. A Tool the server starts serving later arrives disabled.
 
-Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and role policy decide which of its Tools a Member's Turn sees (see 002).
+Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
 
 A Member can add their own MCP servers. Those servers are discovered at every Turn of that Member's Threads, and their headers are decrypted only at call time.
 
@@ -116,6 +119,20 @@ The Machine converges its folder to the list: it verifies each bundle's sha256, 
 
 The specialist pack is a set of ordinary Org Agents: Source, Ops and Clients. Each has a fixed tool list and a playbook written into its `AGENTS.md`. Installing the pack is admin-only. It creates a missing file and never overwrites an existing one.
 
+## Generated UI
+
+An Agent with `generative_ui` on gets a `<generated_ui>` section in its instructions: when a UI block helps, the OpenUI Lang syntax and the signature of every component in the library (`packages/genui`). The section is static, so prompt caching holds across Turns. A spawned child's reply goes to its parent Agent, not a person, so its Threads never get the section.
+
+The reply stays Markdown. A fenced block tagged `openui` renders in place as components, streaming as it arrives; every other fence stays code. The library is layout (Stack, Card, Grid, Tabs, Accordion, Modal, Carousel), content (Text, Metric, Callout, List, Facts, Tags, Progress, Steps, EntityList, CodeBlock, Image, ImageGallery), data (Table, BarChart, LineChart, PieChart, ScatterChart, RadarChart, RadialChart, StackedBar) and interaction (Buttons, FollowUps, Form and its fields: Input, TextArea, Select, Checkbox, RadioGroup, CheckBoxGroup, Switch, Slider, DatePicker, OptionCards, Chips, EditableTable). Programs may use `$variables` with `@Set`/`@Reset` and the built-in data functions; those act inside the block and send nothing. A program can only instantiate those components:
+
+- `@ToAssistant(message)` sends the message as the Member's next message in the Thread, with the submitted Form's values as `name: value` lines. It queues while a Turn runs, like any send.
+- `@OpenUrl(url)` opens an `http`, `https` or `mailto` link outside the app; any other scheme is dropped.
+- `Query`, `Mutation` and custom actions have no provider: a block never calls a Tool, so every Tool still passes the Approval and exec-policy gates of a Turn.
+
+Images in agent content — Generated UI and chat Markdown alike — come from three sources. A Guild attachment (`attachment:<id>`, the id `send_file` returns) and an inline `data:image` URL always show. A remote `http(s)` image follows the Org's **remote-image policy**, an admin setting on Settings → Security: `auto` (the default) loads it at once, `click` shows a placeholder with its description and full URL until the reader clicks, `never` shows only its description and full URL (the path and query are where an exfiltration attempt would sit, so the reader sees all of it). A remote request goes out without a referrer, but its host sees the full URL, so content that steers the model can carry data out in an image URL; the policy is the admin's trade-off. The policy reaches clients on the `workspace_identity` frame.
+
+A block is a dialog: it takes one answer. Once any user message follows it in the Thread (a click on one of its buttons, or anything the Member typed), its buttons and fields settle, and the button whose message answered it stays marked. The state comes from the transcript, so it holds on reload and on every device; Tabs still switch and `@OpenUrl` buttons still open. Controls are also disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
+
 ## Org prompts
 
 An admin can replace two built-in prompts, each up to 10,000 characters; an empty value restores the default:
@@ -130,6 +147,8 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 | Rejected | Reason |
 | --- | --- |
 | A model choice per Thread | The model belongs to the Agent (see 001) |
+| Generated UI that calls Tools from the block (OpenUI `Query`/`Mutation`) | It would run Tools outside a Turn, past Approvals and exec policy; a button asks the Agent instead |
+| The vendor's hosted gateway or chat client for Generated UI | Org traffic stays on the Org gateway, and the Thread stays on the member socket |
 | Showing provider model ids | Members see the Org's aliases, and the id stays a wire identifier |
 | Vendor tool names for search and fetch | Traits keep one name across vendors |
 | An approval that survives a new version | A review covers one version and hash, so a change returns the item to draft |

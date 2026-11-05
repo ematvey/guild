@@ -342,7 +342,24 @@ function jwtPayload(assertion: string): Record<string, unknown> {
 // ---------- google_workspace execute ----------
 
 describe("google_workspace execute (mock backend)", () => {
-  it("gmail_search mints a token with the admin sub and renders the result list", async () => {
+  it("a call without a member identity is refused before any token is minted", async () => {
+    const before = hits.filter((hit) => hit.path === "/token").length;
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "google_workspace",
+        googleConfig(),
+        "gmail_search",
+        { query: "from:alice" },
+        GOOGLE_SECRETS,
+        null,
+      ),
+    ).rejects.toThrow("no member identity");
+    expect(hits.filter((hit) => hit.path === "/token").length).toBe(before);
+  });
+
+  it("gmail_search mints a token with the member sub and renders the result list", async () => {
     const out = await executeConnectorTool(
       NO_REGISTRY,
       "org-test",
@@ -351,14 +368,14 @@ describe("google_workspace execute (mock backend)", () => {
       "gmail_search",
       { query: "from:alice" },
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(out.content).toContain('Gmail search "from:alice": 2 result(s)');
     expect(out.content).toContain("- id msg-1 (thread th-1)");
     const tokenHit = lastHit("/token");
     expect(tokenHit.body).toContain("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer");
     const assertion = new URLSearchParams(tokenHit.body).get("assertion")!;
-    expect(jwtPayload(assertion)["sub"]).toBe("admin@example.test");
+    expect(jwtPayload(assertion)["sub"]).toBe("member@example.test");
     expect(jwtPayload(assertion)["scope"]).toContain("gmail.readonly");
     const searchHit = lastHit("/gmail/v1/users/me/messages");
     expect(searchHit.headers["authorization"]).toBe("Bearer tok-1");
@@ -389,7 +406,7 @@ describe("google_workspace execute (mock backend)", () => {
       "gmail_get_message",
       { message_id: "msg-1" },
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(out.content).toContain("Subject: Quarterly report");
     expect(out.content).toContain("From: alice@example.test");
@@ -406,7 +423,7 @@ describe("google_workspace execute (mock backend)", () => {
       "gmail_get_attachment",
       { message_id: "msg-1", attachment_id: "att-1" },
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(out.content).toBe("attachment data.bin (4 bytes, image/jpeg)");
     expect(out.artifact).toBeDefined();
@@ -475,7 +492,7 @@ describe("google_workspace execute (mock backend)", () => {
       "calendar_list_events",
       {},
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(calendar.content).toContain("Standup");
     const drive = await executeConnectorTool(
@@ -486,7 +503,7 @@ describe("google_workspace execute (mock backend)", () => {
       "drive_search",
       { name: "report" },
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(drive.content).toContain("report — application/pdf (id f-1)");
     const directory = await executeConnectorTool(
@@ -497,7 +514,7 @@ describe("google_workspace execute (mock backend)", () => {
       "directory_users",
       {},
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     // Default domain: the admin_email's own.
     expect(lastHit("/admin/directory/v1/users").query.get("domain")).toBe("example.test");
@@ -510,7 +527,7 @@ describe("google_workspace execute (mock backend)", () => {
       "api",
       { path: "/gapi/thing" },
       GOOGLE_SECRETS,
-      null,
+      "member@example.test",
     );
     expect(api.content).toContain('"done":true');
     expect(lastHit("/gapi/thing").headers["authorization"]).toBe("Bearer tok-1");

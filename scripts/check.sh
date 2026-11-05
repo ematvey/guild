@@ -55,7 +55,7 @@ check_coherence() { npm run coherence; }
 # sees the TypeScript trees.
 check_typecheck() {
   rc=0
-  for project in apps/server apps/desktop packages/wire packages/ui; do
+  for project in apps/server apps/desktop packages/wire packages/ui packages/genui; do
     echo "== tsc $project"
     npx tsc -p "$project/tsconfig.json" --noEmit || rc=1
   done

@@ -1,7 +1,7 @@
-// Agent state shared by every view: the agent list, and per agent its runs,
-// the member's threads and its routines. Every slice is live through
-// member-socket frames (`agent_list`, `agent_run`, `agent_threads`,
-// `agent_routines`). A per-agent slice is seeded over HTTP only for the first
+// Agent state shared by every view: the agent list, the Integrations the
+// member may attach, and per agent its runs, the member's threads and its
+// routines. Every slice is live through member-socket frames (`agent_list`,
+// `integration_access`, `agent_run`, `agent_threads`, `agent_routines`). A per-agent slice is seeded over HTTP only for the first
 // paint of a connection: the server pushes it when it changes, not on
 // connect, so a reconnect drops the per-agent slices and the views on screen
 // seed them again. A frame that lands before its seed wins over the seed: a
@@ -10,6 +10,7 @@
 
 import { useEffect } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
+import type { AttachableIntegration } from "@guild/wire/rest";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
 import { createStore } from "../../lib/store";
@@ -19,6 +20,8 @@ type Slice = "runs" | "threads" | "routines";
 interface AgentState {
   /** Every agent the member may see; null until the first push. */
   agents: Agent[] | null;
+  /** The Integrations the member may attach; null until the first push. */
+  attachable: AttachableIntegration[] | null;
   /** Per agent, newest first. */
   runs: Record<string, AgentRun[]>;
   threads: Record<string, AgentThread[]>;
@@ -30,7 +33,15 @@ interface AgentState {
   epoch: number;
 }
 
-const EMPTY: AgentState = { agents: null, runs: {}, threads: {}, routines: {}, errors: {}, epoch: 0 };
+const EMPTY: AgentState = {
+  agents: null,
+  attachable: null,
+  runs: {},
+  threads: {},
+  routines: {},
+  errors: {},
+  epoch: 0,
+};
 
 const agentStore = createStore<AgentState>(EMPTY);
 /** Never reset: a seed in flight across a reset must see the epoch move. */
@@ -59,6 +70,11 @@ export function upsertRun<T extends { id: string; created_at: string }>(rows: T[
 /** Replaces the agent list (the `agent_list` frame). */
 export function applyAgentList(agents: Agent[]): void {
   agentStore.update((state) => ({ ...state, agents }));
+}
+
+/** Replaces the attachable Integrations (the `integration_access` frame). */
+export function applyIntegrationAccess(attachable: AttachableIntegration[]): void {
+  agentStore.update((state) => ({ ...state, attachable }));
 }
 
 /** Applies one run (the `agent_run` frame): its agent's loaded run list moves,
@@ -243,6 +259,12 @@ export function useAgentRunUpdates(listener: (run: AgentRun) => void): void {
 /** Every agent the member may see; null until the first push. */
 export function useAgentList(): Agent[] | null {
   return agentStore.use((state) => state.agents);
+}
+
+/** The Integrations the member may add to an agent; null until the first
+ *  push. */
+export function useAttachableIntegrations(): AttachableIntegration[] | null {
+  return agentStore.use((state) => state.attachable);
 }
 
 /** A seeded per-agent slice: `rows` is null until it seeds; `error` says why

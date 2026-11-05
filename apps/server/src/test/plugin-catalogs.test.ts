@@ -355,6 +355,35 @@ describe("catalogs", () => {
   });
 });
 
+describe("built-in MCP plugins", () => {
+  it("list Stripe as included, seed its row with the server and refuse its slug to uploads", async () => {
+    let shop = await api("GET", "/api/v1/admin/integrations");
+    let item = shop.body.items.find((i: { name: string }) => i.name === "stripe");
+    expect(item).toMatchObject({ source: "builtin", configured: false, docs_url: "https://docs.stripe.com/mcp" });
+    expect(item.logo).toContain("<svg");
+    expect(item.readme).toContain("## What agents can do");
+    expect(item.categories).toEqual(["mcp", "payments", "billing"]);
+    expect(item.settings.fields.map((f: { name: string }) => f.name)).toEqual(["stripe_key", "stripe_account"]);
+    expect(item.settings.fields[0].obtain).toContain("Authorizing agent access");
+
+    expect((await api("POST", "/api/v1/admin/integrations", { name: "stripe" })).status).toBe(200);
+    const row = await env.db.query("SELECT config, enabled FROM integrations WHERE org_id = $1 AND name = 'stripe'", [orgId]);
+    expect(row.rows[0].enabled).toBe(false);
+    expect(row.rows[0].config.mcp).toEqual({
+      url: "https://mcp.stripe.com",
+      headers: { Authorization: "Bearer {stripe_key}", "Stripe-Account": "{stripe_account}" },
+      envelope: false,
+    });
+    shop = await api("GET", "/api/v1/admin/integrations");
+    item = shop.body.items.filter((i: { name: string }) => i.name === "stripe");
+    expect(item).toHaveLength(1);
+    expect(item[0]).toMatchObject({ configured: true, missing: ["Agent API key"] });
+
+    const clash = fixtureBundle("stripe", "9.0.0");
+    expect((await api("POST", "/api/v1/admin/integrations/plugins/upload", clash.bytes)).status).toBe(409);
+  });
+});
+
 describe("URL installs", () => {
   it("install a bundle from a URL, checking an optional sha256", async () => {
     const b = fixtureBundle("acme-url", "1.0.0");

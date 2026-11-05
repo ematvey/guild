@@ -9,6 +9,7 @@
 
 import type {
   Agent,
+  AttachableIntegration,
   AgentRoutine,
   AgentRun,
   AgentThread,
@@ -32,6 +33,9 @@ export type { Chat, EventRow, Json, MachineInfo, Project, SubagentNode, ThreadEv
 
 /** A JSON UUID string. */
 export type Uuid = string;
+
+/** How clients treat a remote image in agent content. */
+export type RemoteImagesPolicy = "auto" | "click" | "never";
 
 /** The 11 stream event variants. `live_frame.event` carries one. */
 export type StreamEvent =
@@ -167,6 +171,9 @@ export type ServerFrame =
       name: string;
       logo_url?: string;
       telemetry: boolean;
+      /** Admin policy for remote images in agent content; absent from
+       *  older servers, read as `auto`. */
+      remote_images?: RemoteImagesPolicy;
       /** The served web bundle's identity; absent when none is served. */
       web_bundle?: string;
     }
@@ -175,6 +182,8 @@ export type ServerFrame =
    *  name, avatar or onboarding flag changes. */
   | { type: "member_profile"; user: UserInfo }
   | { type: "agent_list"; agents: Agent[] }
+  /** The Integrations the member may add to an agent they manage. */
+  | { type: "integration_access"; integrations: AttachableIntegration[] }
   | { type: "agent_run"; run: AgentRun }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }

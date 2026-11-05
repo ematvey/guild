@@ -9,16 +9,21 @@
 # Build stage: npm workspaces install (root package.json/lockfile).
 FROM node:22 AS build
 WORKDIR /app
+# @openuidev/lang-core's postinstall reports the install to its vendor
+# unless this is set.
+ENV OPENUI_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 # npm ci validates every workspace listed in the root package.json.
 COPY apps/desktop/package.json apps/desktop/
 COPY apps/server/package.json apps/server/
 COPY packages/ui/package.json packages/ui/
 COPY packages/wire/package.json packages/wire/
+COPY packages/genui/package.json packages/genui/
 COPY packages/integration-sdk/package.json packages/integration-sdk/
 COPY packages/integration-sdk/bin packages/integration-sdk/bin
 RUN npm ci --workspace apps/server --no-audit --no-fund
 COPY packages/wire/src ./packages/wire/src
+COPY packages/genui/src ./packages/genui/src
 COPY packages/integration-sdk/src ./packages/integration-sdk/src
 # The static exec-policy rules: the TS matcher loads the shared rule set
 # from apps/server/assets (relocated out of the Rust tree ahead of its
@@ -31,15 +36,18 @@ COPY apps/server/migrations ./apps/server/migrations
 # serve at /. Needs the shared UI kit and the wire types.
 FROM node:22 AS webui
 WORKDIR /app
+ENV OPENUI_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/
 COPY packages/ui/package.json packages/ui/
 COPY packages/wire/package.json packages/wire/
+COPY packages/genui/package.json packages/genui/
 COPY packages/integration-sdk/package.json packages/integration-sdk/
 COPY packages/integration-sdk/bin packages/integration-sdk/bin
 RUN npm ci --workspace apps/desktop --no-audit --no-fund
 COPY packages/ui/src ./packages/ui/src
 COPY packages/wire/src ./packages/wire/src
+COPY packages/genui/src ./packages/genui/src
 COPY apps/desktop/index.html apps/desktop/vite.config.ts apps/desktop/tsconfig.json apps/desktop/
 COPY apps/desktop/src ./apps/desktop/src
 COPY apps/desktop/public ./apps/desktop/public
@@ -58,6 +66,7 @@ COPY apps/server/src ./apps/server/src
 # The @guild/wire package the server imports resolve through node_modules:
 # the workspace symlink points here, so the package must exist at runtime too.
 COPY --from=build /app/packages/wire ./packages/wire
+COPY --from=build /app/packages/genui ./packages/genui
 COPY --from=build /app/packages/integration-sdk ./packages/integration-sdk
 # The chat SPA: GUILD_WEB_DIST's default (../desktop/dist from the server
 # cwd) resolves here.

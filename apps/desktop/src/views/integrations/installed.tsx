@@ -31,6 +31,7 @@ import { ExternalLinkText, Logo, SOURCE_LABELS, categoryLabel, linkHost, traitLa
 import { installedStatus, statusLine, type AvailableUpdate, type InstalledStatus } from "./model";
 import { ConfigurationTab } from "./configuration";
 import { ToolsTab } from "./tools";
+import { AccessTab } from "./access";
 import { CallsChart, UsageStats, UsageTab, useIntegrationUsage } from "./usage";
 import { Readme } from "./prose";
 import { StatusDot } from "./status-dot";
@@ -38,6 +39,7 @@ import { StatusDot } from "./status-dot";
 const TABS: [InstalledTab, string][] = [
   ["overview", "Overview"],
   ["configuration", "Configuration"],
+  ["access", "Access"],
   ["tools", "Tools"],
   ["usage", "Usage"],
   ["about", "About"],
@@ -395,12 +397,15 @@ export function InstalledDetail({
   onTab,
   onChanged,
   onRemoved,
+  onOpenAgent,
 }: {
   item: ShopItem;
   tab: InstalledTab;
   usage: UsageSummaryRow | undefined;
   update: AvailableUpdate | undefined;
   onTab: (tab: InstalledTab) => void;
+  /** Opens one agent's settings (the Access tab's agent links). */
+  onOpenAgent: (agentId: string) => void;
   onChanged: () => void;
   onRemoved: () => void;
 }) {
@@ -455,6 +460,7 @@ export function InstalledDetail({
         {tab === "configuration" && (
           <ConfigurationTab key={JSON.stringify([item.id, item.config])} item={item} onSaved={onChanged} />
         )}
+        {tab === "access" && <AccessTab id={item.id!} slug={item.name} title={item.title} onOpenAgent={onOpenAgent} />}
         {tab === "tools" && <ToolsTab id={item.id!} isMcp={isMcp} />}
         {tab === "usage" && <UsageTab id={item.id!} />}
         {tab === "about" && <About item={item} update={update} onChanged={onChanged} onRemoved={onRemoved} />}

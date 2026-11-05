@@ -1,8 +1,8 @@
 // The Configuration tab of an installed integration: the settings form
 // generated from the manifest's fields, each credential write-only with a
 // masked preview, and beside every field the plugin's own note on where the
-// value comes from. An MCP server adds its URL, role policy and advanced
-// config. Save runs the integration's connection test first: a broken
+// value comes from. An MCP server adds its URL and advanced config. Who may
+// use the integration is the Access tab. Save runs the integration's connection test first: a broken
 // connection is never stored.
 
 import { useState } from "react";
@@ -13,7 +13,7 @@ import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
 import { useCachedGet } from "../settings/use-cached-api";
 import { integrationSecretsPath, updateIntegration } from "../../lib/api/settings";
-import { testIntegration, type FieldSpec, type ShopItem, type TestResult } from "./integrations-api";
+import { testIntegration, type FieldSpec, type ShopItem, type TestDraft, type TestResult } from "./integrations-api";
 import { Note } from "./prose";
 
 interface SecretEntry {
@@ -21,36 +21,6 @@ interface SecretEntry {
   updated_at: string;
   masked?: string;
 }
-
-export const TOOL_CLASSES = ["read", "write", "admin"] as const;
-export type ToolClass = (typeof TOOL_CLASSES)[number];
-export type ToolRole = "member" | "admin";
-export type ToolPolicy = Partial<Record<ToolRole, ToolClass[]>>;
-export const ROLES: ToolRole[] = ["member", "admin"];
-
-export function readPolicy(config: Record<string, unknown> | null): ToolPolicy {
-  const raw = (config?.tool_policy ?? {}) as Record<string, unknown>;
-  const out: ToolPolicy = {};
-  for (const role of ROLES) {
-    const v = raw[role];
-    if (Array.isArray(v)) out[role] = v.filter((c): c is ToolClass => TOOL_CLASSES.includes(c as ToolClass));
-  }
-  return out;
-}
-
-export function cleanPolicy(policy: ToolPolicy): ToolPolicy {
-  const out: ToolPolicy = {};
-  for (const role of ROLES) {
-    if (policy[role]?.length) out[role] = policy[role];
-  }
-  return out;
-}
-
-export const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPolicy => {
-  const cur = policy[role] ?? [];
-  const next = cur.includes(cls) ? cur.filter((c) => c !== cls) : [...cur, cls];
-  return { ...policy, [role]: next };
-};
 
 export const fieldLabel = (f: FieldSpec): string => f.label ?? f.name.replace(/_/g, " ");
 
@@ -77,14 +47,13 @@ export interface ConfigDraft {
   draft: Record<string, unknown>;
   mcpUrl: string;
   advancedText: string;
-  policy: ToolPolicy;
 }
 
 export function initialDraft(fields: FieldSpec[], config: Record<string, unknown>, isMcp: boolean): ConfigDraft {
   const advanced: Record<string, unknown> = {};
   if (isMcp) {
     for (const [k, v] of Object.entries(config)) {
-      if (k !== "mcp" && k !== "tool_policy" && k !== "tools") advanced[k] = v;
+      if (k !== "mcp" && k !== "tools") advanced[k] = v;
     }
   }
   return {
@@ -95,7 +64,6 @@ export function initialDraft(fields: FieldSpec[], config: Record<string, unknown
     ),
     mcpUrl: isMcp ? String((config.mcp as Record<string, unknown> | undefined)?.url ?? "") : "",
     advancedText: isMcp ? JSON.stringify(advanced, null, 2) : "",
-    policy: readPolicy(config),
   };
 }
 
@@ -147,9 +115,7 @@ export function buildIntegrationConfig(
       }
     }
   }
-  const clean = cleanPolicy(form.policy);
-  if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
-  else delete cfg.tool_policy;
+  delete cfg.tool_policy;
   return cfg;
 }
 
@@ -202,12 +168,22 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-export function TestConnectionButton({ id, disabled }: { id: string; disabled?: boolean }) {
+/** Tests the stored configuration; with `draft`, the form's unsaved
+ *  values are tested in its place and nothing is saved. */
+export function TestConnectionButton({
+  id,
+  disabled,
+  draft,
+}: {
+  id: string;
+  disabled?: boolean;
+  draft?: () => TestDraft;
+}) {
   const [state, setState] = useState<"idle" | "running" | TestResult>("idle");
   const run = async () => {
     setState("running");
     try {
-      setState(await testIntegration(id));
+      setState(await testIntegration(id, draft?.() ?? {}));
     } catch (e) {
       setState({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -255,6 +231,14 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
       .filter((n) => !fields.some((f) => f.name === n))
       .map((n) => ({ name: n, kind: "secret", label: secretWidget(n).label, required: true })),
   ];
+
+  const draftForTest = (): TestDraft =>
+    dirty
+      ? {
+          config: buildIntegrationConfig(fields, item.config, form, isMcp),
+          secrets: Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== "")),
+        }
+      : {};
 
   const save = async () => {
     if (busy || !dirty) return;
@@ -390,32 +374,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
               />
             </FieldRow>
           </Section>
-          <Section
-            title="Who can call what"
-            description="The tool classes each role may call. A role with nothing checked gets the server's defaults."
-          >
-            <div className="grid gap-6 py-5 sm:grid-cols-2">
-              {ROLES.map((role) => (
-                <fieldset key={role}>
-                  <legend className="mb-2 text-sm font-medium capitalize">{role}s</legend>
-                  <div className="space-y-2">
-                    {TOOL_CLASSES.map((cls) => (
-                      <label key={cls} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="size-4 accent-foreground"
-                          checked={form.policy[role]?.includes(cls) ?? false}
-                          onChange={() => setForm((f) => ({ ...f, policy: toggleClass(f.policy, role, cls) }))}
-                        />
-                        <span className="capitalize text-muted-foreground">{cls}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ))}
-            </div>
-          </Section>
-          <Section title="Advanced" description="Everything beyond the server URL and role policy, as JSON.">
+          <Section title="Advanced" description="Everything beyond the server URL, as JSON.">
             <div className="py-5">
               <Textarea
                 aria-label="Advanced config"
@@ -451,7 +410,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
           </Button>
         )}
         <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
-        <TestConnectionButton id={id} disabled={busy} />
+        <TestConnectionButton id={id} disabled={busy} draft={draftForTest} />
         {error !== null && (
           <p role="alert" className="basis-full text-sm text-destructive">
             {error}

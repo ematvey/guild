@@ -14,6 +14,14 @@ export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 /** Org KV key holding the admin-controlled telemetry switch. Absent = on;
  *  "0" = off. Clients never choose this themselves. */
 export const TELEMETRY_ENABLED_KEY = "telemetry_enabled";
+/** Org KV key holding the admin's remote-image policy for agent content. */
+export const REMOTE_IMAGES_KEY = "remote_images";
+
+/** How clients treat a remote (http/https) image in agent content: load it
+ *  at once, behind a click, or never. Attachments and inline images are
+ *  not remote and always load. */
+export type RemoteImagesPolicy = "auto" | "click" | "never";
+export const REMOTE_IMAGES_POLICIES: readonly RemoteImagesPolicy[] = ["auto", "click", "never"];
 
 export class OrgKvStore {
   constructor(readonly pool: PlatformPool) {}
@@ -44,6 +52,18 @@ export class OrgKvStore {
    *  the clients start or stop collecting without a reload. */
   async setTelemetryEnabled(orgId: string, enabled: boolean): Promise<void> {
     await this.put(orgId, TELEMETRY_ENABLED_KEY, enabled ? "1" : "0");
+    await notifyOrgIdentity(this.pool, orgId);
+  }
+
+  /** The org's remote-image policy. Absent means `auto`. */
+  async remoteImages(orgId: string): Promise<RemoteImagesPolicy> {
+    const value = await this.get(orgId, REMOTE_IMAGES_KEY);
+    return REMOTE_IMAGES_POLICIES.includes(value as RemoteImagesPolicy) ? (value as RemoteImagesPolicy) : "auto";
+  }
+
+  /** Admin write of the remote-image policy; repaints every member socket. */
+  async setRemoteImages(orgId: string, policy: RemoteImagesPolicy): Promise<void> {
+    await this.put(orgId, REMOTE_IMAGES_KEY, policy);
     await notifyOrgIdentity(this.pool, orgId);
   }
 }

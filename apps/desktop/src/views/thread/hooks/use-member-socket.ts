@@ -30,6 +30,7 @@ import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 import {
   applyAgentList,
+  applyIntegrationAccess,
   applyAgentRoutines,
   applyAgentRun,
   applyAgentThreads,
@@ -78,7 +79,14 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // the done phase does not send it a second time.
   const syncedReadRef = useRef(new Set<string>());
 
-  const isVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
+  /** Someone is plausibly looking at this client: the page is visible and
+   *  its window has focus. Only then does the open chat count as read. A
+   *  window left open on a chat (another monitor, behind other windows, a
+   *  background tab) stays "visible" without anyone reading it, and a read
+   *  mark from it would suppress the push to the member's phone. */
+  const isVisible = () =>
+    typeof document === "undefined" ||
+    (document.visibilityState === "visible" && (typeof document.hasFocus !== "function" || document.hasFocus()));
 
   /** Sends one read mark and hides the chat's dot only when the frame left
    *  the socket. A dropped frame keeps the dot and the guard, so the next
@@ -215,6 +223,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onModelList: applyModelList,
       onMemberProfile: applyMemberProfile,
       onAgentList: applyAgentList,
+      onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
@@ -329,6 +338,25 @@ export function useMemberSocket(deps: MemberSocketDeps) {
     // One socket per mount: the handlers read the latest callbacks through
     // `latest`, and the refs and the thread store live as long as the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Coming back to the window reads the open chat: the read was withheld
+  // while the window had no focus, so its dot clears now, and a turn that
+  // ends while the member looks elsewhere still pushes to their phone.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const onAttention = () => {
+      const cid = openChatIdRef.current;
+      if (cid === null || !isVisible()) return;
+      live().sendRead(cid);
+    };
+    window.addEventListener("focus", onAttention);
+    document.addEventListener("visibilitychange", onAttention);
+    return () => {
+      window.removeEventListener("focus", onAttention);
+      document.removeEventListener("visibilitychange", onAttention);
+    };
+    // The handler reads refs and `latest`; it is registered once.
   }, []);
 
   return { socketRef, syncingChatsRef };

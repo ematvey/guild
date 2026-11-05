@@ -7,6 +7,7 @@ import type { IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
+import { REMOTE_IMAGES_POLICIES, type RemoteImagesPolicy } from "../store/org-kv.js";
 import { parseUuidParam, requireJsonBody, requireUser, requireAdminUser, queryParam, bodyBytes } from "./error.js";
 
 /** Accepted logo content types → file extension in the object key. */
@@ -22,11 +23,14 @@ const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, objects: ObjectStore): void {
   app.get("/api/v1/org", async (req, reply) => {
     const user = await requireUser(identity, req);
-    const [org, telemetry] = await Promise.all([
+    const [org, telemetry, remoteImages] = await Promise.all([
       identity.orgs.get(user.org_id),
       identity.orgKv.telemetryEnabled(user.org_id),
+      identity.orgKv.remoteImages(user.org_id),
     ]);
-    return reply.status(200).send(sortedJson({ name: org.name, logo_url: org.logo_url, telemetry }));
+    return reply
+      .status(200)
+      .send(sortedJson({ name: org.name, logo_url: org.logo_url, telemetry, remote_images: remoteImages }));
   });
 
   // The workspace telemetry switch: admin-only, on by default. Members see
@@ -38,6 +42,19 @@ export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, o
     if (typeof enabled !== "boolean") throw ApiError.badRequest('missing "enabled" boolean');
     await identity.orgKv.setTelemetryEnabled(user.org_id, enabled);
     return reply.status(200).send(sortedJson({ ok: true, telemetry: enabled }));
+  });
+
+  // Remote images in agent content: admin-only, `auto` by default. Members
+  // see the policy on the workspace-identity frame and the clients obey it.
+  app.put("/api/v1/org/remote-images", async (req, reply) => {
+    const user = await requireAdminUser(identity, req);
+    const body = requireJsonBody(req);
+    const policy = body["policy"];
+    if (typeof policy !== "string" || !REMOTE_IMAGES_POLICIES.includes(policy as RemoteImagesPolicy)) {
+      throw ApiError.badRequest('"policy" must be one of auto, click, never');
+    }
+    await identity.orgKv.setRemoteImages(user.org_id, policy as RemoteImagesPolicy);
+    return reply.status(200).send(sortedJson({ ok: true, remote_images: policy }));
   });
 
   app.put("/api/v1/org", async (req, reply) => {

@@ -539,7 +539,7 @@
       "response": {
         "status": 200,
         "headers": {},
-        "body": "{\"logo_url\":null,\"name\":\"m1-capture org\",\"telemetry\":true}"
+        "body": "{\"logo_url\":null,\"name\":\"m1-capture org\",\"remote_images\":\"auto\",\"telemetry\":true}"
       }
     },
     {

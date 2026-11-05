@@ -229,6 +229,10 @@ pub enum WsServerMsg {
         /// The admin-controlled telemetry switch (absent on old servers).
         #[serde(default)]
         telemetry: bool,
+        /// Admin policy for remote images in agent content: `auto`,
+        /// `click` or `never` (absent on old servers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_images: Option<String>,
         /// The served web bundle's identity; absent when the server serves
         /// no bundle.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,6 +255,13 @@ pub enum WsServerMsg {
     /// changes. Daemons tag-peek and ignore it.
     AgentList {
         agents: Vec<serde_json::Value>,
+    },
+    /// The Integrations the member may add to an agent they manage, each
+    /// with the highest class they may give. Sent on connect and whenever
+    /// an Integration's audience, grants or enabled flag, or a team
+    /// membership, changes. Daemons tag-peek and ignore it.
+    IntegrationAccess {
+        integrations: Vec<serde_json::Value>,
     },
     /// One run, created or changed, for every member who may see its agent.
     /// A finished run carries its `call_count` and `tool_count`. Daemons

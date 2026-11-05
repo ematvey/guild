@@ -9,7 +9,7 @@ import type { MachineRow, MachineStore } from "../platform/store/machines.js";
 import type { ProjectRow, ProjectStore } from "../platform/store/projects.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { OrgStore } from "../platform/store/orgs.js";
-import type { OrgKvStore } from "../platform/store/org-kv.js";
+import type { OrgKvStore, RemoteImagesPolicy } from "../platform/store/org-kv.js";
 import type { GatewayStore } from "../platform/store/gateway.js";
 import type { Chat, MachineInfo, UserInfo } from "@guild/wire/rest";
 import { userInfo } from "../platform/domain/user-info.js";
@@ -27,7 +27,7 @@ export interface WorkspaceReads {
   readonly chats: Pick<ChatStore, "listChats" | "listArchivedChats">;
   readonly projects: Pick<ProjectStore, "list" | "listArchived">;
   readonly orgs: Pick<OrgStore, "get">;
-  readonly orgKv: Pick<OrgKvStore, "telemetryEnabled">;
+  readonly orgKv: Pick<OrgKvStore, "telemetryEnabled" | "remoteImages">;
   readonly gatewayStore: Pick<GatewayStore, "listModels">;
   readonly machines: Pick<MachineStore, "listForUser">;
   readonly identity: Pick<IdentityStore, "getUser">;
@@ -61,18 +61,30 @@ export async function projectListSnapshot(
 }
 
 /** The workspace's display identity: the name and logo the app shell shows
- *  in its title, the admin-controlled telemetry switch the clients obey,
- *  and the identity of the web bundle this server serves. */
+ *  in its title, the admin-controlled telemetry switch and remote-image
+ *  policy the clients obey, and the identity of the web bundle this server
+ *  serves. */
 export async function workspaceIdentitySnapshot(
   ctx: Pick<WorkspaceReads, "orgs" | "orgKv" | "config">,
   orgId: string,
-): Promise<{ name: string; logo_url?: string; telemetry: boolean; web_bundle?: string }> {
-  const [org, telemetry] = await Promise.all([ctx.orgs.get(orgId), ctx.orgKv.telemetryEnabled(orgId)]);
+): Promise<{
+  name: string;
+  logo_url?: string;
+  telemetry: boolean;
+  remote_images: RemoteImagesPolicy;
+  web_bundle?: string;
+}> {
+  const [org, telemetry, remoteImages] = await Promise.all([
+    ctx.orgs.get(orgId),
+    ctx.orgKv.telemetryEnabled(orgId),
+    ctx.orgKv.remoteImages(orgId),
+  ]);
   const bundle = servedWebBundle(ctx.config);
   return {
     name: org.name,
     ...(org.logo_url !== null ? { logo_url: org.logo_url } : {}),
     telemetry,
+    remote_images: remoteImages,
     ...(bundle !== null ? { web_bundle: bundle } : {}),
   };
 }

@@ -33,6 +33,7 @@ const SERVER_TAG_NAMES = [
   "model_list",
   "member_profile",
   "agent_list",
+  "integration_access",
   "agent_run",
   "agent_threads",
   "agent_routines",

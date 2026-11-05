@@ -1,6 +1,7 @@
 // The installed integrations, in priority order. This is the only place a
 // new integration is listed: its folder carries the manifest, the tool
-// declarations, the execute function, and the logo.
+// declarations, the execute function, and the logo. An MCP plugin's folder
+// carries its manifest (the remote server and settings), README and logo.
 
 import grafana from "./grafana/integration.js";
 import searxng from "./searxng/integration.js";
@@ -12,9 +13,10 @@ import atlassian from "./atlassian/integration.js";
 import slack from "./slack/integration.js";
 import github from "./github/integration.js";
 import gitlab from "./gitlab/integration.js";
-import type { IntegrationPlugin } from "@guild/integration-sdk";
+import stripe from "./stripe/integration.js";
+import type { GuildPlugin } from "@guild/integration-sdk";
 
-export const PLUGINS: IntegrationPlugin[] = [
+export const PLUGINS: GuildPlugin[] = [
   grafana,
   searxng,
   firecrawl,
@@ -25,4 +27,5 @@ export const PLUGINS: IntegrationPlugin[] = [
   slack,
   github,
   gitlab,
+  stripe,
 ];

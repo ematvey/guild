@@ -1,8 +1,12 @@
-// The integration plugin contract: a plugin module's default export carries
-// a manifest (shop metadata, settings fields, tool declarations, traits) and
-// its validate, testConnection and execute functions. Guild knows only this
-// shape, for a built-in compiled into the server and a published plugin
-// bundle alike.
+// The integration plugin contract. A plugin module's default export is one
+// of two shapes, for a built-in compiled into the server and a published
+// plugin bundle alike:
+//   - a code plugin: a manifest (shop metadata, settings fields, tool
+//     declarations, traits) and its validate, testConnection and execute
+//     functions;
+//   - an MCP plugin: a manifest naming a remote MCP server, the settings an
+//     admin fills in and the headers they become. It carries no code; the
+//     server discovers its tools live.
 
 import type { JsonObject, ToolOutcome } from "./shared.js";
 
@@ -69,4 +73,55 @@ export interface IntegrationPlugin {
     secrets: [string, string][],
     actingAs: string | null,
   ): Promise<ToolOutcome>;
+}
+
+/** A remote MCP server an MCP plugin wraps. Each `{name}` in a header
+ *  value is replaced by the stored secret of that name; a header whose
+ *  secret is not stored is not sent. */
+export interface McpServer {
+  url: string;
+  headers?: Record<string, string>;
+  /** Send Guild's `x-guild-*` identity headers. Default true; a
+   *  third-party server should get false. */
+  envelope?: boolean;
+}
+
+export interface McpIntegrationManifest {
+  name: string;
+  title: string;
+  version: string;
+  publisher: string;
+  /** One line for the shop card. */
+  summary: string;
+  /** Markdown the agent reads about the integration; the people-facing
+   *  landing page is the plugin's README.md. */
+  description: string;
+  docs_url: string | null;
+  categories: string[];
+  /** The settings form; secret-kind fields are what the header templates
+   *  reference. */
+  fields: IntegrationField[];
+  mcp: McpServer;
+  /** Classes for tools the server serves, by the server's tool name. A tool
+   *  not named here takes the admin's choice, else the class its read-only
+   *  and destructive hints and its name suggest. */
+  tool_classes?: Record<string, "read" | "write" | "admin">;
+}
+
+/** A plugin that wraps a remote MCP server. */
+export interface McpIntegrationPlugin {
+  kind: "mcp";
+  manifest: McpIntegrationManifest;
+}
+
+/** Any plugin a module may export. */
+export type GuildPlugin = IntegrationPlugin | McpIntegrationPlugin;
+
+/** Declares a plugin that wraps a remote MCP server. */
+export function mcpIntegration(manifest: McpIntegrationManifest): McpIntegrationPlugin {
+  return { kind: "mcp", manifest };
+}
+
+export function isMcpPlugin(plugin: GuildPlugin): plugin is McpIntegrationPlugin {
+  return (plugin as McpIntegrationPlugin).kind === "mcp";
 }

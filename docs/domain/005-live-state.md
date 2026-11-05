@@ -21,7 +21,7 @@ Two kinds of data stay as reads, because they are not live state:
 | Frame | One tagged message on a socket | Every tag is declared in `protocol/socket.schema.json` with a fixture. A reader ignores unknown tags and fields, and never fails a frame for what it does not know | A typed contract that older clients survive |
 | Sync | The bracket in which a client asks for one Thread and receives its authoritative view | `sync_begin` … `sync_done`. Holds back deferred frames until the bracket closes. Names the socket's shown Thread | A first view consistent with what follows it |
 | Shown Thread | The Thread a socket's latest Sync named | Thread-view frames go only to sockets showing that Thread. A socket that never syncs receives every Thread of its Member | A socket gets only what it displays |
-| Read marker | A Member's highest read event of a Thread | Moves only forward. A client sets it only while the Thread is open and visible | Unread state, and the presence signal for notifications |
+| Read marker | A Member's highest read event of a Thread | Moves only forward. A client sets it only while the Thread is open, visible and its window has focus, and again when the window regains focus | Unread state, and the presence signal for notifications |
 | Push subscription | A browser or device registered for Web Push | Removed when the push service reports it gone | Tells a Member a Run ended when no client is watching |
 
 ## Frames and where they go
@@ -30,7 +30,7 @@ Two kinds of data stay as reads, because they are not live state:
 | --- | --- |
 | Sockets showing the Thread | `thread_state`, `thread_events`, `live_frame`, `context_usage` |
 | Every socket of the Thread's Member | `chat_status`, `chat_row`, `thread_list`, `archived_thread_list`, `subagent_tree`, `chat_tree`, `project_list`, `machine_list` |
-| The Member's member sockets | `machine_status`, `member_profile` |
+| The Member's member sockets | `machine_status`, `member_profile`, `integration_access` (the Integrations they may add to an Agent, re-sent when an audience, a grant or a team membership moves) |
 | Members who may see the Agent or Skill | `agent_list`, `agent_run`, `agent_threads`, `agent_routines`, `skill_catalog` |
 | Every socket of the Org | `org_event`, `workspace_identity`, `model_list` |
 | One socket | `hello`, `pong`, `error`, `sync_begin`, `sync_done`, `auth_required`, `displaced` |
@@ -40,7 +40,7 @@ A client sends `sync`, `read` and `ping`. A Machine also sends `tool_result` and
 
 ### The first view
 
-On connect the server sends `hello`, then the Member's workspace (Threads, Projects, Machines, identity, models, profile), then the Agent list and skill catalog. To show a Thread, the client sends `sync`. Inside the bracket the server:
+On connect the server sends `hello`, then the Member's workspace (Threads, Projects, Machines, identity, models, profile), then the Agent list (with each Agent's Integration warnings), the Integrations the Member may attach, and the skill catalog. To show a Thread, the client sends `sync`. Inside the bracket the server:
 
 1. Checks read access.
 2. Sends the Thread's tree and context usage.

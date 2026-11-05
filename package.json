@@ -5,6 +5,7 @@
     "apps/*",
     "packages/ui",
     "packages/wire",
+    "packages/genui",
     "packages/integration-sdk"
   ],
   "scripts": {

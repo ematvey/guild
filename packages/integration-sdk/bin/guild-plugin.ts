@@ -7,6 +7,10 @@
 //       manifest, and writes <out>/<slug>-<version>.guildplugin (a tar.gz
 //       with manifest.json, plugin.js, and the nearest logo.svg between the
 //       entry's folder and the working directory).
+//       An entry whose default export is an `mcpIntegration(...)` packs
+//       without code: manifest.json (the server, settings and header
+//       templates), logo.svg and README.md. The server discovers its tools
+//       live once an admin configures it.
 //
 //   guild-plugin publish <bundle> [--server URL] [--token TOKEN] [--approve]
 //       Uploads the bundle to a Guild server's registry. --approve (admin
@@ -25,8 +29,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { c as tarCreate } from "tar";
-import type { IntegrationPlugin } from "../src/types.js";
-import { registryManifest } from "../src/bundle-manifest.js";
+import { isMcpPlugin, type GuildPlugin } from "../src/types.js";
+import { mcpRegistryManifest, registryManifest } from "../src/bundle-manifest.js";
 
 const CATALOG_FORMAT = "guild-plugin-catalog/1";
 
@@ -105,17 +109,24 @@ async function pack(positional: string[], flags: Record<string, string | true>):
   const code = Buffer.from(await built.outputs[0]!.arrayBuffer());
   const codePath = path.join(outDir, "plugin.js");
   writeFileSync(codePath, code);
-  const mod = (await import(`${pathToFileURL(codePath).href}?t=${Date.now()}`)) as { default?: IntegrationPlugin };
+  const mod = (await import(`${pathToFileURL(codePath).href}?t=${Date.now()}`)) as { default?: GuildPlugin };
   const plugin = mod.default;
   if (plugin?.manifest === undefined) die(`${entry} has no default plugin export`);
-  if (typeof plugin.execute !== "function" || typeof plugin.testConnection !== "function") {
-    die("the plugin export lacks execute or testConnection");
+  let files: Record<string, Buffer | string>;
+  if (isMcpPlugin(plugin)) {
+    // An MCP plugin runs no code: the bundle is its manifest and pages.
+    rmSync(codePath, { force: true });
+    files = { "manifest.json": `${JSON.stringify(mcpRegistryManifest(plugin.manifest), null, 2)}\n` };
+  } else {
+    if (typeof plugin.execute !== "function" || typeof plugin.testConnection !== "function") {
+      die("the plugin export lacks execute or testConnection");
+    }
+    files = {
+      "manifest.json": `${JSON.stringify(registryManifest(plugin.manifest), null, 2)}\n`,
+      "plugin.js": code,
+    };
   }
   const m = plugin.manifest;
-  const files: Record<string, Buffer | string> = {
-    "manifest.json": `${JSON.stringify(registryManifest(m), null, 2)}\n`,
-    "plugin.js": code,
-  };
   // The nearest logo.svg and README.md from the entry's folder up to the
   // working directory (a plugin folder keeps them beside src/).
   const stop = path.resolve(".");

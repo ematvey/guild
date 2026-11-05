@@ -13,7 +13,7 @@ import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { BundleWriteError, publishRegistryBundle } from "../registry-publish.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";
 import type { UserRow } from "../store/identity.js";
-import { builtinByName } from "../../integrations/loader.js";
+import { isBuiltinSlug } from "../../integrations/loader.js";
 import { CODE_ENTRY } from "../../integrations/code-plugins.js";
 
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
@@ -252,7 +252,7 @@ export function registerRegistryRoutes(
 /** A code plugin bundle carries its entry file and does not reuse a
  *  built-in slug (the built-in would shadow it). */
 export function assertCodeBundle(slug: string, parsed: ParsedBundle): void {
-  if (builtinByName(slug) !== undefined) {
+  if (isBuiltinSlug(slug)) {
     throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
   }
   if (readBundleFile(parsed, CODE_ENTRY) === null) {
@@ -279,7 +279,7 @@ async function installCodePlugin(
 }
 
 /** Install path for v2 MCP plugin bundles: creates a disabled `integrations`
- *  row carrying the mcp/auth/tool_policy config (skipped when the row
+ *  row carrying the mcp/auth config (skipped when the row
  *  already exists). */
 async function installMcpPlugin(
   gateway: GatewayCtx,
@@ -301,7 +301,6 @@ async function installMcpPlugin(
   const config = {
     mcp: manifest.mcp ?? null,
     auth,
-    tool_policy: {},
   };
   const existing = (await gateway.integrations.list(user.org_id)).find((r) => r.name === slug);
   let integrationRow = existing ?? null;

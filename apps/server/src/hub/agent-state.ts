@@ -1,5 +1,6 @@
-// Agent and skill state on the member socket: the agent list, one run, one
-// agent's routines, one user's threads with an agent, and the skill catalog.
+// Agent and skill state on the member socket: the agent list, the
+// Integrations a member may attach, one run, one agent's routines, one
+// user's threads with an agent, and the skill catalog.
 // Each frame is scoped to the users allowed to read it — an agent's run and
 // routines reach only members who may see that agent, a thread list only its
 // owner, an agent list is filtered per member — and carries the whole current
@@ -23,6 +24,8 @@ import type { LiveHub } from "./live.js";
 import type { WsServerMsg } from "./protocol.js";
 import { sendChanged } from "./sent-frames.js";
 import { KeyedChain, type ChainFailure } from "./keyed-chain.js";
+import type { IntegrationAccessStore } from "../platform/store/integration-access.js";
+import { agentWarnings, type AccessContext, type IntegrationDisplay } from "../platform/domain/integration-access.js";
 
 /** The reads the agent and skill frames take. */
 export interface AgentStateDeps {
@@ -36,6 +39,11 @@ export interface AgentStateDeps {
   readonly identity: Pick<IdentityStore, "getUsers">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   readonly trace: Pick<TraceStore, "callCounts">;
+  /** Integration audiences: each Agent's warnings and each member's
+   *  attachable Integrations. */
+  readonly integrationAccess: Pick<IntegrationAccessStore, "context" | "attachable">;
+  /** Installed Integrations' titles and summaries, keyed by slug. */
+  integrationDisplay(orgId: string): Promise<Map<string, IntegrationDisplay>>;
 }
 
 /** How long a finished run's frame waits for its call counts. */
@@ -48,8 +56,9 @@ const COUNTS_TIMEOUT_MS = 2_000;
 export const BURST_QUIET_MS = 50;
 export const BURST_MAX_MS = 250;
 
-/** An agent row on the wire: every joined field is always present. */
-export function agentWire(agent: StoreAgent): Agent {
+/** An agent row on the wire: every joined field is always present, and the
+ *  Integration warnings are computed against the org's audiences. */
+export function agentWire(agent: StoreAgent, access: AccessContext): Agent {
   return {
     ...agent,
     owner_label: agent.owner_label ?? null,
@@ -57,6 +66,7 @@ export function agentWire(agent: StoreAgent): Agent {
     owner_avatar_url: agent.owner_avatar_url ?? null,
     model_alias: agent.model_alias ?? null,
     team_ids: agent.team_ids ?? [],
+    integration_warnings: agentWarnings(agent, access),
   };
 }
 
@@ -182,19 +192,24 @@ export class AgentStateFeed {
     if (ensurePersonal) {
       for (const user of members) await this.store.ensurePersonalAgent(user);
     }
-    const [visible, rows] = await Promise.all([
-      this.store.grants.visibleAgentIds(
-        orgId,
-        members.map((user) => user.id),
-      ),
+    const memberIds = members.map((user) => user.id);
+    const [visible, rows, access, display] = await Promise.all([
+      this.store.grants.visibleAgentIds(orgId, memberIds),
       this.store.listForOrg(orgId, { includeArchived: true }),
+      this.ctx.integrationAccess.context(orgId),
+      this.ctx.integrationDisplay(orgId),
     ]);
-    const wire = rows.map(agentWire);
+    const attachable = await this.ctx.integrationAccess.attachable(orgId, memberIds, (slug) => display.get(slug));
+    const wire = rows.map((row) => agentWire(row, access));
     for (const user of members) {
       if (!this.connected(user.id)) continue;
       const ids = visible.get(user.id);
       const agents = ids === undefined ? [] : wire.filter((agent) => ids.has(agent.id));
       this.sendKeyed(user.id, "agent_list", { type: "agent_list", agents });
+      this.sendKeyed(user.id, "integration_access", {
+        type: "integration_access",
+        integrations: attachable.get(user.id) ?? [],
+      });
     }
   }
 

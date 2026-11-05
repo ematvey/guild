@@ -9,6 +9,7 @@ import { ChatStore } from "../../platform/store/chats.js";
 import { IdentityStore, type UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
 import { AgentStateFeed, agentWire, type AgentStateDeps } from "../../hub/agent-state.js";
+import { IntegrationAccessStore } from "../../platform/store/integration-access.js";
 import type { WsServerMsg } from "../../hub/protocol.js";
 import { waitFor } from "../support/wait.js";
 import { createAgentsTestEnv } from "./harness.js";
@@ -117,6 +118,10 @@ dbDescribe("agent list feed", () => {
       identity: new IdentityStore(counting.pool),
       skills: { catalog: async () => [], installsForUsers: async () => new Map() },
       trace: { callCounts: async () => ({}) },
+      // The Integration audience reads are per org, not per member; they run
+      // on the uncounted pool so the count below stays the agent reads.
+      integrationAccess: new IntegrationAccessStore(env!.db),
+      integrationDisplay: async () => new Map(),
     } as unknown as AgentStateDeps;
     const feed = new AgentStateFeed(deps, (_label, _key, error) => {
       throw error;
@@ -124,7 +129,10 @@ dbDescribe("agent list feed", () => {
     try {
       const before = counting.count();
       feed.agents({ org_id: orgId, agent_id: null, run_id: null, user_id: null });
-      await waitFor(async () => [...received.values()].every((frames) => frames.length === 1), 5_000);
+      await waitFor(
+        async () => [...received.values()].every((frames) => frames.some((frame) => frame.type === "agent_list")),
+        5_000,
+      );
       // The member rows, the visible ids and the org's agent rows: three
       // reads, whatever the member count.
       expect(counting.count() - before).toBe(3);
@@ -132,13 +140,16 @@ dbDescribe("agent list feed", () => {
       feed.stop();
     }
     for (const user of users) {
-      const frame = received.get(user.id)![0]!;
-      const expected = (await store.list(user, { includeArchived: true })).map(agentWire);
+      const frame = received.get(user.id)!.find((item) => item.type === "agent_list")!;
+      const context = await new IntegrationAccessStore(env!.db).context(orgId);
+      const expected = (await store.list(user, { includeArchived: true })).map((agent) => agentWire(agent, context));
       expect(frame).toEqual({ type: "agent_list", agents: expected });
       expect(expected.length).toBeGreaterThan(0);
     }
     const names = (userIndex: number) =>
-      (received.get(users[userIndex]!.id)![0] as { agents: { name: string }[] }).agents
+      (
+        received.get(users[userIndex]!.id)!.find((item) => item.type === "agent_list") as { agents: { name: string }[] }
+      ).agents
         .map((agent) => agent.name)
         .sort();
     expect(names(0)).toEqual(["Archived", "Assistant", "Granted", "Org-wide", "Private", "Team"]);

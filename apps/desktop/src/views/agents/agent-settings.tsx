@@ -42,6 +42,9 @@ import {
 import { VISIBILITY_LABEL, type AgentVisibility } from "./agents-route";
 import { Mono, Section } from "./agent-ui";
 import { ModelName, useModelOptions } from "./agent-model";
+import { AgentIntegrationsEditor, CLASS_LABEL, IntegrationWarnings } from "./agent-integrations";
+import { useAttachableIntegrations } from "./agents-store";
+import type { AgentIntegration } from "@guild/wire/rest";
 
 export function AgentSettings({
   agent,
@@ -59,9 +62,12 @@ export function AgentSettings({
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
   const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
+  const [generativeUi, setGenerativeUi] = useState<boolean>(agent.generative_ui ?? true);
   const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
   const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
   const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [integrations, setIntegrations] = useState<AgentIntegration[]>(agent.integrations);
+  const attachable = useAttachableIntegrations();
   const models = useModelOptions();
   const [catalog, setCatalog] = useState<AgentToolInfo[]>([]);
   const [saving, setSaving] = useState(false);
@@ -90,8 +96,10 @@ export function AgentSettings({
         model,
         tools,
         tools_mode: toolsMode,
+        generative_ui: generativeUi,
         visibility,
         team_ids: visibility === "team" ? teamIds : [],
+        integrations,
       });
       setSaved(true);
     } catch (err) {
@@ -201,6 +209,20 @@ export function AgentSettings({
             </div>
           )}
         </div>
+        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-foreground"
+            checked={generativeUi}
+            onChange={(e) => setGenerativeUi(e.target.checked)}
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">Generated UI</span>
+            <span className="block text-xs text-muted-foreground">
+              Replies can include interactive cards, tables, charts, forms and buttons.
+            </span>
+          </span>
+        </label>
       </Section>
 
       <Section
@@ -226,7 +248,7 @@ export function AgentSettings({
             <span className="min-w-0">
               <span className="block text-sm font-medium">All available tools</span>
               <span className="block text-xs text-muted-foreground">
-                Includes every integration the org enables now and later, without editing this agent.
+                Every built-in tool, including ones added in later releases. Integrations are chosen below.
               </span>
             </span>
           </label>
@@ -245,12 +267,10 @@ export function AgentSettings({
           </label>
         </div>
         <p className="mb-3 text-xs text-muted-foreground">
-          Codemode is always available. Integration tools appear here when the org enables that integration.
+          Codemode is always available. Integrations are chosen in their own section.
         </p>
         {toolsMode === "all" ? (
-          <p className="text-sm text-muted-foreground">
-            This agent uses every tool the org enables, including integrations added later.
-          </p>
+          <p className="text-sm text-muted-foreground">This agent uses every built-in tool.</p>
         ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             The org tool catalog did not load. The current allowlist is shown below.
@@ -303,6 +323,19 @@ export function AgentSettings({
             ))}
           </div>
         )}
+      </Section>
+
+      <Section title="Integrations" description={integrations.length === 0 ? "None" : `${integrations.length} added`}>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Everyone who can use this agent reaches what is listed here, whatever their own access.
+        </p>
+        <AgentIntegrationsEditor
+          value={integrations}
+          onChange={setIntegrations}
+          attachable={attachable}
+          warnings={agent.integration_warnings}
+          isAdmin={viewer.role === "admin"}
+        />
       </Section>
 
       {error !== null && (
@@ -363,12 +396,38 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
           <dt className="text-muted-foreground">Visibility</dt>
           <dd>{VISIBILITY_LABEL[agent.visibility]}</dd>
         </div>
+        <div className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">Generated UI</dt>
+          <dd>{agent.generative_ui ? "On" : "Off"}</dd>
+        </div>
         <div>
           <dt className="text-muted-foreground">Tools</dt>
           <dd className="mt-1 flex flex-wrap gap-1.5">
-            {agent.tools.map((tool) => (
-              <Mono key={tool}>{tool}</Mono>
-            ))}
+            {agent.tools_mode === "all" ? (
+              <span className="text-xs">Every built-in tool</span>
+            ) : (
+              agent.tools.map((tool) => <Mono key={tool}>{tool}</Mono>)
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Integrations</dt>
+          <dd className="mt-1 space-y-1">
+            {agent.integrations.length === 0 ? (
+              <span className="text-xs">None</span>
+            ) : (
+              agent.integrations.map((entry) => (
+                <div key={entry.slug}>
+                  <span className="text-xs">
+                    <Mono>{entry.slug}</Mono> {CLASS_LABEL[entry.ceiling].toLowerCase()}
+                  </span>
+                  <IntegrationWarnings
+                    warnings={agent.integration_warnings.filter((w) => w.integration === entry.slug)}
+                    title={entry.slug}
+                  />
+                </div>
+              ))
+            )}
           </dd>
         </div>
       </dl>

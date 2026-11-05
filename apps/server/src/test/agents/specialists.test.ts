@@ -2,6 +2,7 @@
 // and a notes index, a reinstall updates them without touching knowledge,
 // and the route is admin-only.
 
+import { IntegrationAccessStore } from "../../platform/store/integration-access.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,7 +77,7 @@ describe("specialist pack", () => {
     const { orgId, owner } = await makeOrg();
     const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), workspaceRoot: root });
     const result = await installSpecialists(
-      { store, workspaceRoot: root },
+      { store, workspaceRoot: root, access: new IntegrationAccessStore(stack.env.db) },
       { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },
     );
     expect(result.created.sort()).toEqual(SPECIALIST_PACK.map((spec) => spec.name).sort());
@@ -102,7 +103,10 @@ describe("specialist pack", () => {
   it("a second install updates in place and leaves notes intact", async () => {
     const { orgId, owner } = await makeOrg();
     const store = new AgentStore({ pool: stack.env.db, chats: new ChatStore(stack.env.db), workspaceRoot: root });
-    await installSpecialists({ store, workspaceRoot: root }, { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" });
+    await installSpecialists(
+      { store, workspaceRoot: root, access: new IntegrationAccessStore(stack.env.db) },
+      { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },
+    );
 
     const clients = (await store.list(owner, { includeArchived: true })).find(
       (agent) => agent.resources["specialist"] === "clients",
@@ -115,7 +119,7 @@ describe("specialist pack", () => {
     writeFileSync(account, "# Acme\n\nRenewal in May.\n");
 
     const second = await installSpecialists(
-      { store, workspaceRoot: root },
+      { store, workspaceRoot: root, access: new IntegrationAccessStore(stack.env.db) },
       { orgId, ownerUserId: owner.id, model: "GLM-Test-Model" },
     );
     expect(second.created).toEqual([]);
