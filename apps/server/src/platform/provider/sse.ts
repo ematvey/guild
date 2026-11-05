@@ -7,6 +7,24 @@
 
 import { ProviderError } from "./types.js";
 
+/** The wait for a provider's response headers, and the way to end it. The
+ *  signal must be cancelled once the headers arrive: an armed abort would
+ *  cut the streamed body at the same deadline. The body is bounded
+ *  separately by `sseDataStreams`' idle read. */
+export interface HeaderDeadline {
+  signal: AbortSignal;
+  done(): void;
+}
+
+export function headerDeadline(ms = 60_000): HeaderDeadline {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), ms);
+  return {
+    signal: controller.signal,
+    done: () => clearTimeout(timer),
+  };
+}
+
 export interface SseDecoder {
   /** Pushes bytes; yields complete data payloads in order. */
   push(chunk: Uint8Array): string[];

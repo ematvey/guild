@@ -11,7 +11,7 @@ import {
   type ToolCall,
 } from "./types.js";
 import type { Json } from "@guild/wire/rest";
-import { sseDataStreams } from "./sse.js";
+import { headerDeadline, sseDataStreams } from "./sse.js";
 
 /** The output-token-limit dialect for a model name: OpenAI reasoning
  *  families (`o1*`, `o3*`, `o4*`, `gpt-5*` — matched on the final path
@@ -179,6 +179,11 @@ interface PartialCall {
 export const openAiProvider: ModelProvider = {
   async chatStream(req: ProviderRequest): Promise<AsyncIterable<ProviderChunk | ProviderError>> {
     const url = `${req.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`;
+    // The deadline covers the wait for response headers only. It must be
+    // cleared once they arrive: an abort signal stays armed on the body, so
+    // a long stream would be cut at the same second. The body has its own
+    // bound (the idle read in sseDataStreams).
+    const headers = headerDeadline();
     let res: Response;
     try {
       res = await fetch(url, {
@@ -188,7 +193,7 @@ export const openAiProvider: ModelProvider = {
           "content-type": "application/json",
         },
         body: JSON.stringify(openAiBody(req)),
-        signal: AbortSignal.timeout(60_000),
+        signal: headers.signal,
       });
     } catch (error) {
       // Every phase bounded: connect (15s), response headers (60s) — a
@@ -197,6 +202,8 @@ export const openAiProvider: ModelProvider = {
       throw ProviderError.stream(
         (error as { name?: string }).name === "TimeoutError" ? "provider did not respond within 60s" : errorText(error),
       );
+    } finally {
+      headers.done();
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");

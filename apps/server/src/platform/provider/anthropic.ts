@@ -11,7 +11,7 @@ import {
   type ToolCall,
 } from "./types.js";
 import type { Json } from "@guild/wire/rest";
-import { sseDataStreams } from "./sse.js";
+import { headerDeadline, sseDataStreams } from "./sse.js";
 
 /** Anthropic requires an explicit cap on every request. */
 const DEFAULT_MAX_TOKENS = 4096;
@@ -298,6 +298,9 @@ export const anthropicProvider: ModelProvider = {
       // Audio/unsupported-image rejections happen before any upstream call.
       throw error as ProviderError;
     }
+    // The deadline covers the wait for headers only; clearing it keeps the
+    // streamed body alive past the same second (see headerDeadline).
+    const headers = headerDeadline();
     let res: Response;
     try {
       res = await fetch(url, {
@@ -308,7 +311,7 @@ export const anthropicProvider: ModelProvider = {
           "content-type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
+        signal: headers.signal,
       });
     } catch (error) {
       throw ProviderError.stream(
@@ -318,6 +321,8 @@ export const anthropicProvider: ModelProvider = {
             ? error.message
             : String(error),
       );
+    } finally {
+      headers.done();
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
