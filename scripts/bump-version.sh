@@ -19,11 +19,28 @@ FILES=(
   apps/desktop/package.json
   apps/server/package.json
   packages/ui/package.json
+  package-lock.json                     # the three workspace members' version fields (see below)
 )
 
 for f in "${FILES[@]}"; do
   if [[ "$f" == *.toml ]]; then
     sed -i 's/^version = ".*"/version = "'"$V"'"/' "$f"
+  elif [[ "$f" == "package-lock.json" ]]; then
+    # Only the workspace members carry the product version in the npm lock;
+    # every other "version" there belongs to a dependency. A stale member
+    # version makes `npm install` rewrite the lock, which the client release
+    # refuses as a dirty tree.
+    node -e '
+      const fs = require("fs");
+      const file = process.argv[1];
+      const v = process.argv[2];
+      const lock = JSON.parse(fs.readFileSync(file, "utf8"));
+      for (const key of ["apps/desktop", "apps/server", "packages/ui"]) {
+        const entry = lock.packages?.[key];
+        if (entry && entry.version) entry.version = v;
+      }
+      fs.writeFileSync(file, JSON.stringify(lock, null, 2) + "\n");
+    ' "$f" "$V"
   else
     sed -i '0,/"version": ".*"/s//"version": "'"$V"'"/' "$f"
   fi
