@@ -34,6 +34,9 @@ export type { Chat, EventRow, Json, MachineInfo, Project, SubagentNode, ThreadEv
 /** A JSON UUID string. */
 export type Uuid = string;
 
+/** How clients treat a remote image in agent content. */
+export type RemoteImagesPolicy = "auto" | "click" | "never";
+
 /** The 11 stream event variants. `live_frame.event` carries one. */
 export type StreamEvent =
   | { type: "delta"; content: string }
@@ -168,6 +171,9 @@ export type ServerFrame =
       name: string;
       logo_url?: string;
       telemetry: boolean;
+      /** Admin policy for remote images in agent content; absent from
+       *  older servers, read as `auto`. */
+      remote_images?: RemoteImagesPolicy;
       /** The served web bundle's identity; absent when none is served. */
       web_bundle?: string;
     }

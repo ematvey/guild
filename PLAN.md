@@ -97,6 +97,25 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Generated UI: the full component set, images, and an org remote-image
+  policy (2026-11-05).** The library grew from 28 to 55 components to
+  cover OpenUI's reference set: Accordion, Modal, Carousel, Steps,
+  EntityList, CodeBlock, Image, ImageGallery, FollowUps, Scatter/Radar/
+  Radial/StackedBar charts, a horizontal BarChart, and the inputs
+  RadioGroup, CheckBoxGroup, Switch, Slider, DatePicker, OptionCards,
+  Chips and EditableTable. `$variables` and the built-in functions are on;
+  Query/Mutation stay off. The prompt section is now about 18.5k
+  characters (~4.5k tokens), static and cached. Left out as duplicates of
+  what exists: the vendor's composite card blocks, InlineHeader, Label,
+  IconButton, MarkDownRenderer. Images: attachments (`attachment:<id>`,
+  from `send_file`) and inline `data:image` always load; remote http(s)
+  images follow a new org setting, `remote_images` (`auto` default,
+  `click`, `never`), set on a new admin Settings → Security page and pushed
+  on `workspace_identity`. Chat Markdown images follow the same policy
+  (they used to be link placeholders only). A remote image is a request
+  whose URL its host sees, so injected content can exfiltrate through it;
+  `auto` is the product owner's choice, `click`/`never` are there for orgs
+  that want the stricter trade-off.
 - **Generated UI blocks take one answer (2026-11-05).** A form or a set of
   choice buttons stayed live after it was used, so it could be submitted
   again and again. A block is now a dialog: the first user message after

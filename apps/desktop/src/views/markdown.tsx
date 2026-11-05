@@ -8,6 +8,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { openExternal } from "../lib/open-external";
 import { GenuiBlock, isGenuiLanguage } from "./genui/genui-block";
+import { ContentImage } from "./genui/image";
 
 interface HastNode {
   type: string;
@@ -35,9 +36,7 @@ function fencedCode(node: HastNode | undefined): { className: string; text: stri
 export const CHAT_MD_PLUGINS = [remarkGfm, remarkBreaks];
 
 /// Anchor for markdown content: every link routes through `openExternal`.
-/// Images never load from model/tool-controlled URLs: injected markdown
-/// could otherwise exfiltrate via the image request; a rendered placeholder
-/// links out instead.
+/// Images load by the org's remote-image policy.
 export const mdComponents: Components = {
   // A fenced `openui` block is Generated UI: it renders as components.
   pre: ({ node, children, ...rest }) => {
@@ -59,19 +58,14 @@ export const mdComponents: Components = {
       {children}
     </a>
   ),
-  img: ({ node: _node, src, alt }) => {
-    const url = typeof src === "string" ? src : undefined;
-    const label = alt || url || "image";
-    return (
-      <button
-        type="button"
-        className="inline-flex max-w-full items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-        onClick={() => url && openExternal(url)}
-      >
-        🖼 {label}
-      </button>
-    );
-  },
+  // Images follow the org's remote-image policy (see genui/image.tsx).
+  img: ({ node: _node, src, alt }) => (
+    <ContentImage
+      src={typeof src === "string" ? src : undefined}
+      alt={alt}
+      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-border object-contain"
+    />
+  ),
 };
 
 /// Markdown body class shared by text blocks, tool-card excerpts and the

@@ -68,6 +68,7 @@ const SECTION_DETAILS = {
   models: rowDetailCodec,
   mcp: rowDetailCodec,
   sso: null,
+  security: null,
   registry: registryDetailCodec,
   about: null,
 } as const;
@@ -89,6 +90,7 @@ const ADMIN_SECTIONS: ReadonlySet<SettingsSectionId> = new Set<SettingsSectionId
   "teams",
   "models",
   "sso",
+  "security",
   "registry",
 ]);
 

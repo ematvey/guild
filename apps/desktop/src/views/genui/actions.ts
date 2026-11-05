@@ -104,6 +104,13 @@ function formValues(event: GenuiEvent): string[] {
         ? (wrapped as { value: unknown }).value
         : wrapped;
     if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value) && value.some(Array.isArray)) {
+      // A table: one row per line, cells separated by " | ".
+      const rows = value.filter(Array.isArray).map((row) => (row as unknown[]).map((c) => String(c ?? "")).join(" | "));
+      lines.push(`${name}:\n${rows.join("\n")}`);
+      continue;
+    }
+    if (Array.isArray(value) && value.length === 0) continue;
     const text = Array.isArray(value)
       ? value.join(", ")
       : typeof value === "boolean"

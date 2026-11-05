@@ -387,6 +387,11 @@
           "type": "boolean",
           "description": "Admin-controlled telemetry switch: when true the client collects app diagnostics and sends them to the workspace collector."
         },
+        "remote_images": {
+          "type": "string",
+          "enum": ["auto", "click", "never"],
+          "description": "Admin policy for remote (http/https) images in agent content: load at once, load on a click, or never load. Attachments and inline images always load. Absent from servers that predate it; clients read absent as auto."
+        },
         "web_bundle": {
           "type": "string",
           "description": "Identity of the web bundle the server serves (its entry script hash). A browser client running a different bundle reloads into the served one. Absent when the server serves no bundle."

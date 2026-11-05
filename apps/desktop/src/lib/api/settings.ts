@@ -2,6 +2,7 @@
 // integrations, registry and usage. Views render; this module owns every
 // endpoint path so a settings view never names one.
 
+import type { RemoteImagesPolicy } from "@guild/wire/types";
 import { request, requestResponse } from "./request";
 
 /** The fixed GET paths the settings sections cache. */
@@ -42,6 +43,11 @@ export function putOrgName(name: string): Promise<void> {
  *  value on the workspace-identity frame. */
 export function putOrgTelemetry(enabled: boolean): Promise<void> {
   return request<void>("PUT", `${SETTINGS_PATHS.org}/telemetry`, { enabled });
+}
+
+/** The org's remote-image policy for agent content (admin only). */
+export function putOrgRemoteImages(policy: RemoteImagesPolicy): Promise<void> {
+  return request<void>("PUT", `${SETTINGS_PATHS.org}/remote-images`, { policy });
 }
 
 /** Web Push: this device's notification subscription. */

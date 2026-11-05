@@ -14,6 +14,7 @@ import {
   Sparkles,
   User,
   Users,
+  ShieldCheck,
   UsersRound,
   Waypoints,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import TeamsSection from "./sections/TeamsSection";
 import ModelsSection from "./sections/ModelsSection";
 import McpSection from "./sections/McpSection";
 import SsoSection from "./sections/SsoSection";
+import SecuritySection from "./sections/SecuritySection";
 import RegistrySection from "./sections/RegistrySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 
@@ -68,6 +70,7 @@ export const SETTINGS_SECTIONS: SectionDef[] = (
     { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
     { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
     { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
+    { id: "security", label: "Security", icon: <ShieldCheck className="size-4" />, group: "workspace" },
     { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
   ] satisfies Omit<SectionDef, "admin">[]
 ).map((s) => ({ ...s, admin: isAdminSection(s.id) }));
@@ -188,6 +191,8 @@ function SectionBody({
       return <McpSection detail={detail} onDetailChange={onDetailChange} />;
     case "sso":
       return <SsoSection />;
+    case "security":
+      return <SecuritySection />;
     case "registry":
       return <RegistrySection detail={detail} onDetailChange={onDetailChange} />;
     case "about":

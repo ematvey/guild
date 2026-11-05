@@ -229,6 +229,10 @@ pub enum WsServerMsg {
         /// The admin-controlled telemetry switch (absent on old servers).
         #[serde(default)]
         telemetry: bool,
+        /// Admin policy for remote images in agent content: `auto`,
+        /// `click` or `never` (absent on old servers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_images: Option<String>,
         /// The served web bundle's identity; absent when the server serves
         /// no bundle.
         #[serde(default, skip_serializing_if = "Option::is_none")]

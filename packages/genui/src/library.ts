@@ -51,6 +51,7 @@ export const BarChartProps = z.object({
   labels: z.array(z.string()),
   series: z.array(SeriesProps),
   stacked: z.boolean().optional(),
+  horizontal: z.boolean().optional(),
 });
 export const LineChartProps = z.object({
   labels: z.array(z.string()),
@@ -90,6 +91,55 @@ export const ButtonProps = z.object({
 });
 export const ButtonsProps = z.object({ items: z.array(ButtonProps) });
 
+export const ScatterSeriesProps = z.object({
+  name: z.string(),
+  points: z.array(z.array(z.number())),
+});
+export const ScatterChartProps = z.object({
+  series: z.array(ScatterSeriesProps),
+  xLabel: z.string().optional(),
+  yLabel: z.string().optional(),
+});
+export const RadarChartProps = z.object({
+  labels: z.array(z.string()),
+  series: z.array(SeriesProps),
+});
+export const RadialChartProps = z.object({
+  labels: z.array(z.string()),
+  values: z.array(z.number()),
+  max: z.number().optional(),
+});
+export const StackedBarProps = z.object({
+  labels: z.array(z.string()),
+  values: z.array(z.number()),
+});
+export const ImageProps = z.object({
+  src: z.string(),
+  alt: z.string().optional(),
+  caption: z.string().optional(),
+});
+export const ImageGalleryProps = z.object({ images: z.array(ImageProps) });
+export const CodeBlockProps = z.object({
+  code: z.string(),
+  language: z.string().optional(),
+  title: z.string().optional(),
+});
+export const StepProps = z.object({
+  title: z.string(),
+  description: z.string().optional(),
+  status: z.enum(["done", "current", "pending", "failed"]).optional(),
+});
+export const StepsProps = z.object({ items: z.array(StepProps) });
+export const EntityProps = z.object({
+  title: z.string(),
+  description: z.string().optional(),
+  meta: z.string().optional(),
+  image: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+export const EntityListProps = z.object({ items: z.array(EntityProps) });
+export const FollowUpsProps = z.object({ items: z.array(z.string()) });
+
 // Form fields.
 export const InputProps = z.object({
   name: z.string(),
@@ -116,9 +166,79 @@ export const CheckboxProps = z.object({
   label: z.string(),
   value: z.boolean().optional(),
 });
+export const RadioGroupProps = z.object({
+  name: z.string(),
+  options: z.array(z.string()),
+  rules,
+  value: z.string().optional(),
+});
+export const CheckBoxGroupProps = z.object({
+  name: z.string(),
+  options: z.array(z.string()),
+  rules,
+  value: z.array(z.string()).optional(),
+});
+export const SwitchProps = z.object({
+  name: z.string(),
+  label: z.string(),
+  value: z.boolean().optional(),
+});
+export const SliderProps = z.object({
+  name: z.string(),
+  min: z.number(),
+  max: z.number(),
+  step: z.number().optional(),
+  value: z.number().optional(),
+  unit: z.string().optional(),
+});
+export const DatePickerProps = z.object({
+  name: z.string(),
+  kind: z.enum(["date", "time", "datetime", "month"]).optional(),
+  min: z.string().optional(),
+  max: z.string().optional(),
+  rules,
+  value: z.string().optional(),
+});
+export const OptionCardProps = z.object({
+  value: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+});
+export const OptionCardsProps = z.object({
+  name: z.string(),
+  options: z.array(OptionCardProps),
+  multiple: z.boolean().optional(),
+  rules,
+  value: z.union([z.string(), z.array(z.string())]).optional(),
+});
+export const ChipsProps = z.object({
+  name: z.string(),
+  options: z.array(z.string()),
+  multiple: z.boolean().optional(),
+  value: z.union([z.string(), z.array(z.string())]).optional(),
+});
+export const EditableTableProps = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  rows: z.array(z.array(cell)),
+  addRows: z.boolean().optional(),
+});
 export const FieldProps = z.object({
   label: z.string(),
-  input: z.union([InputProps, TextAreaProps, SelectProps, CheckboxProps]),
+  input: z.union([
+    InputProps,
+    TextAreaProps,
+    SelectProps,
+    CheckboxProps,
+    RadioGroupProps,
+    CheckBoxGroupProps,
+    SwitchProps,
+    SliderProps,
+    DatePickerProps,
+    OptionCardsProps,
+    ChipsProps,
+    EditableTableProps,
+  ]),
   hint: z.string().optional(),
 });
 export const FormProps = z.object({
@@ -134,13 +254,23 @@ const content = [
   BarChartProps,
   LineChartProps,
   PieChartProps,
+  ScatterChartProps,
+  RadarChartProps,
+  RadialChartProps,
+  StackedBarProps,
   CalloutProps,
   ListProps,
   ProgressProps,
   FactsProps,
   TagsProps,
   SeparatorProps,
+  ImageProps,
+  ImageGalleryProps,
+  CodeBlockProps,
+  StepsProps,
+  EntityListProps,
   ButtonsProps,
+  FollowUpsProps,
   FormProps,
 ] as const;
 
@@ -148,18 +278,32 @@ export const GridProps = z.object({
   children: z.array(z.union(content)),
   columns: z.number().optional(),
 });
+const flat = [...content, GridProps] as const;
+export const AccordionItemProps = z.object({
+  title: z.string(),
+  children: z.array(z.union(flat)),
+  open: z.boolean().optional(),
+});
+export const AccordionProps = z.object({ items: z.array(AccordionItemProps) });
+export const ModalProps = z.object({
+  label: z.string(),
+  title: z.string(),
+  children: z.array(z.union(flat)),
+});
 export const CardProps = z.object({
-  children: z.array(z.union([...content, GridProps])),
+  children: z.array(z.union([...flat, AccordionProps, ModalProps])),
   title: z.string().optional(),
   description: z.string().optional(),
 });
+const boxed = [...flat, AccordionProps, ModalProps, CardProps] as const;
+export const CarouselProps = z.object({ children: z.array(z.union(boxed)) });
 export const TabProps = z.object({
   label: z.string(),
-  children: z.array(z.union([...content, GridProps, CardProps])),
+  children: z.array(z.union([...boxed, CarouselProps])),
 });
 export const TabsProps = z.object({ items: z.array(TabProps) });
 export const StackProps = z.object({
-  children: z.array(z.union([...content, GridProps, CardProps, TabsProps])),
+  children: z.array(z.union([...boxed, CarouselProps, TabsProps])),
   direction: z.enum(["column", "row"]).optional(),
 });
 
@@ -191,7 +335,24 @@ export const GENUI_COMPONENTS = {
   Series: { props: SeriesProps, description: "A named numeric series, one value per chart label." },
   BarChart: {
     props: BarChartProps,
-    description: "Bar chart comparing series across categories (labels).",
+    description: "Bar chart comparing series across categories (labels); horizontal for long category names.",
+  },
+  ScatterChart: {
+    props: ScatterChartProps,
+    description: "Scatter plot of [x, y] points, one ScatterSeries per group; optional axis labels.",
+  },
+  ScatterSeries: { props: ScatterSeriesProps, description: "A named group of [x, y] points." },
+  RadarChart: {
+    props: RadarChartProps,
+    description: "Radar chart comparing series across 3–8 dimensions (labels).",
+  },
+  RadialChart: {
+    props: RadialChartProps,
+    description: "Concentric rings, one per label, each filled to its value out of max (default 100).",
+  },
+  StackedBar: {
+    props: StackedBarProps,
+    description: "One horizontal bar split into labelled parts: the composition of a total.",
   },
   LineChart: {
     props: LineChartProps,
@@ -209,6 +370,37 @@ export const GENUI_COMPONENTS = {
   Tags: { props: TagsProps, description: "A row of small status labels." },
   Tag: { props: TagProps, description: "One small status label." },
   Separator: { props: SeparatorProps, description: "Horizontal divider." },
+  Accordion: { props: AccordionProps, description: "Collapsible sections for detail the reader may skip." },
+  AccordionItem: {
+    props: AccordionItemProps,
+    description: "One section of an Accordion: its title and content; open shows it expanded.",
+  },
+  Modal: {
+    props: ModalProps,
+    description: "A button (label) that opens a dialog (title) holding secondary detail.",
+  },
+  Carousel: { props: CarouselProps, description: "Horizontally scrolling row of cards or images." },
+  Image: {
+    props: ImageProps,
+    description:
+      'An image. src is "attachment:<id>" (the id send_file returned; always shown), or an https URL (shown per the workspace policy; may need a click). Always give alt.',
+  },
+  ImageGallery: { props: ImageGalleryProps, description: "A grid of images." },
+  CodeBlock: { props: CodeBlockProps, description: "Code with an optional language and title." },
+  Steps: { props: StepsProps, description: "An ordered process or plan, each step with its status." },
+  Step: { props: StepProps, description: "One step: title, optional description and status." },
+  EntityList: {
+    props: EntityListProps,
+    description: "A list of records (people, files, tickets…), each with title, description, meta and tags.",
+  },
+  Entity: {
+    props: EntityProps,
+    description: "One record of an EntityList; image takes the same sources as Image.",
+  },
+  FollowUps: {
+    props: FollowUpsProps,
+    description: "Suggested next questions; a click sends that text as the user's message.",
+  },
   Buttons: { props: ButtonsProps, description: "A row of buttons." },
   Button: {
     props: ButtonProps,
@@ -224,6 +416,24 @@ export const GENUI_COMPONENTS = {
   TextArea: { props: TextAreaProps, description: "Multi-line text input." },
   Select: { props: SelectProps, description: "Dropdown choosing one of options." },
   Checkbox: { props: CheckboxProps, description: "A checkbox with its label." },
+  RadioGroup: { props: RadioGroupProps, description: "Choose exactly one of a few options, all visible." },
+  CheckBoxGroup: { props: CheckBoxGroupProps, description: "Choose any number of options." },
+  Switch: { props: SwitchProps, description: "An on/off toggle with its label." },
+  Slider: { props: SliderProps, description: "A number picked on a range, with an optional unit." },
+  DatePicker: {
+    props: DatePickerProps,
+    description: "A date, time, date-time or month; ISO values (2026-05-12, 14:30, 2026-05-12T14:30, 2026-05).",
+  },
+  OptionCards: {
+    props: OptionCardsProps,
+    description: "Choice between richer options as cards (title and description); multiple allows several.",
+  },
+  OptionCard: { props: OptionCardProps, description: "One option: its value, title and description." },
+  Chips: { props: ChipsProps, description: "Compact selectable chips; multiple allows several." },
+  EditableTable: {
+    props: EditableTableProps,
+    description: "A table the user edits before submitting; addRows lets them add rows.",
+  },
 } as const;
 
 export type GenuiComponentName = keyof typeof GENUI_COMPONENTS;
@@ -245,20 +455,85 @@ export function genuiLibrary<C>(renderers: { [N in GenuiComponentName]: C }): Re
     root: "Stack",
     components,
     componentGroups: [
-      { name: "Layout", components: ["Stack", "Card", "Grid", "Tabs", "Tab", "Separator"] },
+      {
+        name: "Layout",
+        components: [
+          "Stack",
+          "Card",
+          "Grid",
+          "Tabs",
+          "Tab",
+          "Accordion",
+          "AccordionItem",
+          "Modal",
+          "Carousel",
+          "Separator",
+        ],
+      },
       {
         name: "Content",
-        components: ["Text", "Metric", "Callout", "List", "Facts", "Fact", "Tags", "Tag", "Progress"],
+        components: [
+          "Text",
+          "Metric",
+          "Callout",
+          "List",
+          "Facts",
+          "Fact",
+          "Tags",
+          "Tag",
+          "Progress",
+          "Steps",
+          "Step",
+          "EntityList",
+          "Entity",
+          "CodeBlock",
+          "Image",
+          "ImageGallery",
+        ],
       },
-      { name: "Data", components: ["Table", "BarChart", "LineChart", "PieChart", "Series"] },
+      {
+        name: "Data",
+        components: [
+          "Table",
+          "BarChart",
+          "LineChart",
+          "PieChart",
+          "Series",
+          "ScatterChart",
+          "ScatterSeries",
+          "RadarChart",
+          "RadialChart",
+          "StackedBar",
+        ],
+      },
       {
         name: "Interaction",
-        components: ["Buttons", "Button", "Form", "Field", "Input", "TextArea", "Select", "Checkbox"],
+        components: [
+          "Buttons",
+          "Button",
+          "FollowUps",
+          "Form",
+          "Field",
+          "Input",
+          "TextArea",
+          "Select",
+          "Checkbox",
+          "RadioGroup",
+          "CheckBoxGroup",
+          "Switch",
+          "Slider",
+          "DatePicker",
+          "OptionCards",
+          "OptionCard",
+          "Chips",
+          "EditableTable",
+        ],
         notes: [
           "Use @ToAssistant for buttons; the click becomes the user's next message to you.",
           "@OpenUrl(url) opens a link in the user's browser.",
           "Rules = {required?: boolean, email?: boolean, url?: boolean, numeric?: boolean, min?: number, max?: number, minLength?: number, maxLength?: number, pattern?: string}; a primary button checks them before its action runs.",
           "A field's value argument is its initial value.",
+          "Pick the input by the answer's shape: RadioGroup/OptionCards for one of a few, CheckBoxGroup/Chips for several, Select for one of many, Slider for a number on a range.",
         ],
       },
     ],

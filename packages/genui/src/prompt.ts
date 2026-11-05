@@ -16,10 +16,12 @@ Use a UI block when structure serves the user better than prose:
 - comparisons or records → Table or Facts
 - numeric series or trends → BarChart / LineChart / PieChart
 - you need several inputs from the user → a Form
-- the user should pick a next step → Buttons with @ToAssistant
+- the user should pick a next step → Buttons or FollowUps
+- pictures, diagrams or screenshots → Image (send_file a workspace image first, then use "attachment:<id>")
+- a process or plan → Steps; secondary detail → Accordion or Modal
 Do not use it for ordinary prose, short answers, code, or file contents. Keep the explanation in Markdown around the block, not inside it. Every block is a complete program that starts with \`root = Stack(...)\`; a reply may hold more than one block. Never wrap an \`${GENUI_FENCE}\` block inside another code block.
 
-When the user clicks a button with @ToAssistant("message"), you receive "message" as their next message, followed by the form's field values when the button sits in a Form. Clicks never run tools by themselves. A block takes one answer: once the user replies (by a click or by typing), its buttons and fields lock, so to ask again, send a new block.`;
+When the user clicks a button with @ToAssistant("message"), you receive "message" as their next message, followed by the form's field values when the button sits in a Form. Clicks never run tools by themselves; @Set/@Reset only change the block's own $variables (filters, toggles) and send nothing. A block takes one answer: once the user replies (by a click or by typing), its buttons and fields lock, so to ask again, send a new block.`;
 
 const EXAMPLES = [
   `Example — a status summary:
@@ -58,8 +60,8 @@ export function genuiPrompt(): string {
     const library = genuiLibrary(renderers);
     cached = library.prompt({
       preamble: PREAMBLE,
-      bindings: false,
-      builtinFunctions: false,
+      bindings: true,
+      builtinFunctions: true,
       examples: EXAMPLES,
       additionalRules: [
         `Only the components listed above exist. Unknown components and invalid lines are dropped silently.`,

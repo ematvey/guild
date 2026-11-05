@@ -251,6 +251,7 @@
     "name": "Guild",
     "logo_url": "https://example.com/logo.png",
     "telemetry": true,
+    "remote_images": "click",
     "web_bundle": "Bx3k9aQd"
   },
   {

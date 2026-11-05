@@ -1033,6 +1033,31 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("carries the admin remote-image policy to every member socket", { timeout: TEST_TIMEOUT }, async () => {
+    const ws = await memberSocket();
+    const initial = await waitFrame(ws, (f) => f.type === "workspace_identity");
+    expect(initial.remote_images).toBe("auto");
+
+    const put = (token: string, policy: unknown) =>
+      stack.env.app.inject({
+        method: "PUT",
+        url: "/api/v1/org/remote-images",
+        headers: auth(token),
+        payload: { policy },
+      });
+    expect((await put(stack.memberToken, "never")).statusCode).toBe(403);
+    expect((await put(stack.adminToken, "sometimes")).statusCode).toBe(400);
+    expect((await put(stack.adminToken, "click")).statusCode).toBe(200);
+    const pushed = await waitFrame(ws, (f) => f.type === "workspace_identity" && f.remote_images === "click");
+    expect(pushed.remote_images).toBe("click");
+
+    const org = await stack.env.app.inject({ method: "GET", url: "/api/v1/org", headers: auth(stack.memberToken) });
+    expect(JSON.parse(org.body).remote_images).toBe("click");
+
+    await put(stack.adminToken, "auto");
+    ws.end();
+  });
+
   it("pushes the model list on connect and on every route change", { timeout: TEST_TIMEOUT }, async () => {
     type Models = { id: string; alias: string }[];
     const ws = await memberSocket();

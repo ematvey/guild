@@ -57,6 +57,31 @@ describe("genuiOutcome", () => {
   });
 });
 
+describe("genuiOutcome with rich fields", () => {
+  it("sends multi-choice values joined and table rows one per line", () => {
+    const out = genuiOutcome({
+      type: "continue_conversation",
+      params: {},
+      humanFriendlyMessage: "Save",
+      formName: "f",
+      formState: {
+        f: {
+          tags: { value: ["a", "b"] },
+          none: { value: [] },
+          budget: { value: 40 },
+          items: {
+            value: [
+              ["Milk", 2],
+              ["Eggs", 12],
+            ],
+          },
+        },
+      },
+    });
+    expect(out).toEqual({ kind: "send", text: "Save\n\ntags: a, b\nbudget: 40\nitems:\nMilk | 2\nEggs | 12" });
+  });
+});
+
 describe("answersAfter", () => {
   it("gives each block the first user message after it", () => {
     const blocks = [

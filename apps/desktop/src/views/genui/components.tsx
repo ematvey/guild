@@ -47,6 +47,7 @@ import {
 } from "@guild/ui/components/chart";
 import { MD_CLASS, mdComponents } from "../markdown";
 import { GenuiAnswerContext, GenuiInertContext, answeredBy } from "./actions";
+import * as More from "./components-more";
 
 type R<N extends GenuiComponentName> = ComponentRenderer<GenuiProps<N>>;
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -286,11 +287,28 @@ const CHART_CLASS = "aspect-auto h-56 w-full";
 const BarChartView: R<"BarChart"> = ({ props }) => {
   const { rows, config, keys } = useMemo(() => seriesData(props.labels, props.series), [props.labels, props.series]);
   return (
-    <ChartContainer config={config} className={CHART_CLASS}>
-      <BarChart data={rows} margin={{ left: 0, right: 8, top: 8 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis dataKey="label" tickLine={false} axisLine={false} />
-        <YAxis tickLine={false} axisLine={false} width={40} />
+    <ChartContainer
+      config={config}
+      className={props.horizontal ? "aspect-auto w-full" : CHART_CLASS}
+      style={props.horizontal ? { height: Math.max(160, rows.length * 32 + 48) } : undefined}
+    >
+      <BarChart
+        data={rows}
+        layout={props.horizontal ? "vertical" : "horizontal"}
+        margin={{ left: 0, right: 8, top: 8 }}
+      >
+        <CartesianGrid vertical={!!props.horizontal} horizontal={!props.horizontal} />
+        {props.horizontal ? (
+          <>
+            <XAxis type="number" tickLine={false} axisLine={false} />
+            <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={110} />
+          </>
+        ) : (
+          <>
+            <XAxis dataKey="label" tickLine={false} axisLine={false} />
+            <YAxis tickLine={false} axisLine={false} width={40} />
+          </>
+        )}
         <ChartTooltip content={<ChartTooltipContent />} />
         {keys.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
         {keys.map((k) => (
@@ -609,4 +627,30 @@ export const genuiReactLibrary = genuiLibrary<AnyRenderer>({
   TextArea: GenTextArea,
   Select: GenSelect,
   Checkbox: GenCheckbox,
-} as Record<GenuiComponentName, AnyRenderer>);
+  Accordion: More.Accordion,
+  AccordionItem: More.AccordionItem,
+  Modal: More.Modal,
+  Carousel: More.Carousel,
+  Image: More.Image,
+  ImageGallery: More.ImageGallery,
+  CodeBlock: More.CodeBlock,
+  Steps: More.Steps,
+  Step: More.Step,
+  EntityList: More.EntityList,
+  Entity: More.Entity,
+  FollowUps: More.FollowUps,
+  ScatterChart: More.ScatterChartView,
+  ScatterSeries: More.ScatterSeries,
+  RadarChart: More.RadarChartView,
+  RadialChart: More.RadialChartView,
+  StackedBar: More.StackedBar,
+  RadioGroup: More.RadioGroup,
+  CheckBoxGroup: More.CheckBoxGroup,
+  Switch: More.Switch,
+  Slider: More.Slider,
+  DatePicker: More.DatePicker,
+  OptionCards: More.OptionCards,
+  OptionCard: More.OptionCard,
+  Chips: More.Chips,
+  EditableTable: More.EditableTable,
+} satisfies Record<GenuiComponentName, AnyRenderer>);
