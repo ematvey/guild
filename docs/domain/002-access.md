@@ -30,14 +30,14 @@ An admin's read of another Member's Thread is a read only. Every write to a Thre
 
 ## Agents
 
-An Agent is visible to a Member when the Member owns it, or when it is not personal and one of these holds: the Member is an admin, its visibility is `org`, or its visibility is `team` and one of the Member's Teams holds a grant. Seeing an Agent gives one of two levels:
+An Agent is visible to a Member when the Member owns it, when the Member is an admin (every Agent of the Org, personal ones included, for inspection and analytics), or when it is not personal and one of these holds: its visibility is `org`, or its visibility is `team` and one of the Member's Teams holds a grant. Seeing an Agent gives one of two levels:
 
 | Level | Who | Allows |
 | --- | --- | --- |
 | manage | The owner, and admins on non-personal Agents | Edit, share, archive, delete and restore the Agent; create and run its Routines |
 | use | Anyone else who sees it | Start Threads with it and spawn it |
 
-A personal Agent is visible only to its owner, admins included. It cannot be made non-private, archived or deleted. An invisible Agent and a missing one answer the same 404.
+A personal Agent is visible to its owner and to admins, and reaches no other Member. The chat composer offers each Member only their own personal Agent and the shared Agents they can use, never another Member's personal Agent. It cannot be made non-private, archived or deleted. An invisible Agent and a missing one answer the same 404.
 
 Status limits use. Only an `active` Agent starts Runs. Archiving cancels its in-flight Runs. A `deleting` Agent keeps its Threads readable through a grace period (30 days by default), refuses new Threads and Turns with `agent_deleting`, and is purged afterwards. Restore works from `archived` or `deleting`.
 
@@ -75,7 +75,7 @@ Every Run starts through one path, and that path refuses before creating a Run r
 The Tools a Turn may call are the intersection of three things:
 
 1. **The Agent's reach:** its built-in allowlist (all tools, or a selected list), which also decides the Trait tools, and its Integration list, each entry with a class ceiling (`read` < `write` < `admin`). With `selected` tools the list is explicit: an Integration reaches the Agent only when someone adds it. With `all` tools the list is derived at every read and has nothing to set: every enabled Integration that everyone who can use the Agent may reach, at the lowest ceiling the audience grants any of them. A personal Agent follows its owner's reach; a shared one never gives anyone more than their own, so it never warns.
-2. **The Org's curation:** a built-in Integration tool is on unless an admin turned it off; an MCP tool is off until an admin turns it on.
+2. **The Org's curation:** every Integration tool, built in or discovered from an MCP server, is on unless an admin turned it off.
 3. **`admin`-class tools are admin-only,** whatever the Agent's ceiling says.
 
 The Agent's list supersedes the caller's own access: everyone who can use the Agent reaches what it lists. Who may use the Agent is its visibility and grants.

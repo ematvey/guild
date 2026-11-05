@@ -1,4 +1,4 @@
-// The event bridge: pi-durable `watchEvents()` streams → thread_events rows
+// The event bridge: conversation events (chats/conversation-events.ts) → thread_events rows
 // + generating flag + turn-command settlement, with the exact thread-event
 // frame contract (turn/step numbering, UsagePayload fields, field-ordered
 // wire rows — see platform/domain/thread-events.ts).
@@ -11,8 +11,8 @@
 import { TranscriptProjection, type ProjectionState } from "./projection.js";
 import { canonicalJson } from "../platform/domain/json.js";
 
-import type { Conversation, EntryId, SnapshotEvent, SubmissionRecord, JsonObject } from "@earendil-works/pi-durable";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { Conversation, EntryId, SubmissionRecord, JsonObject } from "@earendil-works/pi-durable";
+import type { ConversationEvent, SnapshotEvent } from "./conversation-events.js";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { StreamWireEvent } from "../hub/protocol.js";
@@ -200,7 +200,7 @@ export class ChatBridge {
         toolCallId: tool.callId,
         toolName: tool.name,
         args: call?.type === "toolCall" ? (JSON.parse(JSON.stringify(call.arguments)) as JsonObject) : {},
-        taskId: tool.taskId!,
+        ...(tool.taskId === undefined ? {} : { taskId: Number(tool.taskId) }),
       });
     }
     this.streamSink?.dirty(state.chatId);
@@ -229,7 +229,7 @@ export class ChatBridge {
   }
 
   /** A failed delivery is retried by the host without stopping the agent. */
-  handle = async (conversationId: string, events: readonly AgentEvent[]): Promise<void> => {
+  handle = async (conversationId: string, events: readonly ConversationEvent[]): Promise<void> => {
     const state = this.state(conversationId);
     if (!state.chatId) return;
     for (const event of events) {
@@ -243,7 +243,7 @@ export class ChatBridge {
     }
   };
 
-  private async handleOne(_conversationId: string, state: BridgeState, event: AgentEvent): Promise<void> {
+  private async handleOne(_conversationId: string, state: BridgeState, event: ConversationEvent): Promise<void> {
     switch (event.type) {
       case "snapshot":
         await this.restoreSnapshot(_conversationId, state, event);
@@ -316,11 +316,10 @@ export class ChatBridge {
         state.buffers.thinking = "";
         state.textStarted = false;
         if (event.message.role === "assistant") {
-          state.currentModel = (event.message as { model?: string }).model ?? state.currentModel;
+          state.currentModel = event.message.model ?? state.currentModel;
           // The first partial commit arrives as message_start with the
           // content streamed so far — seed the buffers and stream it.
-          for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] })
-            .content) {
+          for (const block of event.message.content) {
             if (block.type === "text" && block.text) {
               state.buffers.text += block.text;
               state.textStarted = true;
@@ -370,10 +369,9 @@ export class ChatBridge {
             state.buffers.text = "";
             state.buffers.thinking = "";
             state.textStarted = false;
-            for (const block of (change.message as { content: { type: string; text?: string; thinking?: string }[] })
-              .content) {
-              if (block.type === "text") state.buffers.text += block.text ?? "";
-              else if (block.type === "thinking") state.buffers.thinking += block.thinking ?? "";
+            for (const block of change.message.content) {
+              if (block.type === "text") state.buffers.text += block.text;
+              else if (block.type === "thinking") state.buffers.thinking += block.thinking;
             }
             if (state.buffers.text !== "") state.textStarted = true;
           }
@@ -394,9 +392,8 @@ export class ChatBridge {
         return;
       }
       case "tool_execution_start": {
-        // Nested calls (a codemode script's tools.*) are not transcript
-        // cards: only the model-issued call that owns them is.
-        if (event.parentToolCallId !== undefined) return;
+        // Only model-issued calls are transcript cards; nested calls (a
+        // codemode script's tools.*) never reach the bridge.
         // The tool-call card (ToolStarted into the generation stream; the
         // durable harness's tools execute server-side).
         if (state.generationId === null) return;
@@ -410,7 +407,6 @@ export class ChatBridge {
         return;
       }
       case "tool_execution_end": {
-        if (event.parentToolCallId !== undefined) return;
         if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
           const result = event.entry.model?.find((m) => m.role === "toolResult");
           await this.projectEntry(state, event.entry);

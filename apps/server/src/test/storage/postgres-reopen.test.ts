@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
 import type {
   ConversationId,
   DocumentId,
@@ -60,7 +61,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     const answerEntry = await storage.mintId<EntryId>();
     const childEntry = await storage.mintId<EntryId>();
 
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         { type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
         {
@@ -90,7 +92,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       context,
     );
 
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "conversation",
@@ -104,7 +107,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     const runningTaskId = await storage.mintId<TaskId<JsonValue>>();
     const waitingTaskId = await storage.mintId<TaskId<JsonValue>>();
     const terminalTaskId = await storage.mintId<TaskId<JsonValue>>();
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "task",
@@ -153,7 +157,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     const queuedId = await storage.mintId<SubmissionId>();
     const answeredId = await storage.mintId<SubmissionId>();
     const writeId = await storage.mintId<SubmissionId>();
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "submission",
@@ -194,7 +199,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
 
     const sessionId = await storage.mintId<DocumentId>();
     const rewindableId = await storage.mintId<DocumentId>();
-    const sessionIdAt = await storage.commit(
+    const sessionIdAt = await commitWrites(
+      storage,
       [
         {
           type: "document.create",
@@ -204,7 +210,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       ],
       context,
     );
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "document.create",
@@ -220,7 +227,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       ],
       context,
     );
-    const rewindableAt = await storage.commit(
+    const rewindableAt = await commitWrites(
+      storage,
       [
         {
           type: "document.change",
@@ -237,7 +245,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       ],
       context,
     );
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "document.copy",
@@ -253,7 +262,7 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       ],
       context,
     );
-    await storage.commit([{ type: "document.retire", id: sessionId }], context);
+    await commitWrites(storage, [{ type: "document.retire", id: sessionId }], context);
 
     // A mint the instance never commits is still consumed: with worker-per-
     // chat several processes mint from one id space, so every mint is durable
@@ -367,6 +376,6 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     await reopened.close(context);
     await expect(reopened.conversation(ROOT_CONVERSATION_ID, context)).rejects.toThrow("closed");
     await expect(reopened.mintId()).rejects.toThrow("closed");
-    await expect(reopened.commit([], context)).rejects.toThrow("closed");
+    await expect(commitWrites(reopened, [], context)).rejects.toThrow("closed");
   });
 });

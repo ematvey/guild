@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { DocumentId, StorageWrite } from "@earendil-works/pi-durable";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
@@ -20,7 +21,8 @@ afterAll(async () => {
 
 async function createLive(conversationId: number, value: object = {}): Promise<DocumentId> {
   const id = await storage.mintId<DocumentId>();
-  await storage.commit(
+  await commitWrites(
+    storage,
     [
       {
         type: "document.create",
@@ -55,7 +57,8 @@ describe("reconstructable live projection", () => {
   it("rejects an invalid presentation delta atomically instead of poisoning reads", async () => {
     const id = await createLive(100);
     await expect(
-      storage.commit(
+      commitWrites(
+        storage,
         [
           {
             type: "document.change",
@@ -73,7 +76,8 @@ describe("reconstructable live projection", () => {
     const first = await createLive(106, { nestedTools: [] });
     const second = await createLive(107);
     await expect(
-      storage.commit(
+      commitWrites(
+        storage,
         [
           {
             type: "document.change",
@@ -90,7 +94,8 @@ describe("reconstructable live projection", () => {
       ),
     ).rejects.toThrow();
     await expect(
-      storage.commit(
+      commitWrites(
+        storage,
         [
           {
             type: "document.change",
@@ -143,7 +148,7 @@ describe("reconstructable live projection", () => {
     await damage(id);
     await storage.repairLiveProjections(102 as never);
     expect((await storage.document(id, "current", BACKGROUND_CONTEXT))?.value).toEqual({
-      run: { taskId: 902, inputs: [903] },
+      run: { taskId: 902, inputs: [903], turns: 0 },
       generation: { attempt: 2 },
     });
     expect((await storage.submission(903 as never, BACKGROUND_CONTEXT))?.status).toBe("placed");
@@ -224,7 +229,7 @@ describe("reconstructable live projection", () => {
     await damage(id);
     await storage.repairLiveProjections(105 as never);
     const live = (await storage.document(id, "current", BACKGROUND_CONTEXT))!.value;
-    expect(live.run).toEqual({ taskId: 907, inputs: [] });
+    expect(live.run).toEqual({ taskId: 907, inputs: [], turns: 0 });
     expect(live.tools).toEqual([{ taskId: 908, callId: "call", name: "codemode", status: "running" }]);
     expect(live.nestedTools).toEqual([
       {
@@ -251,7 +256,8 @@ describe("reconstructable live projection", () => {
       [id, JSON.stringify({ generation: { attempt: 2 } }), seq],
     );
     await expect(
-      storage.commit(
+      commitWrites(
+        storage,
         [
           {
             type: "document.change",

@@ -24,7 +24,7 @@ export async function rebuildLiveProjection(tx: PostgresExecutor, conversationId
   const live: JsonObject = {};
   const run = runs[0];
   if (run) {
-    live.run = { taskId: run.id, inputs: inputs.map((row) => Number(row.id)) };
+    live.run = { taskId: run.id, inputs: inputs.map((row) => Number(row.id)), turns: 0 };
     const state = checkpoint(run);
     if (state.phase !== "tools") {
       live.generation = { attempt: typeof state.attempt === "number" ? state.attempt : 1 };
@@ -90,7 +90,7 @@ export async function rebuildLiveProjection(tx: PostgresExecutor, conversationId
   if (compactions.length)
     live.compactions = compactions.map((task) => ({
       taskId: task.id,
-      reason: task.input.reason ?? "manual",
+      trigger: task.input.reason ?? "manual",
       blocking: task.owner !== undefined,
       attempt: checkpoint(task).attempt ?? 1,
     }));

@@ -22,7 +22,7 @@ import {
   type ShellOutputInfo,
   type TextLine,
   type TextLineReader,
-  type WatchChange,
+  type FileChange,
   type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import {
@@ -45,6 +45,16 @@ interface Pending {
 
 const LOST_MESSAGE = "sandbox connection lost; outcome unknown";
 
+/** A watch change from the agent. A sandbox image built on pi-durable 1.3
+ *  sends it untagged (`{ paths }`, `{ overflow: true }`, `{ error }`). */
+function fileChange(value: unknown): FileChange {
+  const change = value as Record<string, unknown>;
+  if (typeof change.kind === "string") return change as FileChange;
+  if (Array.isArray(change.paths)) return { kind: "paths", paths: change.paths as string[] };
+  if (change.overflow === true) return { kind: "overflow" };
+  return { kind: "failed", error: change.error } as FileChange;
+}
+
 function lostValue(kind: Lost): unknown {
   if (kind === "file") return err(new FileError("unknown", LOST_MESSAGE));
   if (kind === "exec") return err(new ExecutionError("unknown", LOST_MESSAGE));
@@ -61,7 +71,7 @@ function abortedValue(kind: Exclude<Lost, "void">): unknown {
 class Connection {
   private nextId = 1;
   readonly pending = new Map<number, Pending>();
-  readonly watchers = new Map<number, (change: WatchChange) => void>();
+  readonly watchers = new Map<number, (change: FileChange) => void>();
   closed = false;
 
   constructor(readonly wire: Wire) {
@@ -81,7 +91,7 @@ class Connection {
       return;
     }
     if (frame.t === "watch") {
-      this.watchers.get(frame.id)?.(decodeValue(frame.change) as WatchChange);
+      this.watchers.get(frame.id)?.(fileChange(decodeValue(frame.change)));
       return;
     }
     const pending = this.pending.get(frame.id);
@@ -97,7 +107,7 @@ class Connection {
     for (const pending of this.pending.values()) pending.resolve(lostValue(pending.lost));
     this.pending.clear();
     for (const listener of this.watchers.values()) {
-      listener({ error: new FileError("unknown", LOST_MESSAGE) });
+      listener({ kind: "failed", error: new FileError("unknown", LOST_MESSAGE) });
     }
     this.watchers.clear();
   }
@@ -280,7 +290,7 @@ export class SandboxExecutionEnv implements ExecutionEnv {
       case "watcher":
         return {
           mode: ref.mode ?? "native",
-          close: async (context: Context) => {
+          stop: async (context: Context) => {
             await h("close", [], context, "void");
           },
         } satisfies FileWatcher as FileWatcher;
@@ -349,7 +359,7 @@ export class SandboxExecutionEnv implements ExecutionEnv {
   }
   async watch(
     targets: readonly WatchTarget[],
-    onChange: (change: WatchChange) => void,
+    onChange: (change: FileChange) => void,
     context: Context,
   ): Promise<Result<FileWatcher, FileError>> {
     let connection: Connection;
@@ -375,9 +385,9 @@ export class SandboxExecutionEnv implements ExecutionEnv {
       ok: true,
       value: {
         mode: watcher.mode,
-        close: async (closeContext: Context) => {
+        stop: async (stopContext: Context) => {
           connection.watchers.delete(callId);
-          await watcher.close(closeContext);
+          await watcher.stop(stopContext);
         },
       },
     };

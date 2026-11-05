@@ -6,7 +6,16 @@ import { toast } from "sonner";
 import { bindChatAgent, chatAgentBinding, type ChatTree } from "../../../lib/api/chats";
 import type { Agent } from "../../agents/agents-api";
 import { useAgentList } from "../../agents/agents-store";
+import { useMemberProfile } from "../../../lib/profile-store";
 import { composerAgent } from "../status";
+
+/** The agents a member's composer offers: their own personal agent and
+ *  every shared one. Another member's personal agent (an admin sees them
+ *  all) stays out: they share one name, and picking one by mistake runs the
+ *  chat with that member's Integrations. */
+export function composerAgents(agents: readonly Agent[], userId: string): Agent[] {
+  return agents.filter((a) => a.status === "active" && (!a.is_personal || a.owner_user_id === userId));
+}
 
 /** The chat's bound agent from its agent read, when the reply has an
  *  agent's identity; anything else leaves the picker as it is. */
@@ -20,7 +29,13 @@ export function useAgentPick(viewChatId: string | null, childTree: ChatTree | nu
   // Every chat runs with one of the caller's agents; the composer picks
   // which, and the choice binds the chat.
   const allAgents = useAgentList();
-  const agentsList = useMemo(() => allAgents?.filter((a) => a.status === "active") ?? null, [allAgents]);
+  const me = useMemberProfile()?.id ?? null;
+  // Null until both the agent list and the member's own id are known, so
+  // the default never settles on someone else's personal agent.
+  const agentsList = useMemo(
+    () => (allAgents === null || me === null ? null : composerAgents(allAgents, me)),
+    [allAgents, me],
+  );
   const [pickedAgent, setPickedAgent] = useState<Agent | null>(null);
   const [agentLocked, setAgentLocked] = useState(false);
   const pickedAgentRef = useRef<Agent | null>(null);

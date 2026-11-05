@@ -97,6 +97,62 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **pi-durable 1.5 (2026-11-05).** The server moved from the `pi-*`/Chord
+  1.3.0 packages to 1.5.0 (pi-durable, pi-ai, pi-codemode, chord, all
+  pinned; pi-schema and pi-telemetry come in with them). What changed for
+  Guild:
+  - *Storage.* `commit()` takes a group of batches per call (pi-durable
+    now group-commits). The Postgres storage stores a call in one
+    transaction, one seq per batch, each batch checked against the ones
+    before it; the first batch Durable's checks refuse is not stored and
+    the ones before it are (copy resolution moved into the checks, a
+    failed database call still rejects the whole call). The live-projection
+    cache is staged per call and written through after `COMMIT`. A commit
+    receipt covers the call's consecutive seqs. Durable migration 7 adds
+    the `sleeping` task status (1.4's durable sleeps and backoffs) and
+    `durable_commits.stored`; a server older than this cannot open the
+    database again. `pi.live` is document version 3 (`run.turns`,
+    compaction `trigger`); the projection repair writes that shape and
+    accepts every stored version.
+  - *Events.* 1.5 removed `watchEvents()`; a renderer reads state.
+    `chats/conversation-events.ts` derives the bridge's events from
+    `Harness.observeConversation`, which gets every committed view change
+    unfolded: run start/end from `pi.live.run`, the streamed answer and
+    tool cards from `pi.live`, appended entries from the view window,
+    inbox and compaction moves, and settled submissions read back for the
+    run's inputs and items leaving the inbox. A run that ends faulted,
+    orphaned, interrupted or at the restart limit (`pi.live.runFailure`)
+    is the bridge's `task_failed`. A folding watch (`Conversation.watch`)
+    was rejected: a run that starts and ends between two deliveries would
+    lose its `run_end`.
+  - *Smaller breaks.* `SessionEnd`, `Report`, `FileChange` are tagged by
+    `kind`; `FileWatcher.close` is `stop` (the sandbox wire keeps `close`
+    and maps it, and an untagged change from an older sandbox image is
+    normalized); `onReport` gets one `Report`; `defineDoc` needs
+    `checkpointWhen`. pi-ai no longer depends on TypeBox: the server's
+    tool schemas still use it, now as its own pinned dependency
+    (`typebox` 1.3.27) instead of an undeclared transitive one. Chord's
+    optional `ws` peer is pinned to 8.21.0; a root `overrides` keeps the
+    server's ws 8.22.
+  - *Behaviour that comes with it.* Streamed partials and running tool
+    output are stored at the next commit that reads `pi.live` or within
+    1 s (a crash loses up to a second of stream, not 100 ms). A model
+    request cut off by a restart counts as a failed attempt under the
+    retry policy instead of being resent forever; a task cut off 5 times
+    in a row ends (`restart_limit`) instead of looping.
+  - *Not adopted, noted.* `settings.afterFailedRun: "continue"` and
+    `submit({ type: "continue" })` cover what `drainIdleInbox` does after
+    a failed run, but the drain also heals queues at startup and after
+    other endings, so it stays. `Conversation.submit(tx, draft)` (admit
+    inside a host commit) and `whenIdle: "reject"` fit child-result
+    delivery, which already keeps one admission per request id. A
+    read-only Harness could replace the SQL inbox reads of the
+    harness-less server. `afterRun` run-end tasks could carry
+    `agent_runs` settlement. `pi.live.runFailure.reason` could give a Run
+    its failure kind. Tool schemas could move to pi-schema builders.
+    Worker-per-chat still needs the scoped harness (plan C of the
+    runs-follow-pi-durable spec): 1.5 has no multi-harness storage.
+
 - **Code mode groups tools into namespaces (2026-11-05).** The `codemode`
   section listed every script-callable tool flat under one token budget,
   so the tail of the list dropped out silently and generic names (`send`,
@@ -182,6 +238,20 @@ first. Code comments describe only the present.
   http(s)/mailto. lang-core's postinstall reports installs to its vendor;
   npm 11 blocks it by default and the image sets
   `OPENUI_TELEMETRY_DISABLED`.
+- **The chat picker offers only the member's own personal agent
+  (2026-11-05).** Since admins see every agent (50da6ae8), an admin's agent
+  list holds every member's personal "Assistant", and the composer's
+  default took the first personal agent in it. An admin's chats then ran on
+  another member's agent, with that member's Integrations: a Stripe check
+  on prod answered "no Stripe" from a member's agent. The composer now
+  offers the member's own personal agent and the shared agents they can
+  use, and waits for the pushed profile before choosing the default. The
+  Agents list still shows admins every agent, for inspection and analytics.
+  002 had kept the pre-50da6ae8 rule that admins never see a personal
+  agent; it now says what the code does. Open: the server still resolves
+  an admin as owner of any agent, so the API lets an admin chat with or
+  edit another member's personal agent; 002's manage row says admins manage
+  non-personal agents only.
 - **Discovered MCP tools are on by default (2026-11-05).** A tool an MCP
   server serves with no stored curation used to read as disabled, so a
   configured Stripe offered agents nothing until an admin switched each tool

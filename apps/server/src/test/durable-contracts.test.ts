@@ -8,7 +8,8 @@ import pg from "pg";
 import { ConversationDirectory } from "../harness/conversation-directory.js";
 import { ConversationMapStore } from "../platform/store/conversations.js";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import {
   AssistantEntry,
@@ -16,11 +17,12 @@ import {
   defineExtension,
   defineTool,
   Harness,
-  watchEvents,
   ResetEntry,
   UserEntry,
 } from "@earendil-works/pi-durable";
 import type { Conversation, ToolRegistration } from "@earendil-works/pi-durable";
+import { commitWrites } from "@earendil-works/pi-durable/testing";
+import { watchConversationEvents } from "../chats/conversation-events.js";
 import { ChatBridge } from "../chats/bridge.js";
 import { createApprovalGate } from "../harness/approvals.js";
 import { SkillRuntime } from "../harness/skills.js";
@@ -147,7 +149,7 @@ describe("durable integration contracts", () => {
   it("reclaims only acknowledged commit receipts and records write timing", async () => {
     const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(stack.env.db));
     try {
-      for (let index = 0; index < 80; index++) await storage.commit([], context);
+      for (let index = 0; index < 80; index++) await commitWrites(storage, [], context);
       await until(async () => storage.diagnostics().receiptDeletes >= 64);
       expect(storage.diagnostics().commits).toBe(80);
       expect(storage.diagnostics().lockWaitMs).toBeGreaterThan(0);
@@ -215,15 +217,14 @@ describe("durable integration contracts", () => {
         step: 1,
         blocks: [{ type: "text", text: "after reset" }],
       });
-      const current = await c.viewState(context);
+      const current = await c.context(context);
       expect(
-        current.value.entries.some((e) =>
+        current.entries.some((e) =>
           e.model?.some(
             (m) => m.role === "assistant" && m.content.some((b) => b.type === "text" && b.text === "before reset"),
           ),
         ),
       ).toBe(false);
-      current.dispose();
       await stack.env.db.query("DELETE FROM chat_projection_cursors WHERE chat_id=$1", [id]);
       await bridge(id, c).recover(c);
       expect(await threads.listEvents(stack.orgId, id)).toHaveLength(2);
@@ -237,7 +238,7 @@ describe("durable integration contracts", () => {
     const c = await h.createConversation({ ownership: { kind: "ownerless" } }, context);
     const id = await chat();
     const b = bridge(id, c);
-    const stream = await watchEvents(h, c.id, context);
+    const stream = await watchConversationEvents(h, c.id, context, { backlogLimit: 100 });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -471,9 +472,10 @@ describe("durable integration contracts", () => {
   it("first-touch worker bootstrap never rewrites another conversation's running task", async () => {
     const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(stack.env.db));
     const cid = await storage.mintId();
-    await storage.commit([{ type: "conversation", value: { id: cid } }] as never, context);
+    await commitWrites(storage, [{ type: "conversation", value: { id: cid } }] as never, context);
     const tid = await storage.mintId();
-    await storage.commit(
+    await commitWrites(
+      storage,
       [
         {
           type: "task",

@@ -3,6 +3,7 @@ import type {
   ConversationId,
   ConversationQuery,
   ConversationRecord,
+  CommitResult,
   Cursor,
   DocumentAddress,
   DocumentId,
@@ -50,8 +51,12 @@ export class ScopedDurableStorage implements Storage {
     private readonly scope: ConversationId,
   ) {}
 
-  commit(writes: readonly StorageWrite[], context: Context): Promise<Seq> {
-    return this.inner.commit(writes, context);
+  commit(
+    batches: readonly (readonly StorageWrite[])[],
+    receive: (index: number, seq: Seq) => void,
+    context: Context,
+  ): Promise<CommitResult> {
+    return this.inner.commit(batches, receive, context);
   }
 
   mintId<I extends Id<string>>(): Promise<I> {

@@ -12,6 +12,11 @@
     "coherence": "python3 scripts/coherence/check.py check",
     "coherence:report": "python3 scripts/coherence/check.py report"
   },
+  "overrides": {
+    "@earendil-works/chord": {
+      "ws": "^8.22.0"
+    }
+  },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
     "ajv": "^8.17.1",

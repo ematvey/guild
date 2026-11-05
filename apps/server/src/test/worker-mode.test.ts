@@ -245,7 +245,8 @@ describe("worker-per-chat (fork supervisor)", () => {
     await waitFor(async () => stack.env.app.platform.supervisor!.pidOf(chatId) === undefined);
     await stack.env.db.query(
       `WITH reserved AS (UPDATE durable_metadata SET next_seq=next_seq+1 WHERE singleton=1 RETURNING next_seq-1 AS seq)
-      INSERT INTO document_revisions(document_id,seq,kind,version,content) SELECT $1,seq,'delta',1,$2 FROM reserved`,
+      INSERT INTO document_revisions(document_id,seq,kind,version,content)
+      SELECT $1,seq,'delta',(SELECT version FROM document_revisions WHERE document_id=$1 ORDER BY seq DESC LIMIT 1),$2 FROM reserved`,
       [documentId, JSON.stringify([["s", ["nestedTools", 0, "output"], "late output"]])],
     );
     stack.mock.setResponses([{ body: finalSse("after projection repair") }]);

@@ -33,7 +33,7 @@ import {
   type ShellOutputInfo,
   type TextLine,
   type TextLineReader,
-  type WatchChange,
+  type FileChange,
   type WatchTarget,
   type FileWatcher,
 } from "@earendil-works/pi-durable/env";
@@ -441,7 +441,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
 
   async watch(
     _targets: readonly WatchTarget[],
-    _onChange: (change: WatchChange) => void,
+    _onChange: (change: FileChange) => void,
     _context: Context,
   ): Promise<Result<FileWatcher, FileError>> {
     return fileErr("not_supported", "watching is not supported over machine dispatch");

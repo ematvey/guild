@@ -15,8 +15,6 @@ import {
   UsageDoc,
   ProviderDoc,
   Harness,
-  watchEvents,
-  type AgentEventStream,
   type Conversation,
   type ConversationId,
   type EntryDraft,
@@ -59,6 +57,11 @@ import { createTraceHook } from "../agents/trace-hook.js";
 import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.js";
 import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink, type LiveBuffers } from "../chats/bridge.js";
+import {
+  conversationSnapshot,
+  watchConversationEvents,
+  type ConversationEvents,
+} from "../chats/conversation-events.js";
 import { agentMessageEntry } from "../chats/agent-message.js";
 import {
   childResultEntry,
@@ -157,7 +160,7 @@ export class GuildRuntime {
   private readonly turns: TurnBackend;
   private readonly watchOpening = new SingleFlight<string, void>();
   private readonly admissions = new ConversationAdmissions();
-  private get watches(): Map<string, AgentEventStream> {
+  private get watches(): Map<string, ConversationEvents> {
     return this.host.value!.watches;
   }
   /** The chat ↔ conversation mapping, both directions. Writes go through
@@ -667,7 +670,7 @@ export class GuildRuntime {
             },
           },
           env: (target) => this.executors.harnessEnv(Number(target.conversationId)),
-          onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
+          onReport: (report) => this.log.warn({ err: report.error, report: report.kind }, "harness report"),
         },
         BACKGROUND_CONTEXT,
       );
@@ -872,7 +875,7 @@ export class GuildRuntime {
     this.orgModels.bindSession(sessionId, chatId, conversationId);
     const harness = this.harness!;
     const conversation = (await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT))!;
-    const stream = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
+    const stream = await watchConversationEvents(harness, conversation.id, BACKGROUND_CONTEXT);
     let closed = false;
     void harness.closed.then(() => {
       closed = true;
@@ -929,10 +932,7 @@ export class GuildRuntime {
           retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
           try {
             await recover();
-            const current = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
-            const snapshot = current.snapshot;
-            await current.stop();
-            await this.bridge.handle(key, [snapshot]);
+            await this.bridge.handle(key, [await conversationSnapshot(harness, conversation.id, BACKGROUND_CONTEXT)]);
             await this.reconcileConversation(chatId, conversationId);
             break;
           } catch (retryError) {
