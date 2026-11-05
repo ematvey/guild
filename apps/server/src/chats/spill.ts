@@ -42,6 +42,19 @@ export function shouldSpill(content: string): boolean {
   return Buffer.byteLength(content, "utf8") > SPILL_THRESHOLD_BYTES;
 }
 
+/** Whether a tool result's inline images stay on its event. They are a
+ *  display copy (the durable entry keeps the model's own), so the shared
+ *  threshold bounds them: past it the event drops them instead of carrying
+ *  megabytes of base64 into every ThreadState frame. */
+export function imagesFitInline(images: readonly string[]): boolean {
+  let total = 0;
+  for (const image of images) {
+    total += image.length;
+    if (total > SPILL_THRESHOLD_BYTES) return false;
+  }
+  return true;
+}
+
 /** KiB rounding for the "(first 2 KiB of N KiB)" marker — a 1-byte spill
  *  reads "of 1 KiB", never "of 0 KiB". */
 export function sizeKiB(sizeBytes: number): number {

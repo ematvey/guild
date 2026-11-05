@@ -16,7 +16,7 @@ import {
   type ThreadEvent,
   type ThreadEventRow,
 } from "../platform/domain/thread-events.js";
-import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
+import { artifactMeta, imagesFitInline, shouldSpill, spillOversizedResult } from "./spill.js";
 import { AGENT_MESSAGE_KIND, agentMessageOf } from "./agent-message.js";
 import { CHILD_RESULT_KIND, childResultOf } from "./child-result.js";
 import { MEMBER_MESSAGE_KIND, memberMessageOf } from "./member-message.js";
@@ -185,13 +185,16 @@ export class TranscriptProjection {
             ? (details as Record<string, unknown>)["guild_meta"]
             : undefined);
         // Image parts ride only when the route supports the image modality
-        // (gated at persist time, so replay stays identical).
+        // (gated at persist time, so replay stays identical) and when they
+        // fit the inline budget: the durable entry is what the model reads
+        // back, so a large display copy would only cost frame bytes.
         const supported = await this.deps.routeSupportsImages(state.orgId, state.currentModel);
-        const eventImages = supported
+        const parts = supported
           ? result.content
               .filter((part): part is { type: "image"; data: string; mimeType: string } => part.type === "image")
               .map((part) => `data:${part.mimeType};base64,${part.data}`)
           : [];
+        const eventImages = imagesFitInline(parts) ? parts : [];
         const ev = toolResultEvent(
           state.turn,
           state.step,

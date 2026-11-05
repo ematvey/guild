@@ -48,6 +48,27 @@ export interface ThreadStateCapture {
  *  change, so the window bounds the per-frame cost of a long thread. */
 export const THREAD_STATE_EVENT_LIMIT = 120;
 
+/** Bytes one ThreadState frame may spend on its event window. A row count
+ *  alone cannot bound the frame: one large row per event still multiplies
+ *  into megabytes. Rows are dropped oldest-first until the window fits, and
+ *  `has_more_events` then says the rest loads on demand. */
+export const THREAD_STATE_BYTE_BUDGET = 512 * 1024;
+
+/** Trims a newest-first window to the byte budget, always keeping the
+ *  newest row: the tail is what the reader sees first. */
+function fitWindow(rows: ThreadEventRow[], hasMore: boolean): { rows: ThreadEventRow[]; hasMore: boolean } {
+  let total = 0;
+  let start = rows.length;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const size = Buffer.byteLength(JSON.stringify(rows[i]), "utf8");
+    // The newest row rides even when it alone exceeds the budget.
+    if (start !== rows.length && total + size > THREAD_STATE_BYTE_BUDGET) break;
+    total += size;
+    start = i;
+  }
+  return { rows: rows.slice(start), hasMore: hasMore || start > 0 };
+}
+
 /** One atomic capture: history + the unpersisted model buffers + the chat
  *  status, with the watermark reserved AFTER the event read (seq is always
  *  newer than every row it carries). `pool` reads the durable compaction
@@ -66,7 +87,7 @@ export async function captureThreadState(
   // reads then shows as its row, never as neither.
   const queue = await chats.runtime.chatQueue(chatId);
   const page = await chats.threads.listEventPage(orgId, chatId, { limit: THREAD_STATE_EVENT_LIMIT });
-  const events = page.rows;
+  const window = fitWindow(page.rows, page.hasMore);
   const seq = await chats.threads.watermark();
   const buffers = chats.runtime.liveBuffers(chatId);
   const generating = await chats.chats.generatingOf(orgId, chatId);
@@ -76,14 +97,14 @@ export async function captureThreadState(
   return {
     chatId,
     seq,
-    events,
+    events: window.rows,
     text: buffers.text,
     thinking: buffers.thinking,
     generating,
     projectId: project?.id,
     projectName: project?.name,
     projectMachineLabel: project?.label ?? undefined,
-    hasMoreEvents: page.hasMore,
+    hasMoreEvents: window.hasMore,
     compacting,
     queue,
   };
