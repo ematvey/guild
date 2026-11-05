@@ -58,8 +58,11 @@ An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and
 | Messaging | `send_message`, `send_file` |
 | Routines | `schedule_reminder`, `list_routines`, `create_routine`, `update_routine`, `delete_routine` |
 | Agent tree | `subagents` (one entry for spawn, send, read, list, cancel and close) |
+| Org (admin only) | `guild_overview`, `guild_members`, `guild_usage`, `guild_threads`, `guild_thread_read`, `guild_agents` |
 
 The tree tools are one entry because an Agent that can spawn but not cancel or close leaves trees it cannot clean up.
+
+The org tools are the admin's read of the whole Org: member counts and teams, the usage events, every member's Thread and its transcript, and every Agent. They reach a Turn only when the Agent is its owner's personal Agent and the owner is an admin; every other Agent's Turn has none of them. They read the same stores the admin's HTTP surfaces read, so a Member's Thread that the sidebar list never shows an admin is still listed and readable there. They are script-callable only, under the `guild` namespace of code mode.
 
 ### Integrations
 

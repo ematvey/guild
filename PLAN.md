@@ -97,6 +97,21 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **The guild namespace: the admin's assistant reads the org (2026-11-05).**
+  An admin's personal Agent now carries six script-callable tools under the
+  code-mode `guild` namespace: `guild_overview` (member, agent and thread
+  counts, today and month spend), `guild_members`, `guild_usage`
+  (breakdown, series, totals over the usage events), `guild_threads`,
+  `guild_thread_read` and `guild_agents`. The gate is the Agent's personal
+  flag plus its owner's admin role, checked at each Turn
+  (`guildToolsAllowed`), so no other Agent's Turn ever sees them. The reads
+  reuse the admin's existing stores; one read is new, `ChatStore.listOrgChats`
+  (the sidebar list is owner-only, so an admin could read a Member's Thread
+  by id but never list it) plus its count aggregate. The usage reads reuse
+  `UsageReports`; `UsageReports` now lives on the composition root and
+  reaches the runtime as `usageReports`. Domain: 004's tools table and
+  002's Activity and usage section.
+
 - **pi-durable 1.5 (2026-11-05).** The server moved from the `pi-*`/Chord
   1.3.0 packages to 1.5.0 (pi-durable, pi-ai, pi-codemode, chord, all
   pinned; pi-schema and pi-telemetry come in with them). What changed for

@@ -15,6 +15,8 @@ import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ConversationMapStore } from "../platform/store/conversations.js";
 import type { IdentityStore } from "../platform/store/identity.js";
+import type { TeamStore } from "../platform/store/teams.js";
+import type { UsageReports } from "../platform/store/usage.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { AgentStore } from "../agents/store.js";
 import type { Agent } from "../agents/types.js";
@@ -31,6 +33,7 @@ import { agentMessageEntry } from "../chats/agent-message.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
+import { createGuildTools, guildToolsAllowed } from "../agents/guild-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
 import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
@@ -49,8 +52,11 @@ export interface TurnToolDeps {
   readonly agents: AgentStore;
   readonly threads: ThreadStore;
   /** The chat owner lookup the subagent tools resolve the requester by. */
-  readonly chats: Pick<ChatStore, "ownerOf">;
-  readonly identity: Pick<IdentityStore, "getUser">;
+  readonly chats: Pick<ChatStore, "ownerOf" | "getChat" | "listOrgChats" | "orgChatCounts">;
+  readonly identity: Pick<IdentityStore, "getUser" | "listUsers">;
+  readonly teams: Pick<TeamStore, "listTeams" | "listMembers">;
+  /** The org usage reports; absent when the process has no ClickHouse. */
+  readonly usageReports?: UsageReports;
   readonly attachments: AttachmentStore;
   readonly objects?: ObjectStore;
   readonly conversations: Pick<ConversationMapStore, "projectInstructions">;
@@ -229,7 +235,27 @@ export class TurnTools {
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
     });
+    tools.push(...(await this.guildTools(agent, ref.user_id)));
     deps.log.debug({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");
     return tools;
+  }
+
+  /** The org introspection tools: the admin's personal assistant reads the
+   *  whole org's members, usage, threads and agents. Any other caller gets
+   *  none, so the tools exist only where the org read is allowed. */
+  private async guildTools(agent: Agent, ownerUserId: string): Promise<ToolRegistration[]> {
+    if (!agent.is_personal) return [];
+    const deps = this.deps;
+    const owner = await deps.identity.getUser(ownerUserId);
+    if (!guildToolsAllowed(agent, owner.role)) return [];
+    return createGuildTools({
+      pool: deps.pool,
+      identity: deps.identity,
+      teams: deps.teams,
+      agents: deps.agents,
+      chats: deps.chats,
+      ...(deps.usageReports === undefined ? {} : { usage: deps.usageReports }),
+      admin: owner,
+    });
   }
 }
