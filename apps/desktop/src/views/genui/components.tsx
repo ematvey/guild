@@ -2,10 +2,10 @@
 // of @guild/genui, drawn with the app's own kit and theme tokens. Children
 // arrive as parsed element nodes and render through `renderNode`.
 
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowDownRight, ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Check } from "lucide-react";
 import {
   FormNameContext,
   FormValidationContext,
@@ -46,6 +46,7 @@ import {
   type ChartConfig,
 } from "@guild/ui/components/chart";
 import { MD_CLASS, mdComponents } from "../markdown";
+import { GenuiAnswerContext, GenuiInertContext, answeredBy } from "./actions";
 
 type R<N extends GenuiComponentName> = ComponentRenderer<GenuiProps<N>>;
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -367,23 +368,54 @@ const PieChartView: R<"PieChart"> = ({ props }) => {
 // primary button validates the fields first.
 const VARIANT = { primary: "default", secondary: "outline", destructive: "destructive" } as const;
 
+/** The message a button sends to the agent, or null when it sends none
+ *  (an @OpenUrl button). A button without an action sends its label. */
+function sentMessage(label: string, action: unknown): string | null {
+  if (action === undefined || action === null) return label;
+  const steps = (action as { steps?: { type?: string; message?: unknown }[] }).steps;
+  if (Array.isArray(steps)) {
+    const step = steps.find((s) => s.type === "continue_conversation");
+    return step && typeof step.message === "string" ? step.message : null;
+  }
+  const type = (action as { type?: string }).type;
+  return type === undefined || type === "continue_conversation" ? label : null;
+}
+
+/** Inert controls: the block is streaming, already answered, or shown
+ *  where nothing can be sent. */
+function useInert(): boolean {
+  const settled = useContext(GenuiInertContext);
+  const streaming = useIsStreaming();
+  return settled || streaming;
+}
+
 const GenButton: R<"Button"> = ({ props }) => {
   const triggerAction = useTriggerAction();
   const formName = useFormName();
+  const inert = useInert();
   const streaming = useIsStreaming();
+  const answer = useContext(GenuiAnswerContext);
   const validation = useFormValidation();
   const variant = props.variant ?? "primary";
+  const message = sentMessage(props.label, props.action);
+  const chosen = message !== null && answeredBy(answer, message);
+  // An @OpenUrl-only button sends nothing, so it stays usable after the
+  // block is answered.
+  const disabled = message === null ? streaming : inert;
   return (
     <Button
       type="button"
       size="sm"
       variant={VARIANT[variant]}
-      disabled={streaming}
+      disabled={disabled}
+      aria-pressed={chosen || undefined}
+      className={chosen ? "ring-2 ring-ring ring-offset-1 ring-offset-background disabled:opacity-100" : undefined}
       onClick={() => {
         if (validation && variant === "primary" && !validation.validateForm()) return;
         void triggerAction(props.label, formName, props.action as Parameters<typeof triggerAction>[2]);
       }}
     >
+      {chosen && <Check className="size-4" aria-hidden />}
       {props.label}
     </Button>
   );
@@ -441,6 +473,7 @@ const Field: R<"Field"> = ({ props, renderNode }) => {
  *  returns the blur check. */
 function useFieldRules(name: string, rules: unknown, value: unknown) {
   const streaming = useIsStreaming();
+  const inert = useInert();
   const validation = useFormValidation();
   const parsed = useMemo(() => parseStructuredRules(rules), [rules]);
   useEffect(() => {
@@ -449,7 +482,7 @@ function useFieldRules(name: string, rules: unknown, value: unknown) {
     return () => validation.unregisterField(name);
   }, [name, parsed, streaming, validation, value]);
   return {
-    streaming,
+    inert,
     onFocus: () => validation?.clearFieldError(name),
     onBlur: (v: unknown) => {
       if (parsed.length > 0) validation?.validateField(name, v, parsed);
@@ -467,7 +500,7 @@ const GenInput: R<"Input"> = ({ props }) => {
       type={props.type ?? "text"}
       placeholder={props.placeholder ?? ""}
       value={(field.value as string | undefined) ?? ""}
-      disabled={rules.streaming}
+      disabled={rules.inert}
       onFocus={rules.onFocus}
       onChange={(e) => field.setValue(e.target.value)}
       onBlur={(e) => rules.onBlur(e.target.value)}
@@ -485,7 +518,7 @@ const GenTextArea: R<"TextArea"> = ({ props }) => {
       rows={3}
       placeholder={props.placeholder ?? ""}
       value={(field.value as string | undefined) ?? ""}
-      disabled={rules.streaming}
+      disabled={rules.inert}
       onFocus={rules.onFocus}
       onChange={(e) => field.setValue(e.target.value)}
       onBlur={(e) => rules.onBlur(e.target.value)}
@@ -500,7 +533,7 @@ const GenSelect: R<"Select"> = ({ props }) => {
   return (
     <Select
       value={value === "" ? undefined : value}
-      disabled={rules.streaming}
+      disabled={rules.inert}
       onValueChange={(v) => {
         field.setValue(v);
         rules.onFocus();
@@ -524,7 +557,7 @@ const GenSelect: R<"Select"> = ({ props }) => {
 
 const GenCheckbox: R<"Checkbox"> = ({ props }) => {
   const field = useStateField<boolean>(props.name, props.value);
-  const streaming = useIsStreaming();
+  const inert = useInert();
   return (
     <label className="flex cursor-pointer items-center gap-2 text-sm">
       <input
@@ -532,7 +565,7 @@ const GenCheckbox: R<"Checkbox"> = ({ props }) => {
         className="size-4 accent-foreground"
         name={field.name}
         checked={field.value === true}
-        disabled={streaming}
+        disabled={inert}
         onChange={(e) => field.setValue(e.target.checked)}
       />
       <span>{props.label}</span>

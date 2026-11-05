@@ -97,6 +97,16 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Generated UI blocks take one answer (2026-11-05).** A form or a set of
+  choice buttons stayed live after it was used, so it could be submitted
+  again and again. A block is now a dialog: the first user message after
+  its message (a click on one of its buttons, or anything typed) settles
+  its buttons and fields, and the button whose message matches the answer
+  stays marked. Derived from the transcript (`answersAfter` over the
+  render blocks), so it needs no stored state and holds on reload and on
+  every device; a click also settles the block locally at once, before
+  the echo arrives. Tabs and `@OpenUrl` buttons stay usable. The prompt
+  tells the agent to send a new block to ask again.
 - **Generated UI: agents write OpenUI Lang blocks the client renders as
   components (2026-11-05).** Answers with several numbers, comparisons,
   trends or a need for structured input read badly as Markdown. An agent

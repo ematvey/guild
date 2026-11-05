@@ -16,7 +16,7 @@ import type { RenderBlock } from "../../lib/thread-reducer";
 import { ThreadSkeleton, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
-import { GenuiStreamingContext } from "../genui/actions";
+import { GenuiPlacementContext, answersAfter } from "../genui/actions";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 
 /** A settled agent text block. Markdown parsing dominates a long transcript,
@@ -25,6 +25,7 @@ import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 const TextBlock = memo(function TextBlock({
   b,
   live,
+  answer,
   showInterrupted,
   origin,
   onOpenOrigin,
@@ -32,20 +33,24 @@ const TextBlock = memo(function TextBlock({
   b: RenderBlock;
   /** The turn is still writing this block: its Generated UI stays inert. */
   live: boolean;
+  /** The first user message after this block: its Generated UI is
+   *  answered and settles. */
+  answer: string | null;
   showInterrupted: boolean;
   /** The run this message was delivered from. Rendered in the body so the
    *  timestamp stays under the link. */
   origin?: { chat_id: string; title: string } | null;
   onOpenOrigin?: (chatId: string) => void;
 }) {
+  const placement = useMemo(() => ({ streaming: live, answer }), [live, answer]);
   return (
     <div className="group">
       <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-        <GenuiStreamingContext.Provider value={live}>
+        <GenuiPlacementContext.Provider value={placement}>
           <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
             {b.text}
           </Markdown>
-        </GenuiStreamingContext.Provider>
+        </GenuiPlacementContext.Provider>
         {b.attachments && b.attachments.length > 0 && (
           <div className="flex max-w-full flex-wrap items-start gap-2">
             {b.attachments
@@ -154,6 +159,10 @@ export function ThreadPane({
   // markdown blocks. Memoizing the element list keeps those elements
   // identical across prompt edits, so React bails out of the transcript.
   const lastBlockIndex = blocks.length - 1;
+  const answers = useMemo(() => {
+    const after = answersAfter(blocks);
+    return new Map(blocks.map((b, i) => [b.key, after[i] ?? null]));
+  }, [blocks]);
   const firstTextIndex = displayEntries.findIndex((e) => e.kind === "plain" && e.b.kind === "text");
   const transcriptEntries = useMemo(
     () =>
@@ -221,6 +230,7 @@ export function ThreadPane({
             key={e.b.key}
             b={e.b}
             live={busy && i === displayEntries.length - 1}
+            answer={answers.get(e.b.key) ?? null}
             showInterrupted={!busy}
             origin={i === firstTextIndex ? originLink : null}
             onOpenOrigin={onOpenChat}
@@ -238,6 +248,7 @@ export function ThreadPane({
       onOpenChat,
       originLink,
       firstTextIndex,
+      answers,
     ],
   );
 

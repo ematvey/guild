@@ -13,7 +13,7 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Has an audience that decides who may add it to an Agent (see 002). Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
-| Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
+| Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Takes one answer: the first user message after it settles its controls. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
 
 ## Models and the gateway
@@ -127,7 +127,7 @@ The reply stays Markdown. A fenced block tagged `openui` renders in place as com
 - `@OpenUrl(url)` opens an `http`, `https` or `mailto` link outside the app; any other scheme is dropped.
 - `Query`, `Mutation` and custom actions have no provider: a block never calls a Tool, so every Tool still passes the Approval and exec-policy gates of a Turn.
 
-Controls stay disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
+A block is a dialog: it takes one answer. Once any user message follows it in the Thread (a click on one of its buttons, or anything the Member typed), its buttons and fields settle, and the button whose message answered it stays marked. The state comes from the transcript, so it holds on reload and on every device; Tabs still switch and `@OpenUrl` buttons still open. Controls are also disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
 
 ## Org prompts
 

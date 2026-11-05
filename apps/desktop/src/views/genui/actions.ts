@@ -23,9 +23,49 @@ export interface GenuiHost {
 
 export const GenuiHostContext = createContext<GenuiHost | null>(null);
 
-/** Whether the block's message is still streaming: fields and buttons
- *  stay disabled until it settles. */
-export const GenuiStreamingContext = createContext(false);
+/** Where the block's message stands in the thread. `streaming`: the turn
+ *  is still writing it. `answer`: the text of the first user message after
+ *  it, or null while nothing follows. A block is a dialog: once answered
+ *  (by one of its buttons or by anything the user typed) its controls
+ *  settle. Derived from the transcript, so it holds on reload and on every
+ *  device. */
+export interface GenuiPlacement {
+  streaming: boolean;
+  answer: string | null;
+}
+
+export const GenuiPlacementContext = createContext<GenuiPlacement>({ streaming: false, answer: null });
+
+/** The block's controls accept no input: still streaming, already
+ *  answered, or shown where nothing can be sent. Tabs still switch. */
+export const GenuiInertContext = createContext(false);
+
+/** The answer that followed the block, for marking the choice that made
+ *  it. */
+export const GenuiAnswerContext = createContext<string | null>(null);
+
+/** Whether `answer` is what a button sending `message` sent: the button's
+ *  message, possibly followed by its form's values. */
+export function answeredBy(answer: string | null, message: string): boolean {
+  if (answer === null) return false;
+  const m = message.trim();
+  if (m === "") return false;
+  const a = answer.trim();
+  return a === m || a.startsWith(`${m}\n`);
+}
+
+/** For each block of a transcript, the text of the first user message
+ *  after it, or null when none follows. */
+export function answersAfter(blocks: readonly { kind: string; text?: string }[]): (string | null)[] {
+  const out: (string | null)[] = new Array(blocks.length).fill(null);
+  let next: string | null = null;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    out[i] = next;
+    const b = blocks[i]!;
+    if (b.kind === "user") next = b.text ?? "";
+  }
+  return out;
+}
 
 export type GenuiOutcome = { kind: "send"; text: string } | { kind: "open"; url: string } | { kind: "none" };
 

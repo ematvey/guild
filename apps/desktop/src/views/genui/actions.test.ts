@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { genuiOutcome } from "./actions";
+import { answeredBy, answersAfter, genuiOutcome } from "./actions";
 
 describe("genuiOutcome", () => {
   it("sends the button's message", () => {
@@ -54,5 +54,35 @@ describe("genuiOutcome", () => {
     expect(genuiOutcome({ type: "continue_conversation", params: {}, humanFriendlyMessage: "  " })).toEqual({
       kind: "none",
     });
+  });
+});
+
+describe("answersAfter", () => {
+  it("gives each block the first user message after it", () => {
+    const blocks = [
+      { kind: "user", text: "hi" },
+      { kind: "text", text: "form" },
+      { kind: "tool" },
+      { kind: "text", text: "more" },
+      { kind: "user", text: "Plan it\n\ndestination: Lisbon" },
+      { kind: "text", text: "done" },
+    ];
+    expect(answersAfter(blocks)).toEqual([
+      "Plan it\n\ndestination: Lisbon",
+      "Plan it\n\ndestination: Lisbon",
+      "Plan it\n\ndestination: Lisbon",
+      "Plan it\n\ndestination: Lisbon",
+      null,
+      null,
+    ]);
+  });
+});
+
+describe("answeredBy", () => {
+  it("matches the button's message, alone or followed by form values", () => {
+    expect(answeredBy("Plan it", "Plan it")).toBe(true);
+    expect(answeredBy("Plan it\n\ndestination: Lisbon", "Plan it")).toBe(true);
+    expect(answeredBy("Plan it later", "Plan it")).toBe(false);
+    expect(answeredBy(null, "Plan it")).toBe(false);
   });
 });

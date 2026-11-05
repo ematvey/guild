@@ -3,15 +3,23 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import Markdown from "react-markdown";
 import { CHAT_MD_PLUGINS, mdComponents } from "../markdown";
-import { GenuiHostContext } from "./actions";
+import { GenuiHostContext, GenuiPlacementContext } from "./actions";
 
-const md = (text: string, host = true) =>
+const md = (text: string, host = true, answer: string | null = null) =>
   renderToStaticMarkup(
     <GenuiHostContext.Provider value={host ? { send: () => {} } : null}>
-      <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
-        {text}
-      </Markdown>
+      <GenuiPlacementContext.Provider value={{ streaming: false, answer }}>
+        <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
+          {text}
+        </Markdown>
+      </GenuiPlacementContext.Provider>
     </GenuiHostContext.Provider>,
+  );
+
+/** The rendered <button> tags, by label. */
+const buttons = (html: string) =>
+  Object.fromEntries(
+    [...html.matchAll(/<button([^>]*)>(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/button>/g)].map((m) => [m[2], m[1]]),
   );
 
 const BLOCK = [
@@ -70,8 +78,30 @@ describe("Generated UI blocks", () => {
     expect(html).not.toContain("data-genui");
   });
 
+  it("take input while unanswered", () => {
+    expect(buttons(md(BLOCK))["Break down by team"]).not.toContain('disabled=""');
+  });
+
   it("disable the controls where nothing can be sent", () => {
-    expect(md(BLOCK, false)).toMatch(/<fieldset disabled=""/);
-    expect(md(BLOCK, true)).not.toMatch(/<fieldset disabled=""/);
+    expect(buttons(md(BLOCK, false))["Break down by team"]).toContain('disabled=""');
+  });
+
+  it("settle once answered, marking the button that answered", () => {
+    const two = BLOCK.replace(
+      'next = Buttons([Button("Break down by team", @ToAssistant("Break it down"))])',
+      'next = Buttons([Button("Break down by team", @ToAssistant("Break it down")), Button("Later", @ToAssistant("Not now"))])',
+    );
+    const html = md(two, true, "Break it down");
+    const b = buttons(html);
+    expect(b["Break down by team"]).toContain('disabled=""');
+    expect(b["Break down by team"]).toContain('aria-pressed="true"');
+    expect(b["Later"]).toContain('disabled=""');
+    expect(b["Later"]).not.toContain("aria-pressed");
+  });
+
+  it("settle when the user answered by typing instead", () => {
+    const b = buttons(md(BLOCK, true, "something else entirely"));
+    expect(b["Break down by team"]).toContain('disabled=""');
+    expect(b["Break down by team"]).not.toContain("aria-pressed");
   });
 });
