@@ -69,12 +69,15 @@ function useHarness() {
   const outgoingRef = useRef(new Map<string, OutgoingCommand>());
   const observedUserIdsRef = useRef(new Set<string>());
   const recoverMissingChatRef = useRef<() => void>(() => {});
-  useMemberSocket({
+  const { socketRef } = useMemberSocket({
     signOut: () => {},
     thread,
     outgoing: { outgoingRef, observedUserIdsRef, settleOutgoing: () => {} },
     recoverMissingChatRef,
   });
+  // The view wires the retry: an open that outlives its first wait asks the
+  // socket for one more sync.
+  thread.resyncRef.current = () => socketRef.current?.resync();
   useEffect(() => {
     thread.openForChat(CHAT);
     // One open for the mounted route chat.
@@ -288,6 +291,40 @@ describe("member socket → thread store (integration)", () => {
       }),
     );
     expect(contextUsageOf(CHAT)).toEqual({ tokens: 1200, usage_model: "m", usage_model_alias: "Model" });
+    unmount();
+  });
+
+  it("an open whose state never arrives asks for one more sync, then gives up", async () => {
+    const { result, unmount } = renderHook(() => useHarness());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = FakeWebSocket.all[0]!;
+    act(() => socket.open());
+    const syncs = () => socket.sent.filter((raw) => JSON.parse(raw).type === "sync").length;
+    expect(syncs()).toBe(1);
+
+    // The first window expires with no state: a second sync, no give-up yet.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(syncs()).toBe(2);
+
+    // The second window expires too: one retry per open, never a loop.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(syncs()).toBe(2);
+
+    // Both windows spent: the open is dropped, so a late state no longer
+    // swaps the view in and the old screen stays.
+    await act(async () => {
+      socket.deliver({ type: "sync_begin", chat_id: CHAT });
+      socket.deliver(threadState(1, [echo(1, "late")], false));
+      socket.deliver({ type: "sync_done", chat_id: CHAT });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.thread.view.blocks).toEqual([]);
     unmount();
   });
 });

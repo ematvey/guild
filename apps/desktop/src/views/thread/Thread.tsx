@@ -235,6 +235,9 @@ function ThreadView(props: ThreadProps) {
     outgoing: { outgoingRef, observedUserIdsRef: composer.observedUserIdsRef, settleOutgoing: outgoing.settleOutgoing },
     recoverMissingChatRef,
   });
+  // A thread open that outlives the first wait asks the socket for one more
+  // sync (see use-thread-store's state wait).
+  thread.resyncRef.current = () => socketRef.current?.resync();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar

@@ -16,8 +16,10 @@ import { createThreadViewStore } from "../thread-view-store";
  *  bracket whose tree read failed; the header fills in when a later push
  *  lands. */
 const TREE_WAIT_MS = 600;
-/** A first visit that never receives its ThreadState falls back to the old
- *  view instead of holding navigation forever. */
+/** A first visit that receives no ThreadState in this window asks for one
+ *  more sync, then gives up and falls back to the old view instead of
+ *  holding navigation forever. A dead socket (the reconnect case) is what
+ *  the second window covers. */
 const STATE_WAIT_MS = 5_000;
 
 type ScrollMemory = { top: number; atBottom: boolean };
@@ -90,6 +92,11 @@ export function useThreadStore(chatId: string | null) {
   const treeTimer = useRef<number | null>(null);
   const stateTimer = useRef<number | null>(null);
   const stateTimerTarget = useRef<string | null>(null);
+  /** The pending chat that already asked for a second sync: one retry per
+   *  open, then the toast. */
+  const stateRetried = useRef<string | null>(null);
+  /** The socket's resync, wired by the view that owns the socket. */
+  const resyncRef = useRef<() => void>(() => {});
 
   const clearTreeTimer = () => {
     if (treeTimer.current !== null) {
@@ -104,6 +111,17 @@ export function useThreadStore(chatId: string | null) {
       stateTimer.current = null;
     }
     stateTimerTarget.current = null;
+    stateRetried.current = null;
+  };
+
+  /** Both windows spent: the thread never answered, so the view goes back
+   *  to the chat it showed and the user is told. */
+  const onStateWaitExpired = () => {
+    stateTimer.current = null;
+    stateTimerTarget.current = null;
+    stateRetried.current = null;
+    toast.error("Thread did not load");
+    dispatchNavRef.current({ type: "cancel" });
   };
 
   const saveScroll = (cid: string | null) => {
@@ -141,12 +159,22 @@ export function useThreadStore(chatId: string | null) {
       const target = decision.state.pendingChatId;
       if (stateTimer.current === null || stateTimerTarget.current !== target) {
         clearStateTimer();
+        if (stateRetried.current !== target) stateRetried.current = null;
         stateTimerTarget.current = target;
         stateTimer.current = window.setTimeout(() => {
           stateTimer.current = null;
+          if (stateRetried.current !== target) {
+            // The bracket may have died with its socket: ask again once
+            // before telling the user the thread is gone.
+            stateRetried.current = target;
+            traceEvent("thread.sync_retry", { chat: target });
+            resyncRef.current();
+            stateTimerTarget.current = target;
+            stateTimer.current = window.setTimeout(onStateWaitExpired, STATE_WAIT_MS);
+            return;
+          }
           stateTimerTarget.current = null;
-          toast.error("Thread did not load");
-          dispatchNavRef.current({ type: "cancel" });
+          onStateWaitExpired();
         }, STATE_WAIT_MS);
       }
     } else {
@@ -271,6 +299,7 @@ export function useThreadStore(chatId: string | null) {
     loadEarlier,
     openForChat,
     cancelPending,
+    resyncRef,
   };
 }
 
