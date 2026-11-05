@@ -133,6 +133,24 @@ describe("thread event pages", () => {
     expect(await platform.chats.sameOwner(chatId, other)).toBe(true);
   });
 
+  it("trims the ThreadState window to its byte budget, oldest first", async () => {
+    const chatId = await createChat("huge");
+    // Three rows of ~300 KiB each: the count limit would carry all three.
+    for (const tag of ["a", "b", "c"]) {
+      await platform.threads.appendEvent(chatId, {
+        type: "user_message",
+        content: `${tag}${"x".repeat(300 * 1024)}`,
+        attachments: [],
+      });
+    }
+    const capture = await captureThreadState(platform, platform.pool, stack.orgId, chatId);
+    expect(capture.events).toHaveLength(1);
+    expect((capture.events[0]!.event as { content?: string }).content?.startsWith("c")).toBe(true);
+    expect(capture.hasMoreEvents).toBe(true);
+    const frame = Buffer.byteLength(JSON.stringify(capture.events), "utf8");
+    expect(frame).toBeLessThan(400 * 1024);
+  });
+
   it("captures only the newest window in a ThreadState", async () => {
     const chatId = await createChat("long");
     await appendUserMessages(chatId, THREAD_STATE_EVENT_LIMIT + 30);
