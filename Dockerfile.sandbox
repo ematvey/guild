@@ -13,8 +13,13 @@ COPY apps/desktop/package.json apps/desktop/
 COPY apps/server/package.json apps/server/
 COPY packages/ui/package.json packages/ui/
 COPY packages/wire/package.json packages/wire/
+COPY packages/genui/package.json packages/genui/
+COPY packages/integration-sdk/package.json packages/integration-sdk/
+COPY packages/integration-sdk/bin packages/integration-sdk/bin
 RUN npm ci --workspace apps/server --no-audit --no-fund
 COPY packages/wire/src ./packages/wire/src
+COPY packages/genui/src ./packages/genui/src
+COPY packages/integration-sdk/src ./packages/integration-sdk/src
 COPY apps/server/src ./apps/server/src
 COPY apps/server/tsconfig.json apps/server/tsconfig.json
 RUN npm run build --workspace apps/server
