@@ -43,6 +43,8 @@ A Turn's tool set is assembled at admission, in this order:
 
 File and shell tools are called directly. Integration and MCP tools are called through code mode: the model writes a short script that calls `tools.<name>`, and each nested call is gated on its own.
 
+Code mode lists the tools a script can call grouped into namespaces: groups of Guild's own tools, one per Integration (named by its slug), and one per MCP server. A namespace only groups tools for discovery; a script still calls each tool as `tools.<name>`.
+
 ### The allowlist
 
 An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and Trait tool, resolved at each Turn, so a tool added in a later release reaches the Agent without an edit. It never covers an Integration's own tools: those reach an Agent only through its Integration list (see 002). A personal Agent starts with `all` and no Integration.

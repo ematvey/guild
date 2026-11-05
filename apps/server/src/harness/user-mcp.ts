@@ -25,6 +25,7 @@ import { validateUrl } from "../integrations/mcp-url.js";
 import type { JsonObject } from "../integrations/shared.js";
 import type { UserMcpStore } from "../platform/store/user-mcp.js";
 import type { TurnPreparation } from "./integrations.js";
+import type { ToolGroup } from "./codemode-namespaces.js";
 
 interface ResolvedTool {
   serverId: string;
@@ -201,6 +202,23 @@ export class UserMcpRuntime {
     };
     this.registry.install(extension);
     return extension;
+  }
+
+  /** The conversation's codemode namespaces: one per reachable server of
+   *  the chat owner, holding that server's tools. */
+  async toolGroups(conversationId: number): Promise<ToolGroup[]> {
+    const snapshot = await this.snapshotFor(conversationId);
+    if (snapshot === undefined) return [];
+    const groups = new Map<string, ToolGroup & { tools: string[] }>();
+    for (const tool of snapshot.tools) {
+      let group = groups.get(tool.serverId);
+      if (group === undefined) {
+        group = { name: tool.serverName, description: `Your MCP server ${tool.serverName}.`, tools: [] };
+        groups.set(tool.serverId, group);
+      }
+      group.tools.push(userMcpToolName(tool.serverName, tool.toolName));
+    }
+    return [...groups.values()];
   }
 
   /** The turn snapshot: the turn-start cache, or a live re-resolve (restart

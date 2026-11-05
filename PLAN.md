@@ -97,6 +97,22 @@ first. Code comments describe only the present.
 
 ## Latest decisions
 
+- **Code mode groups tools into namespaces (2026-11-05).** The `codemode`
+  section listed every script-callable tool flat under one token budget,
+  so the tail of the list dropped out silently and generic names (`send`,
+  `list`, `close`) carried no context. Tools are now grouped: Guild's
+  built-ins (`subagents`, `conversations`, `routines`, `skills`,
+  `chat_history`, `files`), one namespace per Integration (its slug, with
+  its description and guide hint), and one per user MCP server. The section
+  lists every namespace before completing any, and scripts find the rest
+  with `describeNamespace()` and `searchTools(q, { namespace })`. Calls
+  stay flat (`tools.<name>`): pi-codemode namespaces group tools for
+  discovery only. pi groups by name prefix and fixes namespaces at
+  install, so `harness/codemode-namespaces.ts` pins each member by its full
+  name and resolves the groups per conversation for each render and call;
+  no tool was renamed. Nested `tools.<ns>.<tool>` objects would need an
+  upstream pi-codemode change.
+
 - **A chat counts as read only while its window has focus (2026-11-05).**
   Phone pushes went missing for answers and routine deliveries. The
   device side was fine: a probe signed with the server's VAPID pair got

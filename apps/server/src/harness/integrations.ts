@@ -25,6 +25,7 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
+import type { ToolGroup } from "./codemode-namespaces.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
@@ -379,6 +380,22 @@ export class IntegrationsRuntime {
         return { content: guide ?? `integration ${turn.slug} has no guide`, isError: false };
       },
     );
+  }
+
+  /** The conversation's codemode namespaces: one per enabled integration,
+   *  holding its discovery tools and the tools the Turn may call. */
+  async toolGroups(conversationId: number): Promise<ToolGroup[]> {
+    const snapshot = await this.snapshotFor(conversationId);
+    if (snapshot === undefined) return [];
+    return snapshot.turns.map((turn) => {
+      const [listTools, guide] = autoToolNames(turn);
+      return {
+        name: turn.slug,
+        description: turn.description,
+        ...(turn.executor === "mcp" ? { instructions: `Usage guide: \`await tools.${guide}()\`.` } : {}),
+        tools: [listTools, guide, ...turn.tools.map((info) => info.spec.name)],
+      };
+    });
   }
 
   private integrationTool(info: IntegrationToolInfo): ToolRegistration {

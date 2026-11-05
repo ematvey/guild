@@ -292,6 +292,13 @@ describe("M8: integrations chat runtime", () => {
       expect((spec["parameters"] as Record<string, unknown>)["type"]).toBe("object");
       expect(spec["kind"]).toBeUndefined();
 
+      // The integration's tools are one codemode namespace, headed by its slug.
+      const system = (stack.mock.requests.at(-1)!.body["messages"] as { role: string; content: unknown }[])
+        .filter((m) => m.role === "system")
+        .map((m) => String(m.content))
+        .join("\n");
+      expect(system).toMatch(/^## atlassian( \(some tools not listed\))?$/m);
+
       // Auto tools are not audited; the runtime extension is in the system
       // prompt (the tool result meta carries the guild wiring).
       await turnSettled(chatId);

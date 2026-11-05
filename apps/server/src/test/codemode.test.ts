@@ -186,6 +186,9 @@ describe("codemode over the chat loop", () => {
       expect(system).toContain("Tools scripts can call (`await tools.<name>(args)`)");
       expect(system).toContain("### `read`");
       expect(system).toContain("### `bash`");
+      // Guild's built-in tools are grouped under namespace headings.
+      expect(system).toContain("## chat_history");
+      expect(system).toContain("## skills");
       // The guild notes section: the globals rule that stops the
       // `tools.searchTools` misread weaker models make.
       expect(system).toContain("Codemode rules:");
@@ -200,6 +203,33 @@ describe("codemode over the chat loop", () => {
       const conversation = await runtimeHandle.harnessForTest()!.conversation(conversationId, BACKGROUND_CONTEXT);
       const agent = await conversation!.agent(BACKGROUND_CONTEXT);
       expect(agent.tools.some((tool) => tool.name === "codemode")).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "answers describeNamespace() and namespace-scoped searchTools() with Guild's tool groups",
+    async () => {
+      const chatId = await createChat("codemode-namespaces");
+      const code = [
+        "const ns = await describeNamespace('chat_history');",
+        "const hits = await searchTools('history', { namespace: 'chat_history' });",
+        "return { ns, hits: hits.map((hit) => hit.name) };",
+      ].join("\n");
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "describe a namespace");
+      await turnSettled(chatId);
+
+      const events = await threadEvents(chatId);
+      const call = (events as unknown as { event: { blocks?: { type: string; name?: string; id?: string }[] } }[])
+        .flatMap((e) => e.event.blocks ?? [])
+        .find((b) => b.type === "tool_call" && b.name === "codemode");
+      const result = toolResultFor(events, call!.id!);
+      expect(result.is_error).toBe(false);
+      expect(result.content).toContain('"name":"chat_history"');
+      expect(result.content).toContain("thread_history");
+      expect(result.content).toContain("thread_search");
+      expect(result.content).not.toContain('"hits":[]');
     },
     TEST_TIMEOUT,
   );
