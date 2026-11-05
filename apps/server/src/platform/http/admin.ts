@@ -23,6 +23,7 @@ import {
   integrationTools,
   saveIntegration,
   testIntegration,
+  type IntegrationTestDraft,
 } from "../../integrations/admin.js";
 import { clampDays, integrationUsage, usageSummary } from "../store/integration-usage.js";
 import { createOrgMcp, probeOrgMcp } from "../../integrations/org-mcp.js";
@@ -300,15 +301,23 @@ export function registerAdminIntegrationRoutes(
     return reply;
   });
 
-  // Runs the connection test against the stored config and secrets. A
-  // failed test is the answer, not a request error: { ok: false, error }.
+  // Runs the connection test against the stored config and secrets, with
+  // an unsaved form's { config, secrets } laid over them; nothing is
+  // written. A failed test is the answer, not a request error:
+  // { ok: false, error }.
   app.post("/api/v1/admin/integrations/:id/test", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
     try {
-      const ms = await testIntegration(gateway, admin.org_id, existing.name, existing);
+      const body = optionalJsonBody(req);
+      const draft: IntegrationTestDraft = {};
+      const isObject = (v: unknown): v is Record<string, unknown> =>
+        v !== null && typeof v === "object" && !Array.isArray(v);
+      if (isObject(body["config"])) draft.config = body["config"];
+      if (isObject(body["secrets"])) draft.secrets = body["secrets"];
+      const ms = await testIntegration(gateway, admin.org_id, existing.name, existing, draft);
       sendJson(reply, { ok: true, ms });
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;

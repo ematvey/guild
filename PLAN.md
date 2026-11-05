@@ -182,6 +182,16 @@ first. Code comments describe only the present.
   http(s)/mailto. lang-core's postinstall reports installs to its vendor;
   npm 11 blocks it by default and the image sets
   `OPENUI_TELEMETRY_DISABLED`.
+- **Test connection tests the form, not only what is stored
+  (2026-11-05).** An admin pasted a Stripe key and pressed Test
+  connection before saving; the test ran against the stored row, which
+  had no key, and Stripe answered 401. `POST /admin/integrations/:id/test`
+  now takes the form's unsaved `{ config, secrets }` and lays them over
+  the stored row in memory, writing nothing; the configuration page sends
+  them while the form is dirty. An MCP test names missing required secrets
+  by label before calling out. Enabling an MCP plugin required every
+  secret field, including optional ones (Stripe's connected account); it
+  now requires only the required fields.
 - **MCP plugins: the SDK wraps a remote MCP server, built in or published;
   Stripe is a built-in (2026-11-05).** Adding a known vendor MCP server
   (Stripe) meant every admin typing its URL, header shape and key format

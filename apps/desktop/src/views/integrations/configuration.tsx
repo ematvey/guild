@@ -13,7 +13,7 @@ import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
 import { useCachedGet } from "../settings/use-cached-api";
 import { integrationSecretsPath, updateIntegration } from "../../lib/api/settings";
-import { testIntegration, type FieldSpec, type ShopItem, type TestResult } from "./integrations-api";
+import { testIntegration, type FieldSpec, type ShopItem, type TestDraft, type TestResult } from "./integrations-api";
 import { Note } from "./prose";
 
 interface SecretEntry {
@@ -168,12 +168,22 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-export function TestConnectionButton({ id, disabled }: { id: string; disabled?: boolean }) {
+/** Tests the stored configuration; with `draft`, the form's unsaved
+ *  values are tested in its place and nothing is saved. */
+export function TestConnectionButton({
+  id,
+  disabled,
+  draft,
+}: {
+  id: string;
+  disabled?: boolean;
+  draft?: () => TestDraft;
+}) {
   const [state, setState] = useState<"idle" | "running" | TestResult>("idle");
   const run = async () => {
     setState("running");
     try {
-      setState(await testIntegration(id));
+      setState(await testIntegration(id, draft?.() ?? {}));
     } catch (e) {
       setState({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -221,6 +231,14 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
       .filter((n) => !fields.some((f) => f.name === n))
       .map((n) => ({ name: n, kind: "secret", label: secretWidget(n).label, required: true })),
   ];
+
+  const draftForTest = (): TestDraft =>
+    dirty
+      ? {
+          config: buildIntegrationConfig(fields, item.config, form, isMcp),
+          secrets: Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== "")),
+        }
+      : {};
 
   const save = async () => {
     if (busy || !dirty) return;
@@ -392,7 +410,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
           </Button>
         )}
         <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
-        <TestConnectionButton id={id} disabled={busy} />
+        <TestConnectionButton id={id} disabled={busy} draft={draftForTest} />
         {error !== null && (
           <p role="alert" className="basis-full text-sm text-destructive">
             {error}

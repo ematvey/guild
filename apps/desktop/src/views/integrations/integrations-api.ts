@@ -148,8 +148,14 @@ export const catalogLandingPath = (catalogId: string, slug: string, version: str
     version !== null ? `?version=${encodeURIComponent(version)}` : ""
   }`;
 
-export function testIntegration(id: string): Promise<TestResult> {
-  return request<TestResult>("POST", `${SETTINGS_PATHS.integrations}/${id}/test`, {});
+/** Unsaved form values a connection test lays over the stored row. */
+export interface TestDraft {
+  config?: Record<string, unknown>;
+  secrets?: Record<string, string>;
+}
+
+export function testIntegration(id: string, draft: TestDraft = {}): Promise<TestResult> {
+  return request<TestResult>("POST", `${SETTINGS_PATHS.integrations}/${id}/test`, draft);
 }
 
 export type AccessAudience = "org" | "team" | "admins";

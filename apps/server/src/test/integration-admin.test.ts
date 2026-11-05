@@ -833,6 +833,51 @@ describe("org MCP servers added from the admin UI", () => {
   });
 });
 
+describe("a built-in MCP plugin's connection test and enable", () => {
+  const authUrl = (): string => `http://127.0.0.1:${(mcpServer.address() as AddressInfo).port}/auth-mcp`;
+
+  it("tests the form's unsaved key without storing it, and enables without the optional secret", async () => {
+    expect((await call("POST", "/api/v1/admin/integrations", e.adminToken, { name: "stripe" })).statusCode).toBe(200);
+    const row = await e.env.db.query("SELECT id, config FROM integrations WHERE org_id = $1 AND name = 'stripe'", [
+      e.orgId,
+    ]);
+    const id = row.rows[0].id as string;
+    await e.env.db.query("UPDATE integrations SET config = jsonb_set(config, '{mcp,url}', $2) WHERE id = $1", [
+      id,
+      JSON.stringify(authUrl()),
+    ]);
+
+    const bare = await call("POST", `/api/v1/admin/integrations/${id}/test`, e.adminToken, {});
+    expect(JSON.parse(bare.body)).toEqual({ ok: false, error: "missing secrets: Agent API key" });
+
+    const wrong = await call("POST", `/api/v1/admin/integrations/${id}/test`, e.adminToken, {
+      secrets: { stripe_key: "nope" },
+    });
+    expect(JSON.parse(wrong.body)).toMatchObject({ ok: false, error: expect.stringMatching(/401/) });
+
+    const draft = await call("POST", `/api/v1/admin/integrations/${id}/test`, e.adminToken, {
+      secrets: { stripe_key: "s3cret" },
+    });
+    expect(JSON.parse(draft.body)).toMatchObject({ ok: true });
+    expect(mcpLastHeaders["authorization"]).toBe("Bearer s3cret");
+    expect(mcpLastHeaders["stripe-account"]).toBeUndefined();
+    expect(Object.keys(mcpLastHeaders).filter((h) => h.startsWith("x-guild-"))).toEqual([]);
+    const stored = await e.env.db.query(
+      "SELECT name FROM integration_secrets WHERE org_id = $1 AND integration = 'stripe'",
+      [e.orgId],
+    );
+    expect(stored.rows).toEqual([]);
+
+    const save = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
+      enabled: true,
+      secrets: { stripe_key: "s3cret" },
+    });
+    expect(save.statusCode).toBe(200);
+    const saved = await call("POST", `/api/v1/admin/integrations/${id}/test`, e.adminToken, {});
+    expect(JSON.parse(saved.body)).toMatchObject({ ok: true });
+  });
+});
+
 // ---------- /api/v1/me/approval ----------
 
 describe("GET/PUT /api/v1/me/approval", () => {

@@ -139,6 +139,19 @@ export function manifestSecretNames(manifest: JsonObject): string[] {
   return [];
 }
 
+/** The secrets a registry manifest needs before it enables: its required
+ *  secret-kind settings fields, else every `auth.secret_names` entry. */
+export function requiredSecretNames(manifest: JsonObject): string[] {
+  const settings = manifest["settings"];
+  if (settings !== null && typeof settings === "object" && Array.isArray((settings as JsonObject)["fields"])) {
+    const fields = ((settings as JsonObject)["fields"] as JsonObject[]).filter(
+      (f) => f["kind"] === "secret" && typeof f["name"] === "string",
+    );
+    if (fields.length > 0) return fields.filter((f) => f["required"] !== false).map((f) => f["name"] as string);
+  }
+  return manifestSecretNames(manifest);
+}
+
 function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject, tool: McpTool): IntegrationToolInfo {
   return {
     spec: {

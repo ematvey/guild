@@ -13,7 +13,7 @@ import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { mcpConnect } from "./mcp.js";
-import { approvedManifest, manifestSecretNames, namespacedTool, requireApprovedManifest } from "./plugins.js";
+import { approvedManifest, namespacedTool, requireApprovedManifest, requiredSecretNames } from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
 import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { parseBundle, readBundleFile } from "../platform/bundle.js";
@@ -501,7 +501,7 @@ export async function saveIntegration(
     }
     validateMcpConfig(config);
     const enabled = typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
-    const declared = manifestSecretNames(registryManifestValue ?? {});
+    const declared = requiredSecretNames(registryManifestValue ?? {});
     if (enabled && readMcpUrl(config) === null) {
       throw ApiError.badRequest("mcp plugin needs an mcp.url before enabling");
     }
@@ -609,30 +609,66 @@ export async function saveIntegration(
   );
 }
 
-/** Runs the integration's connection test against what is stored: the
- *  saved config and secrets, nothing submitted, nothing written. Throws the
- *  same errors a save would; resolves with the elapsed milliseconds. */
+/** The settings-field labels of the named secrets, the name where a field
+ *  has none. */
+function secretLabels(manifest: Record<string, unknown>, names: string[]): string[] {
+  const settings = manifest["settings"] as { fields?: { name?: unknown; label?: unknown }[] } | undefined;
+  const fields = Array.isArray(settings?.fields) ? settings.fields : [];
+  return names.map((n) => {
+    const label = fields.find((f) => f.name === n)?.label;
+    return typeof label === "string" && label !== "" ? label : n;
+  });
+}
+
+/** Credentials and settings from an unsaved form, laid over the stored
+ *  row for one connection test. */
+export interface IntegrationTestDraft {
+  config?: Record<string, unknown>;
+  secrets?: Record<string, unknown>;
+}
+
+/** Runs the integration's connection test against the stored config and
+ *  secrets with the draft laid over them in memory; nothing is written.
+ *  Draft config merges shallowly over the stored row for an MCP plugin and
+ *  replaces it for a code plugin, as a save would; draft secrets override
+ *  the stored ones of the same name. Throws the same errors a
+ *  save would; resolves with the elapsed milliseconds. */
 export async function testIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
   name: string,
   existing: { config: unknown },
+  draft: IntegrationTestDraft = {},
 ): Promise<number> {
   const started = Date.now();
-  const config = (existing.config ?? {}) as Record<string, unknown>;
-  const secrets = await gateway.integrationSecrets.resolve(
+  const stored = (existing.config ?? {}) as Record<string, unknown>;
+  let secrets = await gateway.integrationSecrets.resolve(
     orgId,
     name,
     await gateway.integrationSecrets.names(orgId, name),
     gateway.masterKey(),
   );
+  for (const [k, v] of Object.entries(draft.secrets ?? {})) {
+    if (typeof v !== "string" || v === "") continue;
+    secrets = secrets.filter(([n]) => n !== k);
+    secrets.push([k, v]);
+  }
   const manifest = await saveManifest(gateway, orgId, name);
-  const mcpUrl = readMcpUrl(config);
-  if ((manifest !== null && manifest["mcp"] != null) || mcpUrl !== null) {
+  const isMcp = (manifest !== null && manifest["mcp"] != null) || readMcpUrl(stored) !== null;
+  if (isMcp) {
+    const config: Record<string, unknown> = { ...stored };
+    for (const [k, v] of Object.entries(draft.config ?? {})) if (k !== "tools") config[k] = v;
+    validateMcpConfig(config);
+    const mcpUrl = readMcpUrl(config);
     if (mcpUrl === null) throw ApiError.badRequest("no MCP server URL is configured");
+    const missing = requiredSecretNames(manifest ?? {}).filter((n) => !secrets.some(([s]) => s === n));
+    if (missing.length > 0) {
+      throw ApiError.conflict("missing_secrets", `missing secrets: ${secretLabels(manifest ?? {}, missing).join(", ")}`);
+    }
     await mcpTestConnection(config, mcpUrl, secrets, orgId);
     return Date.now() - started;
   }
+  const config = draft.config ?? stored;
   const connector = await connectorOrError(gateway, orgId, name);
   if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
   const missing = connector.fields
