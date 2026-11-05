@@ -623,8 +623,7 @@ describe("MCP plugin rows", () => {
     const row = (await e.env.db.query("SELECT enabled FROM integrations WHERE id = $1", [id])).rows[0]!;
     expect(row.enabled).toBe(true);
     // Live listing: every discovered remote tool carries the stored
-    // curation — absent = disabled (remote drift lands visible-but-off);
-    // classes from the manifest.
+    // curation — absent = enabled; classes from the manifest.
     const listing = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
     expect(listing.statusCode).toBe(200);
     const parsed = JSON.parse(listing.body) as {
@@ -634,12 +633,12 @@ describe("MCP plugin rows", () => {
     };
     expect(parsed.resolved).toBe(true);
     expect(parsed.kind).toBe("mcp");
-    expect(parsed.tools.find((t) => t.name === "echo")!.enabled).toBe(false);
+    expect(parsed.tools.find((t) => t.name === "echo")!.enabled).toBe(true);
     expect(parsed.tools.find((t) => t.name === "echo")!.tool).toBe("test-mcp-m7_echo");
     const uncurated = parsed.tools.find((t) => t.name === "write_thing")!;
-    expect(uncurated.enabled).toBe(false);
+    expect(uncurated.enabled).toBe(true);
     expect(uncurated.class).toBe("write"); // the manifest declares it; the listing is unfiltered
-    // Curation turns a discovered tool on.
+    // Curation sets a discovered tool's approval.
     await call("PUT", `/api/v1/admin/integrations/${id}/tools/echo`, e.adminToken, {
       enabled: true,
       approval: "always_ask",
@@ -695,9 +694,8 @@ describe("MCP plugin rows", () => {
     const admin = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.adminToken);
     expect(admin.statusCode).toBe(200);
     const tools = JSON.parse(admin.body).tools as { name: string; class: string }[];
-    // MCP tools are opt-in: only the curated-enabled tool is exposed, to
-    // admins and members alike (the write-class one stays off).
-    expect(tools.map((t) => t.name)).toEqual(["test-mcp-m7b_echo"]);
+    // Discovered tools are on unless an admin turned them off.
+    expect(tools.map((t) => t.name)).toEqual(["test-mcp-m7b_echo", "test-mcp-m7b_write_thing"]);
     const closed = await call("GET", "/api/v1/integrations/test-mcp-m7b/tools", e.memberToken);
     expect(JSON.parse(closed.body).tools).toEqual([]);
     await openToMembers("test-mcp-m7b");
