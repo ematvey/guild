@@ -289,6 +289,10 @@ export function startSocket(
     }, PING_INTERVAL_MS);
     watchdogTimer = setInterval(() => {
       if (stopped || socket === null || socket.readyState !== 1) return;
+      // A hidden tab is throttled by the browser, not dead: its app-level
+      // pings drop to one a minute, so the silence here is the tab, not the
+      // link. The wake check owns the return to visibility.
+      if (typeof document !== "undefined" && document.hidden) return;
       if (lastFrameAt !== 0 && Date.now() - lastFrameAt > DEAD_AFTER_MS) {
         traceEvent("socket.watchdog_close", { attempt, silentMs: silentMs() });
         // Half-open black hole: force the reconnect path (onclose fires).

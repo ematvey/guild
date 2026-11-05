@@ -531,6 +531,38 @@ describe("startSocket", () => {
       vi.unstubAllGlobals();
     });
 
+    it("a hidden tab keeps its socket: throttled timers are not a dead link", async () => {
+      vi.useFakeTimers();
+      const { doc } = stubHost();
+      Object.assign(doc, { hidden: true });
+      const sockets: FakeSocket[] = [];
+      const connection = startSocket({
+        ...handlers,
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0].open();
+
+      // A background tab pings once a minute, so 40s of silence is the tab,
+      // not the link: no close, no reconnect.
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(sockets[0].closed).toBe(false);
+      expect(sockets).toHaveLength(1);
+
+      // Visible again with the link still silent: the watchdog reaps it.
+      Object.assign(doc, { hidden: false });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(sockets[0].closed).toBe(true);
+
+      connection.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
     it("a fresh dial closes the socket it replaces", async () => {
       vi.useFakeTimers();
       const { doc } = stubHost();
