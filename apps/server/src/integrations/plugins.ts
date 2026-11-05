@@ -152,6 +152,20 @@ export function requiredSecretNames(manifest: JsonObject): string[] {
   return manifestSecretNames(manifest);
 }
 
+/** The secrets an MCP plugin's calls carry: its required secret fields,
+ *  plus each optional one that is stored. Resolving them fails only when a
+ *  required secret is missing; an optional one left empty drops its header. */
+export async function mcpSecretNames(
+  source: Pick<PluginSecretSource, "integrationSecrets">,
+  orgId: string,
+  slug: string,
+  manifest: JsonObject,
+): Promise<string[]> {
+  const required = new Set(requiredSecretNames(manifest));
+  const stored = new Set(await source.integrationSecrets.names(orgId, slug));
+  return manifestSecretNames(manifest).filter((name) => required.has(name) || stored.has(name));
+}
+
 function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject, tool: McpTool): IntegrationToolInfo {
   return {
     spec: {
@@ -241,9 +255,10 @@ export async function resolveIntegrations(
       warn(`integration ${row.name}: no registry manifest, skipping`);
       continue;
     }
-    const secretNames = manifestSecretNames(manifest);
+    let secretNames: string[];
     let secrets: [string, string][];
     try {
+      secretNames = await mcpSecretNames(gateway, orgId, row.name, manifest);
       secrets = await gateway.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
     } catch {
       warn(`integration ${row.name}: secrets unresolved, skipping`);

@@ -875,6 +875,13 @@ describe("a built-in MCP plugin's connection test and enable", () => {
     expect(save.statusCode).toBe(200);
     const saved = await call("POST", `/api/v1/admin/integrations/${id}/test`, e.adminToken, {});
     expect(JSON.parse(saved.body)).toMatchObject({ ok: true });
+
+    // The optional connected-account secret stays empty; the tools still list.
+    const tools = await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken);
+    expect(tools.statusCode).toBe(200);
+    expect((JSON.parse(tools.body) as { tools: { name: string }[] }).tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["echo", "write_thing"]),
+    );
   });
 });
 

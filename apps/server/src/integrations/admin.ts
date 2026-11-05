@@ -13,7 +13,13 @@ import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { mcpConnect } from "./mcp.js";
-import { approvedManifest, namespacedTool, requireApprovedManifest, requiredSecretNames } from "./plugins.js";
+import {
+  approvedManifest,
+  mcpSecretNames,
+  namespacedTool,
+  requireApprovedManifest,
+  requiredSecretNames,
+} from "./plugins.js";
 import { mcpToolClass, toolCurate } from "./policy.js";
 import { mcpHeaderTemplates, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { parseBundle, readBundleFile } from "../platform/bundle.js";
@@ -335,15 +341,9 @@ export async function integrationTools(
   } catch (error) {
     throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
   }
-  // The auth block's declared list — the same source the connector's
-  // registry bundle declares (not the settings-derived list).
-  const auth = manifest["auth"];
-  const secretNames =
-    auth !== null && typeof auth === "object" && Array.isArray((auth as Record<string, unknown>)["secret_names"])
-      ? ((auth as Record<string, unknown>)["secret_names"] as string[])
-      : [];
   let secrets: [string, string][];
   try {
+    const secretNames = await mcpSecretNames(gateway, orgId, integrationRow.name, manifest);
     secrets = await gateway.integrationSecrets.resolve(orgId, integrationRow.name, secretNames, gateway.masterKey());
   } catch (error) {
     throw ApiError.conflict("missing_secrets", (error as Error).message);
