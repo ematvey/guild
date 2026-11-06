@@ -88,6 +88,14 @@ export class ToolArtifactStore {
     return toRow(row);
   }
 
+  /** By id alone, for the signed preview link: the row carries its org. */
+  async getById(id: string): Promise<ToolArtifactRow> {
+    const res = await this.pool.query<ToolArtifactDbRow>(`SELECT ${ROW_COLUMNS} FROM tool_artifacts WHERE id = $1`, [id]);
+    const row = res.rows[0];
+    if (!row) throw ApiError.notFound("no such tool artifact");
+    return toRow(row);
+  }
+
   async listForChat(orgId: string, chatId: string): Promise<ToolArtifactRow[]> {
     const res = await this.pool.query<ToolArtifactDbRow>(
       `SELECT ${ROW_COLUMNS} FROM tool_artifacts WHERE org_id = $1 AND chat_id = $2 ORDER BY created_at, id`,

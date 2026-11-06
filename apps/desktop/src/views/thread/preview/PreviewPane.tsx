@@ -36,10 +36,15 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     () => previewViewOf(source?.contentType ?? "", source?.filename ?? ""),
     [source?.contentType, source?.filename],
   );
+  // Text and HTML are read into the pane rather than pointed at a URL: a
+  // sandboxed frame has an opaque origin, and Chrome refuses to load a
+  // `blob:` URL minted by this document into such a frame (it renders blank).
+  // `srcdoc` carries the bytes instead, and the sandbox still holds.
   const [text, setText] = useState<string | null>(null);
+  const readsText = view === "text" || view === "html";
 
   useEffect(() => {
-    if (view !== "text" || source?.url === null || source === null || source.url === null) {
+    if (!readsText || source === null || source.url === null) {
       setText(null);
       return;
     }
@@ -47,7 +52,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     void fetch(source.url)
       .then((res) => res.text())
       .then((body) => {
-        if (!dead) setText(body.slice(0, 400_000));
+        if (!dead) setText(body.slice(0, 2_000_000));
       })
       .catch(() => {
         if (!dead) setText(null);
@@ -55,7 +60,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     return () => {
       dead = true;
     };
-  }, [view, source?.url]);
+  }, [readsText, source?.url]);
 
   if (source === null) return <PaneNote text="Opening…" />;
   if (source.failed) return <PaneNote text="The file could not be read." />;
@@ -69,14 +74,27 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     );
   }
   if (view === "pdf") {
-    return <iframe src={source.url} title={source.filename} className="h-full w-full border-0 bg-white" />;
+    const src = source.link ?? source.url;
+    return src === null ? (
+      <PaneNote text="Opening…" />
+    ) : (
+      <iframe src={src} title={source.filename} className="h-full w-full border-0 bg-white" />
+    );
   }
   if (view === "html") {
-    // No allow-same-origin: the page runs with an opaque origin, so it cannot
-    // read this app's storage, cookies or DOM.
-    return (
+    // The signed URL is the good path: the server serves it under a `sandbox`
+    // policy, so the page keeps its own inline styles and scripts while the
+    // frame still runs with an opaque origin. `srcdoc` is the fallback — it
+    // inherits this app's policy, so an inline script inside the page is
+    // dropped there.
+    if (source.link !== null) {
+      return <iframe src={source.link} title={source.filename} className="h-full w-full border-0 bg-white" />;
+    }
+    return text === null ? (
+      <PaneNote text="Opening…" />
+    ) : (
       <iframe
-        src={source.url}
+        srcDoc={text}
         title={source.filename}
         sandbox="allow-scripts allow-popups allow-forms"
         className="h-full w-full border-0 bg-white"

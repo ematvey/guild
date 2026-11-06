@@ -188,4 +188,18 @@ export class AttachmentStore {
     if (!row) throw ApiError.notFound("no such attachment");
     return toRow(row);
   }
+
+  /** By id alone: the preview link is signed for the file, and the row
+   *  carries its own org. Only the signed-link route uses this. */
+  async getById(id: string): Promise<AttachmentRow> {
+    const res = await this.pool.query<AttachmentDbRow>(
+      `SELECT ${ATTACHMENT_COLUMNS},
+         ${utcText("created_at")} AS created_at
+       FROM attachments WHERE id = $1`,
+      [id],
+    );
+    const row = res.rows[0];
+    if (!row) throw ApiError.notFound("no such attachment");
+    return toRow(row);
+  }
 }

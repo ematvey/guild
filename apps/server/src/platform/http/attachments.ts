@@ -9,6 +9,7 @@ import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, requireUser, queryParam } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
 import { contentDisposition } from "../domain/mime.js";
+import { previewReply, verifyPreviewLink } from "./preview-link.js";
 import type { ChatStore } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
 
@@ -75,8 +76,17 @@ export function registerAttachmentRoutes(
   app.get("/api/v1/threads/:chatId/attachments", listAttachments);
 
   app.get("/api/v1/attachments/:id", async (req, reply) => {
-    const user = await requireUser(ctx, req);
     const id = parseUuidParam(req, "id");
+    // A preview link carries its own signature instead of a session: the
+    // browser's frame cannot send the Authorization header.
+    const signed = queryParam(req, "preview");
+    if (signed !== undefined) {
+      verifyPreviewLink(ctx.config.jwtSecret, "attachment", id, signed);
+      const row = await ctx.attachments.getById(id);
+      const key = attachmentObjectKey(row.org_id, row.id, row.filename);
+      return previewReply(reply, await infra.objects.get(key), row);
+    }
+    const user = await requireUser(ctx, req);
     const row = await ctx.attachments.get(user.org_id, id);
     // The attachment rides a chat, so the chat's read gate applies: org
     // scoping alone would let a member pull another member's uploads.

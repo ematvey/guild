@@ -14,6 +14,10 @@ export interface PreviewSource {
   contentType: string;
   /** Object URL of the bytes; null while loading or when the read failed. */
   url: string | null;
+  /** The signed same-origin URL a frame loads. A frame cannot send the
+   *  Authorization header, and the app's CSP lets a frame load only 'self'
+   *  and blob, so this is how HTML and PDF reach the pane. */
+  link: string | null;
   failed: boolean;
 }
 
@@ -43,6 +47,7 @@ export function usePreviewSource(ref: PreviewRef | null, meta: PreviewMeta | und
       filename: meta?.filename ?? "Preview",
       contentType: meta?.contentType ?? "",
       url: null,
+      link: null,
       failed: false,
     });
     void (async () => {
@@ -60,9 +65,20 @@ export function usePreviewSource(ref: PreviewRef | null, meta: PreviewMeta | und
           URL.revokeObjectURL(minted);
           return;
         }
-        setSource({ kind: ref.kind, id: ref.id, filename, contentType, url: minted, failed: false });
+        const link = await previewLink(ref.kind, ref.id);
+        if (dead) return;
+        setSource({ kind: ref.kind, id: ref.id, filename, contentType, url: minted, link, failed: false });
       } catch {
-        if (!dead) setSource({ kind: ref.kind, id: ref.id, filename: meta?.filename ?? "Preview", contentType: "", url: null, failed: true });
+        if (!dead)
+          setSource({
+            kind: ref.kind,
+            id: ref.id,
+            filename: meta?.filename ?? "Preview",
+            contentType: "",
+            url: null,
+            link: null,
+            failed: true,
+          });
       }
     })();
     return () => {
@@ -71,6 +87,17 @@ export function usePreviewSource(ref: PreviewRef | null, meta: PreviewMeta | und
     };
   }, [ref?.kind, ref?.id, meta?.filename, meta?.contentType]);
   return source;
+}
+
+/** The signed URL the server mints for a frame; null when it cannot. */
+async function previewLink(kind: PreviewRef["kind"], id: string): Promise<string | null> {
+  try {
+    const res = await requestResponse("GET", `/api/v1/preview_link?kind=${kind}&id=${encodeURIComponent(id)}`);
+    const body = (await res.json()) as { path?: unknown };
+    return typeof body.path === "string" ? body.path : null;
+  } catch {
+    return null;
+  }
 }
 
 /** What the viewer renders for a content type. */

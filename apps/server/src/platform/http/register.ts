@@ -13,6 +13,7 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerEventRoutes } from "./events.js";
 import { registerAttachmentRoutes } from "./attachments.js";
+import { registerPreviewLinkRoutes } from "./preview-link.js";
 import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api-keys.js";
@@ -75,6 +76,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerWsRoutes(scope, chats, auth);
     registerChatsRoutes(scope, chats, gateway, auth, ctx.objects);
     registerToolArtifactRoutes(scope, chats, auth, infra);
+    registerPreviewLinkRoutes(scope, chats, auth);
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
     registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
       onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),

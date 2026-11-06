@@ -8,6 +8,7 @@ import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
 import { contentDisposition } from "../domain/mime.js";
+import { previewReply, verifyPreviewLink } from "./preview-link.js";
 import { toolArtifactObjectKey } from "../store/tool-artifacts.js";
 import type { UserRow } from "../store/identity.js";
 
@@ -33,8 +34,15 @@ export function registerToolArtifactRoutes(
   });
 
   app.get("/api/v1/tool_artifacts/:id", async (req, reply) => {
-    const user = await requireUser(auth, req);
     const id = parseUuidParam(req, "id");
+    const signed = queryParam(req, "preview");
+    if (signed !== undefined) {
+      verifyPreviewLink(auth.config.jwtSecret, "artifact", id, signed);
+      const row = await chats.toolArtifacts.getById(id);
+      const key = toolArtifactObjectKey(row.org_id, row.id, row.filename);
+      return previewReply(reply, await infra.objects.get(key), row);
+    }
+    const user = await requireUser(auth, req);
     // Org-scoped: a foreign org's artifact 404s here.
     const row = await chats.toolArtifacts.get(user.org_id, id);
     // The artifact rides a chat, so the chat's owner predicate applies (the

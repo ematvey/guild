@@ -52,6 +52,9 @@ const SECURITY_HEADERS: Record<string, string> = {
     "img-src 'self' data: blob: http: https:",
     "font-src 'self' data:",
     "connect-src 'self' ws: wss:",
+    // The preview pane frames a file: its signed URL is same-origin, and a
+    // blob is what the pane mints when it already holds the bytes.
+    "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
