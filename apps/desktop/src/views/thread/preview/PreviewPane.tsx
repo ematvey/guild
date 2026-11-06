@@ -155,7 +155,12 @@ function PreviewTabs({
 
 export function PreviewPane(props: PreviewPaneProps) {
   const { tabs, active, full, isMobile, onSelect, onClose, onCloseAll, onToggleFull } = props;
-  const tab = tabs.find((t) => sameRef(t.ref, active)) ?? tabs[0];
+  // The address can name a file this session never opened — a deep link, a
+  // reload, a link from a teammate. The pane shows it as a tab of its own
+  // rather than rendering nothing.
+  const shown =
+    active !== null && !tabs.some((t) => sameRef(t.ref, active)) ? [...tabs, { ref: active }] : tabs;
+  const tab = shown.find((t) => sameRef(t.ref, active)) ?? shown[0];
   const source = usePreviewSource(tab?.ref ?? null, tab?.meta);
   const download = useCallback(() => {
     if (source === null || source.url === null) return;
@@ -210,7 +215,7 @@ export function PreviewPane(props: PreviewPaneProps) {
           <X className="size-3.5" />
         </Button>
       </div>
-      {tabs.length > 1 && <PreviewTabs tabs={tabs} active={tab.ref} onSelect={onSelect} onClose={onClose} />}
+      {shown.length > 1 && <PreviewTabs tabs={shown} active={tab.ref} onSelect={onSelect} onClose={onClose} />}
       <div className="min-h-0 flex-1">
         <PreviewBody tab={tab} />
       </div>
