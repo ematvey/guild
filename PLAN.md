@@ -1,3 +1,20 @@
+## 0.6.82 — the preview pane actually renders
+
+0.6.81 shipped a pane that drew a blank page. Two causes. The app's CSP
+(`default-src 'self'`, no `frame-src`) blocks a frame from loading a `blob:`
+URL, and a sandboxed frame cannot reach a blob the parent minted anyway. And
+a deep link (`?preview=…` on a fresh session) rendered nothing at all: the
+tab list was empty and the pane bailed before drawing.
+
+Fixes: the byte routes accept a signed link (`/api/v1/preview_link` mints it,
+`?preview=exp.sig`), served with its own `Content-Security-Policy: sandbox` —
+the page keeps its inline styles and scripts, the frame still has an opaque
+origin. `frame-src 'self' blob:` joins the app CSP so a blob PDF works too.
+The addressed file rides into the pane as a tab of its own, so reload and deep
+links show it. `srcdoc` stays as the fallback when the link cannot be minted.
+
+PDF in the desktop shell is a note, not a frame: WebKitGTK has no PDF viewer.
+
 ## 0.6.81 — the preview pane, and a download that is a download
 
 An attachment or an artifact chip opened a file by minting a blob and
