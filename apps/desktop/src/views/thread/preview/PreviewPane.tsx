@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, ExternalLink, FileText, Maximize2, Minimize2, X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { openExternal } from "../../../lib/open-external";
+import { HAS_SHELL } from "../../../lib/session";
 import type { PreviewRef } from "../route";
 import { previewViewOf, usePreviewSource, type PreviewMeta } from "./use-preview-source";
 
@@ -74,6 +75,14 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     );
   }
   if (view === "pdf") {
+    // The desktop shell is WebKitGTK, which has no PDF viewer: a frame there
+    // is a blank page. The browser build renders it, so the shell gets the
+    // download and the browser instead.
+    if (HAS_SHELL) {
+      return (
+        <PaneNote text="The desktop app cannot show PDFs in place. Use Download, or open it in a browser." />
+      );
+    }
     const src = source.link ?? source.url;
     return src === null ? (
       <PaneNote text="Opening…" />
