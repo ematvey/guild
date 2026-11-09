@@ -43,19 +43,6 @@
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
     "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
     "AppList": { "$ref": "#/$defs/AppList" },
-    "AppList": {
-      "description": "The Apps the member sees: their own and those shared with the org, newest change first. Sent on connect and whenever an App of the org is published, shared, unshared or deleted.",
-      "type": "object",
-      "required": ["type", "apps"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "app_list" },
-        "apps": {
-          "type": "array",
-          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/App" }
-        }
-      }
-    },
     "ChatTreeFrame": { "$ref": "#/$defs/ChatTreeFrame" },
     "ChatRow": { "$ref": "#/$defs/ChatRow" },
     "ContextUsage": { "$ref": "#/$defs/ContextUsage" },
@@ -533,6 +520,19 @@
         "installs": {
           "type": "array",
           "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/SkillInstall" }
+        }
+      }
+    },
+    "AppList": {
+      "description": "The Apps the member sees: their own and those shared with the org, newest change first. Sent on connect and whenever an App of the org is published, shared, unshared or deleted.",
+      "type": "object",
+      "required": ["type", "apps"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "app_list" },
+        "apps": {
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/App" }
         }
       }
     },
