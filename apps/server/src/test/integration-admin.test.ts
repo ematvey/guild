@@ -1030,6 +1030,49 @@ describe("Apps: data functions run as the viewer", () => {
     expect(notOwner.statusCode).toBe(404);
   });
 
+  it("an always-ask function needs a yes; always allow holds for this version until cleared", async () => {
+    await seedIntegration(
+      "searxng",
+      {
+        base_url: connectorBase(),
+        tools: { web_search: { enabled: true, approval: "always_ask" } },
+      },
+      true,
+    );
+    const fn = `/api/v1/apps/${appId}/functions/search`;
+    const ask = async (body: Record<string, unknown>) =>
+      (await call("POST", fn, e.memberToken, { params: { q: "x" }, ...body })).statusCode;
+    expect(await ask({})).toBe(409);
+    expect(await ask({ confirmed: true })).toBe(200);
+    expect(await ask({})).toBe(409);
+    expect(await ask({ confirmed: true, remember: true })).toBe(200);
+    expect(await ask({})).toBe(200);
+    const detail = JSON.parse((await call("GET", `/api/v1/apps/${appId}`, e.memberToken)).body) as {
+      functions: { confirm: boolean; granted: boolean; args: unknown }[];
+    };
+    expect(detail.functions[0]).toMatchObject({ confirm: true, granted: true, args: { count: 1 } });
+    // Another viewer's grants are their own.
+    expect((await call("POST", fn, e.adminToken, { params: { q: "x" } })).statusCode).toBe(409);
+    // A new version asks again.
+    const current = await new AppStore(e.env.db).getVisible(e.orgId, appId, memberId);
+    await new AppStore(e.env.db).publish({
+      orgId: e.orgId,
+      ownerUserId: memberId,
+      agentId: null,
+      chatId: null,
+      appId,
+      name: current.name,
+      description: current.description,
+      html: pageHtml,
+      functions: current.functions,
+    });
+    expect(await ask({})).toBe(409);
+    expect(await ask({ confirmed: true, remember: true })).toBe(200);
+    expect((await call("DELETE", `/api/v1/apps/${appId}/grants`, e.memberToken)).statusCode).toBe(200);
+    expect(await ask({})).toBe(409);
+    await seedIntegration("searxng", { base_url: connectorBase() }, true);
+  });
+
   it("the owner deletes it", async () => {
     expect((await call("DELETE", `/api/v1/apps/${appId}`, e.memberToken)).statusCode).toBe(200);
     expect((await call("GET", `/api/v1/apps/${appId}`, e.memberToken)).statusCode).toBe(404);

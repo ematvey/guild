@@ -4,7 +4,7 @@
 // address; the list is socket state (`app_list`).
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Globe, LayoutGrid, Lock, MessageSquare, Trash2 } from "lucide-react";
+import { ArrowLeft, Globe, LayoutGrid, Lock, MessageSquare, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { EmptyState } from "@guild/ui/components/empty-state";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
@@ -20,7 +20,7 @@ import { useMemberProfile } from "../../lib/profile-store";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
 import { APPS_HOME, type AppsRoute } from "./apps-route";
-import { deleteApp, getAppDetail, setAppVisibility, type AppDetail } from "./apps-api";
+import { clearAppGrants, deleteApp, getAppDetail, setAppVisibility, type AppDetail } from "./apps-api";
 import { AppFrame } from "./AppFrame";
 
 type Navigate = (next: AppsRoute, options?: { replace?: boolean }) => void;
@@ -138,6 +138,7 @@ function AppHeader({
   onBack,
   onOpenChat,
   onDeleted,
+  onGrantsCleared,
 }: {
   app: App;
   detail: AppDetail | null;
@@ -147,6 +148,7 @@ function AppHeader({
   onBack: () => void;
   onOpenChat: ((chatId: string) => void) | null;
   onDeleted: () => void;
+  onGrantsCleared: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +164,7 @@ function AppHeader({
     }
   };
   const unavailable = (detail?.functions ?? []).filter((fn) => !fn.available);
+  const asks = (detail?.functions ?? []).some((fn) => fn.available && fn.confirm);
   return (
     <header className="border-b border-border px-4 py-3">
       <div className="flex items-center gap-2">
@@ -178,7 +181,7 @@ function AppHeader({
             {relativeTime(app.updated_at)}
           </p>
         </div>
-        {(isOwner || canDelete || (onOpenChat !== null && app.chat_id !== null)) && (
+        {(isOwner || canDelete || asks || (onOpenChat !== null && app.chat_id !== null)) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy}>
@@ -189,6 +192,18 @@ function AppHeader({
               {onOpenChat !== null && app.chat_id !== null && (
                 <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
                   <MessageSquare className="size-4" /> Open the chat that built it
+                </DropdownMenuItem>
+              )}
+              {asks && (
+                <DropdownMenuItem
+                  onSelect={() =>
+                    void act(async () => {
+                      await clearAppGrants(app.id);
+                      onGrantsCleared();
+                    })
+                  }
+                >
+                  <ShieldCheck className="size-4" /> Ask again before data access
                 </DropdownMenuItem>
               )}
               {isOwner && (
@@ -252,9 +267,13 @@ function OpenApp({
 }) {
   const [detail, setDetail] = useState<AppDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped when the viewer clears their grants: the detail re-reads and the
+  // frame starts over, so its next calls ask again.
+  const [epoch, setEpoch] = useState(0);
   useEffect(() => {
     let dead = false;
     setError(null);
+    setDetail(null);
     getAppDetail(app.id)
       .then((next) => {
         if (!dead) setDetail(next);
@@ -265,7 +284,7 @@ function OpenApp({
     return () => {
       dead = true;
     };
-  }, [app.id, app.version]);
+  }, [app.id, app.version, epoch]);
   const isOwner = me !== null && app.owner_user_id === me.id;
   const canDelete = isOwner || (me?.role === "admin" && app.visibility === "org");
   const current = detail !== null && detail.app.id === app.id ? detail : null;
@@ -280,6 +299,7 @@ function OpenApp({
         onBack={() => navigate(APPS_HOME)}
         onOpenChat={onOpenChat}
         onDeleted={() => navigate(APPS_HOME, { replace: true })}
+        onGrantsCleared={() => setEpoch((n) => n + 1)}
       />
       <div className="min-h-0 flex-1">
         {error !== null ? (
@@ -289,7 +309,11 @@ function OpenApp({
         ) : current === null ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Opening…</div>
         ) : (
-          <AppFrame app={{ id: app.id, name: app.name, version: current.app.version }} functions={current.functions} />
+          <AppFrame
+            key={epoch}
+            app={{ id: app.id, name: app.name, version: current.app.version }}
+            functions={current.functions}
+          />
         )}
       </div>
     </div>

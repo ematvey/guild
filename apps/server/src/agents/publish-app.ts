@@ -56,7 +56,7 @@ A data function is one Integration tool with fixed arguments. Write {"$param": "
   {"name": "deals_by_stage", "description": "Deals in one stage", "integration": "hubspot", "tool": "hubspot_search_deals",
    "args": {"filters": [{"property": "dealstage", "value": {"$param": "stage"}}], "limit": 100},
    "params": {"stage": {"type": "string", "enum": ["won", "lost", "open"], "default": "open"}}}
-Find tool names and argument schemas with <slug>_list_tools, and call the tool once yourself to learn the result's shape. Each viewer's own Integration access applies when they open the App; a tool that changes data asks the viewer to confirm every call. Design for both light and dark themes and for narrow widths, handle errors from guild.call, and show loading states.`;
+Find tool names and argument schemas with <slug>_list_tools, and call the tool once yourself to learn the result's shape. Each viewer's own Integration access applies when they open the App; a write-class tool (the raw <slug>_api tools included, even for a search) asks each viewer to approve its function before it runs, once per App version if they choose. Prefer read-class tools; use a raw api tool only when no read tool can express the query, and name the function so the viewer can tell it only reads. Design for both light and dark themes and for narrow widths, handle errors from guild.call, and show loading states.`;
 
 export function createPublishAppTool(context: PublishAppContext): ToolRegistration {
   return defineTool({

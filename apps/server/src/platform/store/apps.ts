@@ -157,6 +157,28 @@ export class AppStore {
     return this.getVisible(input.orgId, id, input.ownerUserId);
   }
 
+  /** The functions one viewer granted for one App version. */
+  async grants(appId: string, userId: string, version: number): Promise<Set<string>> {
+    const res = await this.pool.query(
+      "SELECT function FROM app_grants WHERE app_id = $1 AND user_id = $2 AND version = $3",
+      [appId, userId, version],
+    );
+    return new Set(res.rows.map((row) => row.function as string));
+  }
+
+  /** Records a viewer's standing yes to one function of one App version. */
+  async grant(appId: string, userId: string, version: number, fn: string): Promise<void> {
+    await this.pool.query(
+      "INSERT INTO app_grants (app_id, user_id, version, function) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+      [appId, userId, version, fn],
+    );
+  }
+
+  /** Drops every grant one viewer gave one App. */
+  async clearGrants(appId: string, userId: string): Promise<void> {
+    await this.pool.query("DELETE FROM app_grants WHERE app_id = $1 AND user_id = $2", [appId, userId]);
+  }
+
   /** Changes who sees an App; owner only. */
   async setVisibility(orgId: string, id: string, userId: string, visibility: AppVisibility): Promise<AppRow> {
     const res = await this.pool.query(

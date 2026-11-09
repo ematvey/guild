@@ -15,10 +15,18 @@ export interface ViewerFunction {
   /** The tool's class; null when the viewer cannot reach it. */
   class: string | null;
   available: boolean;
-  /** The viewer confirms every call: the tool changes data or the org asks. */
+  /** The tool can change data or the org asks: the viewer approves the
+   *  function before it runs. */
   confirm: boolean;
+  /** The viewer chose "always allow" for this function of this version. */
+  granted: boolean;
+  /** The function's fixed arguments, with `{"$param"}` holes. */
+  args: { [key: string]: unknown };
   reason: string | null;
 }
+
+/** The viewer's answer to a confirmation. */
+export type ConfirmAnswer = "decline" | "once" | "always";
 
 export interface AppDetail {
   app: App;
@@ -34,8 +42,10 @@ export const getAppDetail = (id: string) => request<AppDetail>("GET", base(id));
 export const getAppPageLink = (id: string) =>
   request<{ path: string; version: number }>("GET", `${base(id)}/page_link`);
 
-export const callAppFunction = (id: string, name: string, params: unknown, confirmed: boolean) =>
-  request<CallResult>("POST", `${base(id)}/functions/${encodeURIComponent(name)}`, { params, confirmed });
+export const callAppFunction = (id: string, name: string, params: unknown, confirmed: boolean, remember: boolean) =>
+  request<CallResult>("POST", `${base(id)}/functions/${encodeURIComponent(name)}`, { params, confirmed, remember });
+
+export const clearAppGrants = (id: string) => request<{ cleared: boolean }>("DELETE", `${base(id)}/grants`);
 
 export const setAppVisibility = (id: string, visibility: App["visibility"]) =>
   request<{ app: App }>("PATCH", base(id), { visibility });

@@ -1,3 +1,20 @@
+## 0.6.85 — App confirmations: always allow, one question at a time
+
+A dashboard built over `hubspot_api` (the raw API tool, `write`-class
+whatever request it makes) asked before every call, and it calls one
+function per month and page on every load: dialog after dialog. Parallel
+calls also replaced each other's dialog, so earlier calls never settled.
+
+The dialog now offers Always allow for this app: a grant per viewer,
+function and App version (`app_grants`), checked by the call route in place
+of `confirmed`. One yes is enough because the function's arguments are
+fixed and only its bounded parameters vary; a new version asks again, and
+Manage → Ask again before data access clears the viewer's grants. Calls of
+one function share one open question, and the dialog shows the request a
+raw API function makes (method and path) rather than "change data".
+`publish_app` tells Agents that raw API tools ask viewers and to prefer
+read-class tools.
+
 ## 0.6.84 — Apps: agent-built pages over live Integration data
 
 An Agent can now publish a workspace HTML file as an App (`publish_app`):

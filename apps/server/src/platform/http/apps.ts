@@ -162,6 +162,12 @@ export interface ViewerFunction {
   available: boolean;
   /** A write- or admin-class tool, or one the Org curates to always ask. */
   confirm: boolean;
+  /** The viewer said "always allow" to this function of this version, so
+   *  its calls run without asking. */
+  granted: boolean;
+  /** The function's fixed arguments, with `{"$param"}` holes: what the
+   *  confirmation shows the viewer. */
+  args: AppFunction["args"];
   /** Why the viewer cannot call it. */
   reason: string | null;
 }
@@ -194,6 +200,7 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
   /** The viewer's view of every function of an App. */
   const viewerFunctions = async (row: AppRow, user: UserRow): Promise<ViewerFunction[]> => {
     const caller = callerOf(user);
+    const granted = await apps.grants(row.id, user.id, row.version);
     return Promise.all(
       row.functions.map(async (fn): Promise<ViewerFunction> => {
         const base = {
@@ -202,6 +209,8 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
           integration: fn.integration,
           tool: fn.tool,
           params: fn.params,
+          args: fn.args,
+          granted: granted.has(fn.name),
         };
         try {
           const tool = await memberTool(gateway, access, caller, fn.integration, fn.tool);
@@ -263,10 +272,11 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
   });
 
   // `POST /api/v1/apps/{id}/functions/{name}` — one data-function call for
-  // the member. Body: `{"params": {...}, "confirmed": bool}`. A function
-  // whose tool is write- or admin-class, or curated to always ask, needs
-  // `confirmed: true`, which the client sends only after the member said
-  // yes. A connector failure is a 200 `ok: false` result.
+  // the member. Body: `{"params": {...}, "confirmed": bool, "remember":
+  // bool}`. A function whose tool is write- or admin-class, or curated to
+  // always ask, needs `confirmed: true` (sent only after the member said
+  // yes) or a grant for this version; `remember: true` with the yes records
+  // that grant. A connector failure is a 200 `ok: false` result.
   app.post("/api/v1/apps/:id/functions/:name", async (req, reply) => {
     const user = await requireUser(auth, req);
     const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user.id);
@@ -283,8 +293,16 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
     }
     const caller = callerOf(user);
     const tool = await memberTool(gateway, access, caller, fn.integration, fn.tool);
-    if ((tool.class !== "read" || tool.alwaysAsk) && body["confirmed"] !== true) {
-      throw ApiError.conflict("confirmation_required", `${fn.name} changes data and needs your confirmation`);
+    if (tool.class !== "read" || tool.alwaysAsk) {
+      const confirmed = body["confirmed"] === true;
+      if (confirmed && body["remember"] === true) {
+        await apps.grant(row.id, user.id, row.version, fn.name);
+      } else if (!confirmed && !(await apps.grants(row.id, user.id, row.version)).has(fn.name)) {
+        throw ApiError.conflict(
+          "confirmation_required",
+          `${fn.name} uses a tool that can change data and needs your confirmation`,
+        );
+      }
     }
     if (!budget.take(`${user.id}:${row.id}`)) {
       throw new ApiError(429, "rate_limited", "this app is calling too often; wait a minute");
@@ -310,6 +328,15 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
       throw ApiError.badRequest("visibility must be private or org");
     const row = await apps.setVisibility(user.org_id, parseUuidParam(req, "id"), user.id, visibility);
     return sendJson(reply, { app: row });
+  });
+
+  // `DELETE /api/v1/apps/{id}/grants` — the member takes back every
+  // "always allow" they gave this App.
+  app.delete("/api/v1/apps/:id/grants", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user.id);
+    await apps.clearGrants(row.id, user.id);
+    return sendJson(reply, { cleared: true });
   });
 
   // `DELETE /api/v1/apps/{id}` — the owner, or an admin for a shared App.

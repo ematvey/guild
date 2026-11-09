@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { appsRoutePath, parseAppsRoute } from "./apps-route";
-import { answerCall, pageResult, parsePageMessage } from "./bridge";
-import type { ViewerFunction } from "./apps-api";
+import { answerCall, pageResult, parsePageMessage, requestLine, sharedConfirm } from "./bridge";
+import type { ConfirmAnswer, ViewerFunction } from "./apps-api";
 import { applyRoutePatch, parseChatRoute, SURFACE_BASE } from "../thread/route";
 import { routePath } from "../thread/hooks/use-thread-route";
 
@@ -42,20 +42,18 @@ const fn = (over: Partial<ViewerFunction> = {}): ViewerFunction => ({
   class: "read",
   available: true,
   confirm: false,
+  granted: false,
+  args: {},
   reason: null,
   ...over,
 });
 
+const call = (name: string, id = 1) => ({ guild: 1 as const, op: "call" as const, id, name, params: {} });
+
 describe("bridge", () => {
   it("reads only well-formed page messages", () => {
     expect(parsePageMessage({ guild: 1, op: "hello" })).toEqual({ guild: 1, op: "hello" });
-    expect(parsePageMessage({ guild: 1, op: "call", id: 3, name: "deals" })).toEqual({
-      guild: 1,
-      op: "call",
-      id: 3,
-      name: "deals",
-      params: {},
-    });
+    expect(parsePageMessage({ guild: 1, op: "call", id: 3, name: "deals" })).toEqual(call("deals", 3));
     expect(parsePageMessage({ op: "call", id: 3, name: "deals" })).toBeNull();
     expect(parsePageMessage("hello")).toBeNull();
   });
@@ -65,57 +63,87 @@ describe("bridge", () => {
     expect(pageResult("1. First result", null).data).toBe("1. First result");
   });
 
-  it("calls a read function without asking", async () => {
-    let asked = false;
-    const reply = await answerCall(
-      { guild: 1, op: "call", id: 1, name: "deals", params: { stage: "won" } },
-      {
-        functions: [fn()],
+  const deps = (functions: ViewerFunction[], answer: ConfirmAnswer) => {
+    const seen = { asked: 0, calls: [] as [boolean, boolean][], granted: [] as string[] };
+    return {
+      seen,
+      deps: {
+        functions,
         confirm: async () => {
-          asked = true;
-          return true;
+          seen.asked += 1;
+          return answer;
         },
-        call: async (_name, params, confirmed) => ({
-          ok: true,
-          content: JSON.stringify({ params, confirmed }),
-          meta: null,
-        }),
+        call: async (_n: string, _p: unknown, confirmed: boolean, remember: boolean) => {
+          seen.calls.push([confirmed, remember]);
+          return { ok: true as const, content: '{"x":1}', meta: null };
+        },
+        granted: (name: string) => seen.granted.push(name),
       },
-    );
-    expect(asked).toBe(false);
-    expect(reply).toMatchObject({ ok: true, result: { data: { params: { stage: "won" }, confirmed: false } } });
+    };
+  };
+
+  it("calls a read function without asking", async () => {
+    const { seen, deps: d } = deps([fn()], "decline");
+    expect(await answerCall(call("deals"), d)).toMatchObject({ ok: true, result: { data: { x: 1 } } });
+    expect(seen.asked).toBe(0);
+    expect(seen.calls).toEqual([[false, false]]);
   });
 
-  it("asks before a write and stops when the viewer declines", async () => {
-    let called = false;
-    const deps = (answer: boolean) => ({
-      functions: [fn({ confirm: true, class: "write" })],
-      confirm: async () => answer,
-      call: async (_n: string, _p: unknown, confirmed: boolean) => {
-        called = true;
-        return { ok: true as const, content: String(confirmed), meta: null };
-      },
-    });
-    const declined = await answerCall({ guild: 1, op: "call", id: 2, name: "deals", params: {} }, deps(false));
-    expect(declined).toMatchObject({ ok: false, error: "you declined this action" });
-    expect(called).toBe(false);
-    const allowed = await answerCall({ guild: 1, op: "call", id: 3, name: "deals", params: {} }, deps(true));
-    expect(allowed).toMatchObject({ ok: true, result: { text: "true" } });
+  it("asks before a write-class function and stops when the viewer declines", async () => {
+    const { seen, deps: d } = deps([fn({ confirm: true, class: "write" })], "decline");
+    expect(await answerCall(call("deals"), d)).toMatchObject({ ok: false, error: "you declined this action" });
+    expect(seen.calls).toEqual([]);
+  });
+
+  it("allow once confirms the call; always also records the grant", async () => {
+    const once = deps([fn({ confirm: true })], "once");
+    await answerCall(call("deals"), once.deps);
+    expect(once.seen.calls).toEqual([[true, false]]);
+    expect(once.seen.granted).toEqual([]);
+    const always = deps([fn({ confirm: true })], "always");
+    await answerCall(call("deals"), always.deps);
+    expect(always.seen.calls).toEqual([[true, true]]);
+    expect(always.seen.granted).toEqual(["deals"]);
+  });
+
+  it("does not ask for a function the viewer already granted", async () => {
+    const { seen, deps: d } = deps([fn({ confirm: true, granted: true })], "decline");
+    expect(await answerCall(call("deals"), d)).toMatchObject({ ok: true });
+    expect(seen.asked).toBe(0);
+    expect(seen.calls).toEqual([[false, false]]);
   });
 
   it("refuses unknown and unavailable functions without calling", async () => {
-    const call = async () => {
-      throw new Error("must not call");
-    };
-    const unknown = await answerCall(
-      { guild: 1, op: "call", id: 4, name: "nope", params: {} },
-      { functions: [fn()], confirm: async () => true, call },
+    const { seen, deps: d } = deps([fn({ name: "off", available: false, reason: "no access" })], "always");
+    expect(await answerCall(call("nope"), d)).toMatchObject({ ok: false });
+    expect(await answerCall(call("off"), d)).toMatchObject({ ok: false, error: "no access" });
+    expect(seen.calls).toEqual([]);
+  });
+
+  it("concurrent calls of one function share one question", async () => {
+    const answers = new Map<string, (a: ConfirmAnswer) => void>();
+    const ask = sharedConfirm(
+      (f) =>
+        new Promise<ConfirmAnswer>((resolve) => {
+          answers.set(f.name, resolve);
+        }),
     );
-    expect(unknown).toMatchObject({ ok: false });
-    const off = await answerCall(
-      { guild: 1, op: "call", id: 5, name: "deals", params: {} },
-      { functions: [fn({ available: false, reason: "no access" })], confirm: async () => true, call },
+    const a = ask(fn(), {});
+    const b = ask(fn(), {});
+    const other = ask(fn({ name: "other" }), {});
+    expect([...answers.keys()]).toEqual(["deals", "other"]);
+    answers.get("deals")!("once");
+    answers.get("other")!("decline");
+    expect(await Promise.all([a, b, other])).toEqual(["once", "once", "decline"]);
+    const again = ask(fn(), {});
+    answers.get("deals")!("always");
+    expect(await again).toBe("always");
+  });
+
+  it("shows a raw API function as its method and path", () => {
+    expect(requestLine(fn({ args: { method: "POST", path: "/crm/v3/objects/deals/search" } }))).toBe(
+      "POST /crm/v3/objects/deals/search",
     );
-    expect(off).toMatchObject({ ok: false, error: "no access" });
+    expect(requestLine(fn())).toBe("hubspot/hubspot_search_deals");
   });
 });

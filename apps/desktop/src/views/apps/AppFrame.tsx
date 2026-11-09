@@ -15,8 +15,9 @@ import {
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
 import { apiUrl } from "../../lib/session";
-import { callAppFunction, getAppPageLink, type ViewerFunction } from "./apps-api";
-import { answerCall, initMessage, parsePageMessage } from "./bridge";
+import { Button } from "@guild/ui/components/button";
+import { callAppFunction, getAppPageLink, type ConfirmAnswer, type ViewerFunction } from "./apps-api";
+import { answerCall, initMessage, parsePageMessage, requestLine, sharedConfirm } from "./bridge";
 
 type Theme = "light" | "dark";
 
@@ -36,7 +37,7 @@ function useDocumentTheme(): Theme {
 interface PendingConfirm {
   fn: ViewerFunction;
   params: unknown;
-  resolve: (ok: boolean) => void;
+  resolve: (answer: ConfirmAnswer) => void;
 }
 
 export function AppFrame({
@@ -49,7 +50,17 @@ export function AppFrame({
   const frame = useRef<HTMLIFrameElement>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  // Open questions, oldest first: one per function (sharedConfirm), shown
+  // one at a time.
+  const [queue, setQueue] = useState<PendingConfirm[]>([]);
+  const pending = queue[0] ?? null;
+  // Functions the viewer chose "always allow" for while this frame is open.
+  const granted = useRef(new Set<string>());
+  const confirm = useRef(
+    sharedConfirm(
+      (fn, params) => new Promise<ConfirmAnswer>((resolve) => setQueue((open) => [...open, { fn, params, resolve }])),
+    ),
+  );
   const theme = useDocumentTheme();
   const latest = useRef({ app, functions, theme });
   latest.current = { app, functions, theme };
@@ -83,9 +94,10 @@ export function AppFrame({
         return;
       }
       void answerCall(message, {
-        functions: fns,
-        confirm: (fn, params) => new Promise<boolean>((resolve) => setPending({ fn, params, resolve })),
-        call: (name, params, confirmed) => callAppFunction(current.id, name, params, confirmed),
+        functions: fns.map((fn) => (granted.current.has(fn.name) ? { ...fn, granted: true } : fn)),
+        confirm: confirm.current,
+        call: (name, params, confirmed, remember) => callAppFunction(current.id, name, params, confirmed, remember),
+        granted: (name) => granted.current.add(name),
       }).then(post);
     };
     window.addEventListener("message", onMessage);
@@ -96,9 +108,9 @@ export function AppFrame({
     frame.current?.contentWindow?.postMessage({ guild: 1, op: "theme", theme }, "*");
   }, [theme]);
 
-  const settle = (ok: boolean) => {
-    pending?.resolve(ok);
-    setPending(null);
+  const settle = (answer: ConfirmAnswer) => {
+    pending?.resolve(answer);
+    setQueue((open) => open.slice(1));
   };
 
   if (error !== null) {
@@ -123,26 +135,32 @@ export function AppFrame({
           className="h-full w-full border-0 bg-background"
         />
       )}
-      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
+      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && settle("decline")}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Allow {app.name} to change data?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Allow {app.name} to use {pending?.fn.integration}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {pending?.fn.description || pending?.fn.name}: this runs{" "}
-              <span className="font-mono">
-                {pending?.fn.integration}/{pending?.fn.tool}
-              </span>{" "}
-              as you.
+              {pending?.fn.description || pending?.fn.name}. It calls{" "}
+              <span className="font-mono">{pending?.fn.tool}</span> as you, a tool that can change data, so Guild asks
+              first.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pending !== null && (
-            <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
-              {JSON.stringify(pending.params, null, 2)}
-            </pre>
+            <div className="space-y-2">
+              <p className="font-mono text-xs">{requestLine(pending.fn)}</p>
+              <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+                {JSON.stringify(pending.params, null, 2)}
+              </pre>
+            </div>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Decline</AlertDialogCancel>
-            <AlertDialogAction onClick={() => settle(true)}>Allow once</AlertDialogAction>
+            <Button variant="outline" onClick={() => settle("once")}>
+              Allow once
+            </Button>
+            <AlertDialogAction onClick={() => settle("always")}>Always allow for this app</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
