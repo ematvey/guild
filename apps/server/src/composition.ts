@@ -66,6 +66,7 @@ export class PlatformContext implements PlatformStores {
   readonly machines: PlatformStores["machines"];
   readonly registry: PlatformStores["registry"];
   readonly skills: PlatformStores["skills"];
+  readonly apps: PlatformStores["apps"];
   readonly releases: PlatformStores["releases"];
   readonly projects: PlatformStores["projects"];
   readonly teams: PlatformStores["teams"];
@@ -148,6 +149,7 @@ export class PlatformContext implements PlatformStores {
     this.machines = stores.machines;
     this.registry = stores.registry;
     this.skills = stores.skills;
+    this.apps = stores.apps;
     this.releases = stores.releases;
     this.projects = stores.projects;
     this.teams = stores.teams;
@@ -275,6 +277,7 @@ export class PlatformContext implements PlatformStores {
         agents: this.agents,
         identity: this.identity,
         skills: this.skills,
+        apps: this.apps,
         trace: this.trace,
         integrationAccess: new IntegrationAccessStore(this.pool),
         integrationDisplay: async (orgId) => {

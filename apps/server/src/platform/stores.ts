@@ -4,6 +4,7 @@
 
 import type { PlatformPool } from "./db.js";
 import { ApiKeyStore } from "./store/api-keys.js";
+import { AppStore } from "./store/apps.js";
 import { AttachmentStore } from "./store/attachments.js";
 import { ChatStore } from "./store/chats.js";
 import { ConversationHistoryStore } from "./store/conversation-history.js";
@@ -61,6 +62,8 @@ export interface PlatformStores {
   readonly conversations: ConversationMapStore;
   /** The conversation-history read model behind the Activity surface. */
   readonly conversationHistory: ConversationHistoryStore;
+  /** Apps and their published versions. */
+  readonly apps: AppStore;
 }
 
 export function createStores(pool: PlatformPool): PlatformStores {
@@ -92,5 +95,6 @@ export function createStores(pool: PlatformPool): PlatformStores {
     toolArtifacts: new ToolArtifactStore(pool),
     conversations: new ConversationMapStore(pool),
     conversationHistory: new ConversationHistoryStore(pool),
+    apps: new AppStore(pool),
   };
 }

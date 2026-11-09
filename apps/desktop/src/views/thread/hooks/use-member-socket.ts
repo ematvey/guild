@@ -37,6 +37,7 @@ import {
   resetAgentSlices,
 } from "../../agents/agents-store";
 import { applyOrgEvent, applySkillCatalog } from "../../skills/skills-store";
+import { applyAppList } from "../../apps/apps-store";
 
 /** The send path the socket settles: the outgoing queue and the user
  *  message ids the server has echoed. */
@@ -228,6 +229,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
+      onAppList: applyAppList,
       onOrgEvent: applyOrgEvent,
       onChatTree: (tree) => live().applyChatTree(tree),
       onArchivedThreadList: (next) => archivedChatsStore.set(next),

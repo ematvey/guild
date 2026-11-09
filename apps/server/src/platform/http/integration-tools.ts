@@ -8,29 +8,20 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
-import { auditError, callPlugin } from "../../integrations/execute.js";
-import { resolveIntegrations, unnamespacedTool, type IntegrationTurn } from "../../integrations/plugins.js";
-import {
-  resolveActingAs,
-  scopeCeiling,
-  toolCurate,
-  toolOffered,
-  type IntegrationScope,
-} from "../../integrations/policy.js";
+import { resolveActingAs, scopeCeiling, toolOffered, type IntegrationScope } from "../../integrations/policy.js";
 import { IntegrationAccessStore } from "../store/integration-access.js";
-import { memberCeiling } from "../domain/integration-access.js";
-import type { ToolClass } from "../domain/tool-class.js";
 import { sendJson } from "./error.js";
+import type { JsonObject } from "../../integrations/shared.js";
+import type { IntegrationTurn } from "../../integrations/plugins.js";
+import {
+  callerScope,
+  memberTool,
+  runMemberTool,
+  turns,
+  type IntegrationCaller,
+} from "../../integrations/member-tools.js";
 
-/** The caller of the script API: an org member (session) or an org API key.
- *  API keys act with their creating user's role (usage attributes the same
- *  way); their acting identity is null unless declared. */
-export interface IntegrationCaller {
-  org: string;
-  userId: string;
-  email: string | null;
-  role: string;
-}
+export type { IntegrationCaller };
 
 async function integrationCaller(auth: IdentityCtx, req: FastifyRequest): Promise<IntegrationCaller> {
   const header = req.headers.authorization;
@@ -63,33 +54,6 @@ async function integrationCaller(auth: IdentityCtx, req: FastifyRequest): Promis
     email = null;
   }
   return { org: key.org_id, userId: owner, email, role };
-}
-
-async function turns(gateway: GatewayCtx, orgId: string): Promise<IntegrationTurn[]> {
-  try {
-    return await resolveIntegrations(gateway, orgId);
-  } catch {
-    // The resolved plugins of the caller's org — a broken plugin contributes
-    // nothing (spec §8).
-    return [];
-  }
-}
-
-/** A script caller's reach: no Agent stands between the caller and the
- *  Integration, so each Integration's audience decides the ceiling the
- *  caller gets. Trait tools are open to every caller. */
-async function callerScope(access: IntegrationAccessStore, caller: IntegrationCaller): Promise<IntegrationScope> {
-  const [audiences, member] = await Promise.all([
-    access.audiences(caller.org),
-    access.member(caller.org, caller.userId),
-  ]);
-  const self = { role: caller.role, team_ids: member?.team_ids ?? new Set<string>() };
-  const integrations = new Map<string, ToolClass>();
-  for (const audience of audiences.values()) {
-    const ceiling = memberCeiling(audience, self);
-    if (ceiling !== null) integrations.set(audience.slug, ceiling);
-  }
-  return { traits: "all", integrations };
 }
 
 export function registerIntegrationToolRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx): void {
@@ -142,25 +106,12 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     const params = req.params as Record<string, string>;
     const slug = params["slug"] ?? "";
     const tool = params["tool"] ?? "";
-    const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
-    if (turn === undefined) throw ApiError.notFound("no such integration");
-    // The path carries the Guild-facing namespaced name; the raw connector
-    // name is accepted too — both sides are compared after namespace
-    // stripping (legacy int_ prefix tolerated) so either shape matches.
-    const info = turn.tools.find((i) => {
-      const callRaw = unnamespacedTool(turn.slug, tool) ?? tool;
-      const specRaw = unnamespacedTool(turn.slug, i.spec.name) ?? i.spec.name;
-      return callRaw === specRaw;
-    });
-    if (info === undefined) throw ApiError.notFound("no such tool");
-    if (!allowed(await callerScope(access, caller), caller, turn, info))
-      throw ApiError.forbidden("this tool is not available to you");
+    const { turn, raw, alwaysAsk } = await memberTool(gateway, access, caller, slug, tool);
     // The script API is non-interactive: a tool curated to always_ask has no
     // durable card to resolve here, so it is refused rather than silently
     // bypassing the approval (the stored per-tool config is the single
     // source of truth for exposure and approval).
-    const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-    if (toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk) {
+    if (alwaysAsk) {
       throw ApiError.forbidden("this tool needs an approval and cannot be called from a script");
     }
     // Identity: acting as the caller's own mapped identity; an override to
@@ -196,39 +147,9 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     if (args === null || typeof args !== "object" || Array.isArray(args)) {
       throw ApiError.badRequest("body must be a JSON object");
     }
-    // The same connector runtime the chat loop uses — secrets re-resolved
-    // at call time, the identity envelope, and a connector failure surfaces
-    // as the ok:false result (never an HTTP error).
-    const callId = crypto.randomUUID();
-    let body: Record<string, unknown>;
-    const started = Date.now();
-    try {
-      const outcome = await callPlugin(gateway, turn, raw, args as Record<string, unknown>, {
-        orgId: caller.org,
-        callerId: caller.userId,
-        callId,
-        actingAs,
-      });
-      body = { ok: true, content: outcome.content, meta: outcome.meta ?? null };
-    } catch (error) {
-      body = { ok: false, error: (error as Error).message };
-    }
-    // Journaled audit (spec §8): the identity record for the script call.
-    try {
-      await auth.events.emit(caller.org, "integration.tool_called", {
-        slug: turn.slug,
-        call_id: callId,
-        tool: raw,
-        caller: caller.userId,
-        acting_as: actingAs,
-        ok: body["ok"] === true,
-        via: "script",
-        ms: Date.now() - started,
-        error: body["ok"] === true ? null : auditError(body["error"]),
-      });
-    } catch {
-      // Best-effort.
-    }
+    const body = await runMemberTool(gateway, auth.events, caller, turn, raw, args as JsonObject, actingAs, {
+      via: "script",
+    });
     sendJson(reply, body);
     return reply;
   });

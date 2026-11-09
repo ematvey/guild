@@ -59,7 +59,60 @@
     "ChatTree": { "$ref": "#/$defs/ChatTree" },
     "SkillOwner": { "$ref": "#/$defs/SkillOwner" },
     "SkillCatalogItem": { "$ref": "#/$defs/SkillCatalogItem" },
+    "AppParam": {
+      "description": "One parameter a page may pass to an App's data function.",
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["string", "number", "integer", "boolean"] },
+        "description": { "type": "string" },
+        "enum": { "type": "array", "items": { "type": ["string", "number"] } },
+        "default": { "type": ["string", "number", "boolean"] },
+        "required": { "type": "boolean" },
+        "max_length": { "type": "number" },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" }
+      }
+    },
+    "AppFunction": {
+      "description": "One named data function of an App: one Integration tool with fixed arguments and `{\"$param\": name}` holes.",
+      "type": "object",
+      "required": ["name", "description", "integration", "tool", "args", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "integration": { "type": "string" },
+        "tool": { "type": "string" },
+        "args": { "type": "object" },
+        "params": { "type": "object", "additionalProperties": { "$ref": "#/$defs/AppParam" } }
+      }
+    },
+    "App": {
+      "description": "One App as lists carry it: everything but the page. The `app_list` frame row and the GET /api/v1/apps row.",
+      "type": "object",
+      "required": ["id", "org_id", "owner_user_id", "owner_label", "agent_id", "agent_name", "chat_id", "name", "description", "visibility", "version", "functions", "created_at", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "owner_user_id": { "$ref": "#/$defs/Uuid" },
+        "owner_label": { "type": "string" },
+        "agent_id": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "agent_name": { "type": ["string", "null"] },
+        "chat_id": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "visibility": { "enum": ["private", "org"] },
+        "version": { "type": "integer" },
+        "functions": { "type": "array", "items": { "$ref": "#/$defs/AppFunction" } },
+        "created_at": { "$ref": "#/$defs/DateTime" },
+        "updated_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
     "SkillInstall": { "$ref": "#/$defs/SkillInstall" },
+    "App": { "$ref": "#/$defs/App" },
     "UserInfo": { "$ref": "#/$defs/UserInfo" },
     "LoginRequest": { "$ref": "#/$defs/LoginRequest" },
     "LoginResponse": { "$ref": "#/$defs/LoginResponse" },

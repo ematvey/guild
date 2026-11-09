@@ -331,6 +331,47 @@ export interface SkillOwner {
 }
 
 /** One entry of the org skill catalog. */
+/** One parameter a page may pass to an App's data function. */
+export interface AppParam {
+  type: "string" | "number" | "integer" | "boolean";
+  description?: string;
+  enum?: (string | number)[];
+  default?: string | number | boolean;
+  required?: boolean;
+  max_length?: number;
+  minimum?: number;
+  maximum?: number;
+}
+
+/** One named data function of an App: one Integration tool with fixed
+ *  arguments and `{"$param": name}` holes. */
+export interface AppFunction {
+  name: string;
+  description: string;
+  integration: string;
+  tool: string;
+  args: { [key: string]: Json };
+  params: { [name: string]: AppParam };
+}
+
+/** One App as lists carry it: everything but the page. */
+export interface App {
+  id: string;
+  org_id: string;
+  owner_user_id: string;
+  owner_label: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  chat_id: string | null;
+  name: string;
+  description: string;
+  visibility: "private" | "org";
+  version: number;
+  functions: AppFunction[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SkillCatalogItem {
   slug: string;
   description: string;

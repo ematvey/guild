@@ -155,6 +155,14 @@ const AGENT_TOOL_CATALOG = [
     description: "Attach a workspace file to the turn's response.",
     safe: false,
   },
+  {
+    name: "publish_app",
+    label: "Publish app",
+    group: "Files",
+    description:
+      "Publish a workspace HTML page as an App that reads Integration data through named functions, run as each viewer.",
+    safe: false,
+  },
 ];
 
 /** The enabled integration tools an agent may be granted. Names are the

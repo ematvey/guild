@@ -1,3 +1,25 @@
+## 0.6.84 — Apps: agent-built pages over live Integration data
+
+An Agent can now publish a workspace HTML file as an App (`publish_app`):
+a page Members open from the new Apps rail entry (`/apps/<id>`) and the
+owner can share with the Org. The page reads Integrations only through
+data functions declared at publish — one tool, fixed arguments, typed and
+bounded `{"$param"}` holes — and every call runs as the viewer, through
+the script API's reach rule, curation and audit (`via: "app"`). Writes ask
+the viewer in Guild's own dialog on every call. The page is served from a
+signed link with an opaque origin and no network (`connect-src 'none'`, no
+remote images, popups or form targets); a bridge script Guild injects
+first talks to the framing client over `postMessage`. The Apps list rides
+the member socket (`app_list`, `guild_apps`).
+
+Why not OpenUI with `Query`/`Mutation`: an App is a lasting, shared page,
+and the objection to Turn-free Tool calls still stands; named functions
+answer it, and a shared App acting as its author would leak reach. The
+member-call path (`memberTool`/`runMemberTool`) moved to
+`integrations/member-tools.ts`, shared by the script API and Apps. The
+desktop CSP gained `frame-src` so the shell can frame App pages. Spec:
+`docs/specs/2026-11-09-apps.md`.
+
 ## 0.6.83 — Integrations opens from Settings
 
 Pressing the rail's Integrations button on the Settings tab left the reader on

@@ -2,7 +2,17 @@
 // chats, projects (work) and skills. Help and Settings sit at the bottom,
 // above the account menu — all global across tabs and never scroll away.
 
-import { Activity, Bot, CircleHelp, FolderKanban, MessageSquare, Package, Plug, Settings } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  CircleHelp,
+  FolderKanban,
+  LayoutGrid,
+  MessageSquare,
+  Package,
+  Plug,
+  Settings,
+} from "lucide-react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
@@ -13,13 +23,14 @@ import type { ChatRoute } from "./thread/route";
 /** A rail entry is a projection of the route, never stored panel state: the
  *  panel tabs come from ChatRoute.tab, and the full-page surfaces from
  *  their own route fields. */
-export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "integrations";
+export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "apps" | "integrations";
 
 const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
   { id: "skills", label: "Skills", icon: Package },
+  { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "activity", label: "Activity", icon: Activity },
 ];

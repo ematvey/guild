@@ -36,6 +36,7 @@ export function routePath(resolved: ChatRoute): string {
     resolved.agents,
     resolved.usage,
     resolved.integrations,
+    resolved.apps ?? null,
   );
   const query = previewQuery(resolved);
   return query === "" ? path : `${path}?${query}`;

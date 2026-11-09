@@ -63,19 +63,12 @@ export const BUILTIN_TOOL_GROUPS: readonly ToolGroup[] = [
     description:
       "The whole org, for an admin's personal assistant: members, model usage, every member's threads and " +
       "every agent.",
-    tools: [
-      "guild_overview",
-      "guild_members",
-      "guild_usage",
-      "guild_threads",
-      "guild_thread_read",
-      "guild_agents",
-    ],
+    tools: ["guild_overview", "guild_members", "guild_usage", "guild_threads", "guild_thread_read", "guild_agents"],
   },
   {
     name: "files",
-    description: "Files: message attachments and files you send to the user.",
-    tools: ["download_attachment", "send_file"],
+    description: "Files: message attachments, files you send to the user, and Apps you publish.",
+    tools: ["download_attachment", "send_file", "publish_app"],
   },
 ];
 

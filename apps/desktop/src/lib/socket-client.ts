@@ -4,6 +4,7 @@
 import type { ServerFrame } from "@guild/wire/types";
 import type {
   Agent,
+  App,
   AgentRoutine,
   AttachableIntegration,
   AgentRun,
@@ -81,6 +82,8 @@ export interface SocketHandlers {
   onAgentRoutines?: (agent_id: string, routines: AgentRoutine[]) => void;
   /** The org skill catalog plus the member's own installs. */
   onSkillCatalog?: (items: SkillCatalogItem[], installs: SkillInstall[]) => void;
+  /** The Apps the member sees: on connect and on every App change. */
+  onAppList?: (apps: App[]) => void;
   /** One chat's tree facts for its header. */
   onChatTree?: (tree: ChatTree) => void;
   /** The workspace's identity (name, logo, telemetry switch, served web
@@ -204,6 +207,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       return;
     case "skill_catalog":
       handlers.onSkillCatalog?.(message.items, message.installs);
+      return;
+    case "app_list":
+      handlers.onAppList?.(message.apps);
       return;
     case "chat_tree":
       handlers.onChatTree?.(message.tree);

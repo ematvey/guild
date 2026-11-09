@@ -37,10 +37,13 @@ export interface AgentToolDeps {
   subagents?: SubagentsToolContext;
   /** Present when this chat has a running agent turn. */
   sendFile?: SendFileContext;
+  /** Present when the process can store Apps. */
+  publishApp?: PublishAppContext;
 }
 
 export { createSubagentTools } from "./subagents.js";
 export { createSendFileTool } from "./send-file.js";
+import { createPublishAppTool, type PublishAppContext } from "./publish-app.js";
 
 export interface AgentMessageResult {
   thread_id: string;
@@ -569,6 +572,10 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
 
   if (allowed.has("send_file") && deps.sendFile !== undefined) {
     tools.push(createSendFileTool(deps.sendFile));
+  }
+
+  if (allowed.has("publish_app") && deps.publishApp !== undefined) {
+    tools.push(createPublishAppTool(deps.publishApp));
   }
 
   if (allowed.has("conversation_read")) {

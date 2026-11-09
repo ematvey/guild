@@ -38,6 +38,7 @@ const SERVER_TAG_NAMES = [
   "agent_threads",
   "agent_routines",
   "skill_catalog",
+  "app_list",
   "chat_tree",
   "chat_row",
   "context_usage",

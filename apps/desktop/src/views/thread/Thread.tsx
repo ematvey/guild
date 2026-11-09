@@ -43,6 +43,8 @@ import { SkillsPage } from "./surfaces/skills-page";
 import { AgentsPage } from "./surfaces/agents-page";
 import { IntegrationsSurface } from "./surfaces/integrations-page";
 import { INTEGRATIONS_HOME } from "../integrations/integrations-route";
+import { AppsSurface } from "./surfaces/apps-page";
+import { APPS_HOME } from "../apps/apps-route";
 import { useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
@@ -142,10 +144,7 @@ function ThreadView(props: ThreadProps) {
     },
     [pushRoute],
   );
-  const selectPreview = useCallback(
-    (ref: PreviewRef) => pushRoute({ preview: ref }),
-    [pushRoute],
-  );
+  const selectPreview = useCallback((ref: PreviewRef) => pushRoute({ preview: ref }), [pushRoute]);
   const closePreviewTab = useCallback(
     (ref: PreviewRef) => {
       const rest = previewTabs.filter((t) => !(t.ref.kind === ref.kind && t.ref.id === ref.id));
@@ -577,9 +576,11 @@ function ThreadView(props: ThreadProps) {
       ? "skills"
       : route.integrations !== null
         ? "integrations"
-        : route.agents !== null
-          ? agentsRailTab(route.agents)
-          : route.tab;
+        : (route.apps ?? null) !== null
+          ? "apps"
+          : route.agents !== null
+            ? agentsRailTab(route.agents)
+            : route.tab;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
@@ -594,9 +595,14 @@ function ThreadView(props: ThreadProps) {
         skills: tab === "skills" ? SKILLS_CATALOG : null,
         agents: tab === "agents" ? AGENTS_DIRECTORY : tab === "activity" ? AGENTS_ACTIVITY : null,
         integrations: tab === "integrations" ? INTEGRATIONS_HOME : null,
+        apps: tab === "apps" ? APPS_HOME : null,
       },
       isMobile,
     );
+    if (tab === "apps") {
+      pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: null, apps: APPS_HOME });
+      return;
+    }
     if (tab === "skills") {
       pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG, agents: null, integrations: null });
       return;
@@ -624,6 +630,7 @@ function ThreadView(props: ThreadProps) {
       overlay: null,
       skills: null,
       agents: null,
+      apps: null,
       tab,
       newChat: false,
       ...(tab === "settings" ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null } : {}),
@@ -637,7 +644,7 @@ function ThreadView(props: ThreadProps) {
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: RailTab) => {
-    if (tab === "agents" || tab === "activity" || tab === "skills" || tab === "integrations") {
+    if (tab === "agents" || tab === "activity" || tab === "skills" || tab === "integrations" || tab === "apps") {
       switchTab(tab);
       setOpen(false);
       return;
@@ -713,6 +720,10 @@ function ThreadView(props: ThreadProps) {
     ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (
       <RoutePage isMobile={isMobile} title="Integrations" onOpenDrawer={openDrawer}>
         <IntegrationsSurface route={route.integrations} isMobile={isMobile} pushRoute={pushRoute} />
+      </RoutePage>
+    ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (
+      <RoutePage isMobile={isMobile} title="Apps" onOpenDrawer={openDrawer}>
+        <AppsSurface route={route.apps} isMobile={isMobile} pushRoute={pushRoute} onOpenChat={openChat} />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
       <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>
@@ -838,99 +849,99 @@ function ThreadView(props: ThreadProps) {
         {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ThreadHeader
-              isMobile={isMobile}
-              collapsed={collapsed}
-              onOpenDrawer={openDrawer}
-              onExpandSidebar={() => setCollapsed(false)}
-              chatId={viewChatId}
-              title={activeTitle}
-              titleLoading={threadLoading && blocks.length === 0}
-              childTree={childTree}
-              isSubagent={facts.type === "subagent"}
-              showWorking={!!viewChatId && openWorking && !openGenerating}
-              showMenu={!!viewChatId && facts.type === "user" && !facts.deleted}
-              foreign={foreignChat}
-              archived={chatArchived}
-              renameSeed={activeChat?.title ?? ""}
-              onOpenChat={openChat}
-              onRename={renameOpenChat}
-              onArchiveToggle={headerArchive}
-              onDelete={headerDelete}
-            />
-
-            {offlineMachineBanner && (
-              <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
-                {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
-              </div>
-            )}
-
-            <NotificationsOffer />
-
-            <PreviewProvider value={openPreview}>
-            <GenuiHostContext.Provider value={genuiHost}>
-              <ThreadPane
-                blocks={blocks}
-                loading={threadLoading}
-                viewChatId={viewChatId}
-                noModels={models !== null && models.length === 0}
-                navigating={navigating}
-                hasMore={hasMore}
-                loadingEarlier={loadingEarlier}
-                onLoadEarlier={loadEarlierNearTop}
-                compacting={compacting}
-                busy={busy}
-                stopping={stopping}
-                subagentNodes={subagentNodes}
-                originLink={childTree?.origin ?? null}
-                onOpenChat={openChat}
-                onOpenChildChat={openChildChat}
-                scroll={{
-                  pane,
-                  onScroll: scroll.onScroll,
-                  setContentEl: scroll.setContentEl,
-                  composerH: scroll.composerH,
-                  onFrameToggle: scroll.onFrameToggle,
-                  atBottom,
-                  scrollToBottom: scroll.scrollToBottom,
-                }}
-                column={column}
+              <ThreadHeader
                 isMobile={isMobile}
+                collapsed={collapsed}
+                onOpenDrawer={openDrawer}
+                onExpandSidebar={() => setCollapsed(false)}
+                chatId={viewChatId}
+                title={activeTitle}
+                titleLoading={threadLoading && blocks.length === 0}
+                childTree={childTree}
+                isSubagent={facts.type === "subagent"}
+                showWorking={!!viewChatId && openWorking && !openGenerating}
+                showMenu={!!viewChatId && facts.type === "user" && !facts.deleted}
+                foreign={foreignChat}
+                archived={chatArchived}
+                renameSeed={activeChat?.title ?? ""}
+                onOpenChat={openChat}
+                onRename={renameOpenChat}
+                onArchiveToggle={headerArchive}
+                onDelete={headerDelete}
               />
-            </GenuiHostContext.Provider>
-            </PreviewProvider>
 
-            <ThreadComposer
-              composer={composer}
-              sending={outgoing}
-              agent={agent}
-              approval={approval}
-              viewChatId={viewChatId}
-              blocks={blocks}
-              busy={busy}
-              navigating={navigating}
-              holdingFirstSend={holdingFirstSend}
-              openGenerating={openGenerating}
-              stopping={stopping}
-              models={models}
-              model={model}
-              access={{
-                readOnly: access === "readonly",
-                unknown: access === "unknown",
-                facts,
-                foreign: foreignChat,
-                deletingAgent,
-                onUnarchive: () => void headerArchive(),
-              }}
-              currentProject={currentProject}
-              localMachineId={localMachineId}
-              chatWidth={column.chatWidth}
-              chatResizing={column.chatResizing}
-              setComposerEl={scroll.setComposerEl}
-              onManageAgents={() =>
-                pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })
-              }
-            />
+              {offlineMachineBanner && (
+                <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
+                  {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
+                </div>
+              )}
+
+              <NotificationsOffer />
+
+              <PreviewProvider value={openPreview}>
+                <GenuiHostContext.Provider value={genuiHost}>
+                  <ThreadPane
+                    blocks={blocks}
+                    loading={threadLoading}
+                    viewChatId={viewChatId}
+                    noModels={models !== null && models.length === 0}
+                    navigating={navigating}
+                    hasMore={hasMore}
+                    loadingEarlier={loadingEarlier}
+                    onLoadEarlier={loadEarlierNearTop}
+                    compacting={compacting}
+                    busy={busy}
+                    stopping={stopping}
+                    subagentNodes={subagentNodes}
+                    originLink={childTree?.origin ?? null}
+                    onOpenChat={openChat}
+                    onOpenChildChat={openChildChat}
+                    scroll={{
+                      pane,
+                      onScroll: scroll.onScroll,
+                      setContentEl: scroll.setContentEl,
+                      composerH: scroll.composerH,
+                      onFrameToggle: scroll.onFrameToggle,
+                      atBottom,
+                      scrollToBottom: scroll.scrollToBottom,
+                    }}
+                    column={column}
+                    isMobile={isMobile}
+                  />
+                </GenuiHostContext.Provider>
+              </PreviewProvider>
+
+              <ThreadComposer
+                composer={composer}
+                sending={outgoing}
+                agent={agent}
+                approval={approval}
+                viewChatId={viewChatId}
+                blocks={blocks}
+                busy={busy}
+                navigating={navigating}
+                holdingFirstSend={holdingFirstSend}
+                openGenerating={openGenerating}
+                stopping={stopping}
+                models={models}
+                model={model}
+                access={{
+                  readOnly: access === "readonly",
+                  unknown: access === "unknown",
+                  facts,
+                  foreign: foreignChat,
+                  deletingAgent,
+                  onUnarchive: () => void headerArchive(),
+                }}
+                currentProject={currentProject}
+                localMachineId={localMachineId}
+                chatWidth={column.chatWidth}
+                chatResizing={column.chatResizing}
+                setComposerEl={scroll.setComposerEl}
+                onManageAgents={() =>
+                  pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })
+                }
+              />
             </div>
             {previewRef !== null && (
               <PreviewPane

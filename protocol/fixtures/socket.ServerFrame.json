@@ -458,6 +458,53 @@
     ]
   },
   {
+    "type": "app_list",
+    "apps": [
+      {
+        "id": "0192f3a1-7c2e-7a51-9d1e-3b5c7d9e1f20",
+        "org_id": "0192f3a1-0000-7000-8000-000000000001",
+        "owner_user_id": "0192f3a1-0000-7000-8000-000000000002",
+        "owner_label": "Ada Lovelace",
+        "agent_id": null,
+        "agent_name": null,
+        "chat_id": null,
+        "name": "Pipeline",
+        "description": "Deals by stage",
+        "visibility": "org",
+        "version": 2,
+        "functions": [
+          {
+            "name": "deals_by_stage",
+            "description": "Open deals in one stage",
+            "integration": "hubspot",
+            "tool": "hubspot_search_deals",
+            "args": {
+              "filter": {
+                "stage": {
+                  "$param": "stage"
+                }
+              },
+              "limit": 100
+            },
+            "params": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "won",
+                  "lost"
+                ],
+                "default": "open"
+              }
+            }
+          }
+        ],
+        "created_at": "2026-11-09T10:00:00Z",
+        "updated_at": "2026-11-09T11:00:00Z"
+      }
+    ]
+  },
+  {
     "type": "chat_tree",
     "chat_id": "018f0b7c-0000-7000-8000-000000000091",
     "tree": {

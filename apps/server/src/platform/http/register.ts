@@ -36,6 +36,7 @@ import { registerPluginCatalogRoutes } from "./plugin-catalogs.js";
 import { registerIntegrationToolRoutes } from "./integration-tools.js";
 import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
+import { registerAppRoutes } from "./apps.js";
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
   // Composition glue: the full context is sliced here and each route group
@@ -91,6 +92,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerPluginCatalogRoutes(scope, gateway, auth);
     registerUserMcpRoutes(scope, auth);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
+    registerAppRoutes(scope, auth, gateway, ctx.apps);
   });
 
   // The script-facing integration tool API accepts ANY content type as raw

@@ -19,6 +19,7 @@ import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
 import type { OrgPayload } from "../platform/notify.js";
 import type { IdentityStore } from "../platform/store/identity.js";
 import type { SkillStore } from "../platform/store/skills.js";
+import type { AppStore } from "../platform/store/apps.js";
 import type { TraceStore } from "../platform/trace.js";
 import type { LiveHub } from "./live.js";
 import type { WsServerMsg } from "./protocol.js";
@@ -43,6 +44,8 @@ export interface AgentStateDeps {
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
+  /** The Apps each member sees. */
+  readonly apps: Pick<AppStore, "listVisible">;
   readonly trace: Pick<TraceStore, "callCounts">;
   /** Integration audiences: each Agent's warnings and each member's
    *  attachable Integrations. */
@@ -159,6 +162,16 @@ export class AgentStateFeed {
     );
   }
 
+  /** `guild_apps`: an App was published, shared, unshared or deleted;
+   *  every member's list re-reads. */
+  apps({ org_id: orgId }: OrgPayload): void {
+    this.coalesce(`apps:${orgId}`, () =>
+      this.chains.run(`apps:${orgId}`, "guild_apps", () =>
+        this.sendAppLists(orgId, this.ctx.hub.memberUsersOfOrg(orgId)),
+      ),
+    );
+  }
+
   /** `guild_agent_runs`: one run row moved. */
   run({ org_id: orgId, agent_id: agentId, run_id: runId }: OrgPayload): void {
     if (agentId === null || runId === null) return;
@@ -180,11 +193,12 @@ export class AgentStateFeed {
   }
 
   /** A new member socket's first paint: the member's agent list (their
-   *  personal agent exists from here on) and the skill catalog. */
+   *  personal agent exists from here on), the skill catalog and the Apps. */
   connect(orgId: string, userId: string): Promise<void> {
     return Promise.all([
       this.chains.run(`agents:${orgId}`, "connect", () => this.sendAgentLists(orgId, [userId], true)),
       this.chains.run(`skills:${orgId}`, "connect", () => this.sendSkillCatalogs(orgId, [userId])),
+      this.chains.run(`apps:${orgId}`, "connect", () => this.sendAppLists(orgId, [userId])),
     ]).then(() => {});
   }
 
@@ -284,6 +298,15 @@ export class AgentStateFeed {
     ]);
     for (const userId of members) {
       this.sendKeyed(userId, "skill_catalog", { type: "skill_catalog", items, installs: installs.get(userId) ?? [] });
+    }
+  }
+
+  private async sendAppLists(orgId: string, userIds: string[]): Promise<void> {
+    const members = userIds.filter((userId) => this.connected(userId));
+    if (members.length === 0) return;
+    const lists = await this.ctx.apps.listVisible(orgId, members);
+    for (const userId of members) {
+      this.sendKeyed(userId, "app_list", { type: "app_list", apps: lists.get(userId) ?? [] });
     }
   }
 

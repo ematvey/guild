@@ -9,6 +9,7 @@
 
 import type {
   Agent,
+  App,
   AttachableIntegration,
   AgentRoutine,
   AgentRun,
@@ -188,6 +189,8 @@ export type ServerFrame =
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
+  /** The Apps the member sees: their own and those shared with the org. */
+  | { type: "app_list"; apps: App[] }
   | { type: "chat_tree"; chat_id: Uuid; tree: ChatTree }
   /** One active-list row changed in place: replace it by id. Sent only to
    *  sockets that connected with `features=chat_row`. */

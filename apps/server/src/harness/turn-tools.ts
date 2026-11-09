@@ -33,6 +33,7 @@ import { agentMessageEntry } from "../chats/agent-message.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
+import type { PublishAppContext } from "../agents/publish-app.js";
 import { createGuildTools, guildToolsAllowed } from "../agents/guild-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
 import type { UserMcpRuntime } from "./user-mcp.js";
@@ -64,6 +65,9 @@ export interface TurnToolDeps {
   readonly integrations: Pick<IntegrationsRuntime, "prepareTurn">;
   readonly userMcp: Pick<UserMcpRuntime, "prepareTurn">;
   readonly executors: Pick<ConversationExecutors, "executorKind" | "envFor">;
+  /** The App store and the reach check `publish_app` runs on each data
+   *  function; absent in processes that publish no Apps. */
+  readonly apps?: Pick<PublishAppContext, "apps" | "checkFunction">;
   /** The turn controls the subagent tools drive on child chats. */
   readonly turns: {
     submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
@@ -234,6 +238,17 @@ export class TurnTools {
         deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
+      ...(deps.apps === undefined
+        ? {}
+        : {
+            publishApp: {
+              ...deps.apps,
+              agent,
+              chatId,
+              userId: ref.user_id,
+              workspaceRoot: deps.config.agentWorkspaceWriteRoot,
+            },
+          }),
     });
     tools.push(...(await this.guildTools(agent, ref.user_id)));
     deps.log.debug({ chatId, agentId: agent.id, tools: tools.map((tool) => tool.name) }, "agent tools resolved");

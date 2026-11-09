@@ -87,6 +87,9 @@ import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
 import { ConversationExecutors } from "./executors.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
+import { appFunctionCheck } from "../agents/publish-app.js";
+import type { IntegrationGateway } from "../integrations/plugins.js";
+import { IntegrationAccessStore } from "../platform/store/integration-access.js";
 import { mediaSpillingRegistry } from "./media-registry.js";
 import { turnBackend, type SubmitTurnInput, type TurnBackend, type TurnPlacement } from "./turn-backend.js";
 
@@ -104,6 +107,7 @@ export interface RuntimeDeps {
   readonly stores: Pick<
     PlatformStores,
     | "chats"
+    | "apps"
     | "identity"
     | "threads"
     | "turnCommands"
@@ -326,20 +330,21 @@ export class GuildRuntime {
       conversationEnv: (conversationId, orgId) => this.executors.envFor(conversationId, orgId),
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
+    const integrationGateway: IntegrationGateway = {
+      integrations: stores.integrations,
+      integrationSecrets: stores.integrationSecrets,
+      registry: stores.registry,
+      objects: objects ?? {
+        get: async () => {
+          throw new Error("code plugins need the object store, which this process has none of");
+        },
+      },
+      orgKv: stores.orgKv,
+      masterKey: () => deps.masterKey(),
+    };
     this.integrationsRuntime = new IntegrationsRuntime(
       {
-        gateway: {
-          integrations: stores.integrations,
-          integrationSecrets: stores.integrationSecrets,
-          registry: stores.registry,
-          objects: objects ?? {
-            get: async () => {
-              throw new Error("code plugins need the object store, which this process has none of");
-            },
-          },
-          orgKv: stores.orgKv,
-          masterKey: () => deps.masterKey(),
-        },
+        gateway: integrationGateway,
         events: stores.events,
         artifacts: stores.toolArtifacts,
         objects,
@@ -494,6 +499,10 @@ export class GuildRuntime {
       integrations: this.integrationsRuntime,
       userMcp: this.userMcpRuntime,
       executors: this.executors,
+      apps: {
+        apps: stores.apps,
+        checkFunction: appFunctionCheck(integrationGateway, new IntegrationAccessStore(pool), stores.identity),
+      },
       turns: {
         submitTurn: (chatId, orgId, input) => this.submitTurn(chatId, orgId, input),
         writeEntry: (chatId, entry) => this.writeEntry(chatId, entry),

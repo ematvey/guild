@@ -45,7 +45,8 @@ export type AgentToolName =
   | "update_routine"
   | "delete_routine"
   | "subagents"
-  | "send_file";
+  | "send_file"
+  | "publish_app";
 
 /** One entry of an agent's tool allowlist: a built-in tool or a Trait tool
  *  (`web_fetch`). Integration tools are not listed here. */
@@ -74,6 +75,7 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "delete_routine",
   "subagents",
   "send_file",
+  "publish_app",
 ];
 
 /** How an agent's tool allowlist is resolved. */

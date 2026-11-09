@@ -88,7 +88,7 @@ The audience is checked when someone adds an Integration to an Agent or raises a
 
 Where an Agent gives someone more of an Integration than its audience grants them, the Agent and the Integration's Access tab show a warning naming who (every member, a Team, or a Member granted the Agent by name, its owner included) and what. Nothing composes the two at call time.
 
-A script calling the integration tool API has no Agent between it and the Integration, so the caller's own audience ceiling decides.
+A script calling the integration tool API has no Agent between it and the Integration, so the caller's own audience ceiling decides. An App's data function follows the same rule for whoever is viewing the App (see 004): sharing an App never lends its author's reach.
 
 An Integration call acts as the Member's own mapped identity; overriding it is admin-only. An Integration that impersonates (Google Workspace) refuses a call without a Member identity. Integration secrets and MCP headers are encrypted at rest. They are decrypted only at call time and never appear in a snapshot, a prompt or a client.
 

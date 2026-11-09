@@ -291,9 +291,12 @@ export function pruneStopping(
  *  pick re-expands a collapsed panel. Mobile has no aside (the rail and
  *  panels live in the drawer); its main pane is the surface the URL names,
  *  the same page as on desktop. */
-export type TabPane = "chat" | "skillsPage" | "agentsPage" | "integrationsPage" | "settingsPage";
+export type TabPane = "chat" | "skillsPage" | "agentsPage" | "integrationsPage" | "appsPage" | "settingsPage";
 export function tabPaneLayout(
-  route: Pick<ChatRoute, "tab" | "skills" | "agents"> & { integrations?: ChatRoute["integrations"] },
+  route: Pick<ChatRoute, "tab" | "skills" | "agents"> & {
+    integrations?: ChatRoute["integrations"];
+    apps?: ChatRoute["apps"];
+  },
   isMobile: boolean,
 ): { aside: boolean; mainPane: TabPane; expandsPanel: boolean } {
   if (isMobile) {
@@ -304,14 +307,17 @@ export function tabPaneLayout(
           ? "agentsPage"
           : (route.integrations ?? null) !== null
             ? "integrationsPage"
-            : route.tab === "settings"
-            ? "settingsPage"
-            : "chat";
+            : (route.apps ?? null) !== null
+              ? "appsPage"
+              : route.tab === "settings"
+                ? "settingsPage"
+                : "chat";
     return { aside: false, mainPane, expandsPanel: false };
   }
   if (route.skills !== null) return { aside: false, mainPane: "skillsPage", expandsPanel: false };
   if (route.agents !== null) return { aside: false, mainPane: "agentsPage", expandsPanel: false };
   if ((route.integrations ?? null) !== null) return { aside: false, mainPane: "integrationsPage", expandsPanel: false };
+  if ((route.apps ?? null) !== null) return { aside: false, mainPane: "appsPage", expandsPanel: false };
   if (route.tab === "settings") return { aside: true, mainPane: "settingsPage", expandsPanel: true };
   return { aside: true, mainPane: "chat", expandsPanel: true };
 }

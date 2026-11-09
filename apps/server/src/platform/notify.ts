@@ -105,6 +105,8 @@ export const NOTIFY_PARSERS = {
   guild_agent_routines: orgPayload,
   guild_agent_threads: orgPayload,
   guild_skills: orgPayload,
+  /** An App was published, shared, unshared or deleted. */
+  guild_apps: orgPayload,
   /** A compaction task was written: the conversation id. */
   guild_compaction: idPayload,
 } as const;

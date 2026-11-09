@@ -1,6 +1,6 @@
 # 004 Capabilities
 
-Capabilities are what a Turn can use: the model behind each Step, the Tools it can call, the Skills it can load and the Generated UI it can write. The Org supplies all of them. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
+Capabilities are what a Turn can use: the model behind each Step, the Tools it can call, the Skills it can load, the Generated UI it can write and the Apps it can publish. The Org supplies all of them. This document builds on [001 Domain model](001-domain.md) through [003 Execution](003-execution.md).
 
 ## Concepts
 
@@ -14,6 +14,8 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
 | Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Takes one answer: the first user message after it settles its controls. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
+| App | An HTML page an Agent publishes, with named data functions, that a Member opens from the Apps page | Owned by the Member the publishing Thread acts for. Private, or shared with the Org. Each publish is a new version and the newest runs. The page has no network: it reads Integrations only through its data functions, and every call acts for the viewer | Live views of Org data (dashboards, trackers) that outlast the Thread that made them |
+| Data function | One named call an App's page may make: one Integration tool, fixed arguments, and typed, bounded parameters the page fills in | Declared at publish and checked against the publisher's reach. Runs with the viewer's own reach, the Org's curation and the audit of a script call. A `write`/`admin`-class or `always_ask` tool asks the viewer before every call | The page never chooses a tool or the shape of its arguments, so the manifest says everything an App can do |
 | Registry item | A catalog entry: a `skill`, an `mcp` server or an `integration` | Unique per (Org, kind, slug). Its review approves one version and hash, and any change returns it to draft | One reviewed catalog for everything installable |
 
 ## Models and the gateway
@@ -140,6 +142,18 @@ Images in agent content — Generated UI and chat Markdown alike — come from t
 
 A block is a dialog: it takes one answer. Once any user message follows it in the Thread (a click on one of its buttons, or anything the Member typed), its buttons and fields settle, and the button whose message answered it stays marked. The state comes from the transcript, so it holds on reload and on every device; Tabs still switch and `@OpenUrl` buttons still open. Controls are also disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
 
+## Apps
+
+An Agent with `publish_app` in its tools publishes an HTML file from its Workspace as an App, or a new version of one its Member owns. The Member the Thread acts for owns the App; the App starts private. The tool checks every data function against that Member's reach before storing anything, so a wrong tool name or an Integration outside their audience is an error the Agent can fix.
+
+A data function names an Integration slug, a tool (as `<slug>_list_tools` shows it), fixed arguments, and parameters. `{"$param": "<name>"}` in the arguments marks where a parameter goes. A parameter has a type (`string`, `number`, `integer`, `boolean`) and may have `enum`, `default`, `required`, `max_length` (strings, 1,000 by default), `minimum` and `maximum`. A call that passes an undeclared parameter, misses a required one, or breaks a bound is refused. An omitted optional parameter drops its argument. A value is always data: it never becomes a key or another hole.
+
+The Apps page lists the Member's own Apps and those shared with the Org; the `app_list` frame keeps it live. Opening an App frames its page from a signed, ten-minute link, under a policy that gives the page an opaque origin and no channel out: no fetch or socket, no remote image, no popup, no form target, no navigation of the app. Scripts, styles and fonts load from three public CDNs and Google Fonts. Guild puts a bridge script first in the page; `guild.call(name, params)` posts to the framing client, which calls the function route with the viewer's session and posts the result back. The client answers only its own frame's window.
+
+Every call acts for the viewer: their Integration audience ceilings (the script rule of 002), the Org's curation, `admin`-class tools for admins only, and the `integration.tool_called` event with `via: "app"`, the App and the function. A call whose tool is `write`- or `admin`-class or curated `always_ask` needs the viewer's yes in Guild's own dialog, which shows the function, the tool and the parameters; the server refuses such a call without it. One Member may call one App at most 120 times a minute, and a result over 4 MiB is refused.
+
+The owner shares or unshares an App. The owner, or an admin for a shared App, deletes it.
+
 ## Org prompts
 
 An admin can replace two built-in prompts, each up to 10,000 characters; an empty value restores the default:
@@ -154,7 +168,9 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 | Rejected | Reason |
 | --- | --- |
 | A model choice per Thread | The model belongs to the Agent (see 001) |
-| Generated UI that calls Tools from the block (OpenUI `Query`/`Mutation`) | It would run Tools outside a Turn, past Approvals and exec policy; a button asks the Agent instead |
+| Generated UI that calls Tools from the block (OpenUI `Query`/`Mutation`) | It would run Tools outside a Turn, past Approvals and exec policy; a button asks the Agent instead. Apps call Tools outside a Turn only through reviewed-at-publish data functions, as the viewer, with the viewer's confirmation for anything that writes |
+| An App calling any Tool with any arguments | Untrusted page code would choose the call; a data function fixes the tool and the argument shape, and the page fills bounded holes |
+| An App acting as its author | A shared App would hand the author's Integration reach to everyone who opens it |
 | The vendor's hosted gateway or chat client for Generated UI | Org traffic stays on the Org gateway, and the Thread stays on the member socket |
 | Showing provider model ids | Members see the Org's aliases, and the id stays a wire identifier |
 | Vendor tool names for search and fetch | Traits keep one name across vendors |
@@ -162,6 +178,9 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 | Removing unmanaged skill folders on a Machine | Only folders the sync wrote, marked by their provenance file, are its to remove |
 
 ## Open questions
+
+- **App review.** Sharing an App needs no review: it never widens anyone's reach and its writes ask each viewer. An admin approval before `org` visibility, like a Registry item's, is the next gate if Apps start to matter.
+- **App channels the policy cannot close.** WebRTC and DNS prefetch can carry data out of a page in some browsers whatever its policy says. The page's data is what the viewer may read anyway.
 
 - **Skill scope.** Installs and pins are per Member, so two Members using one shared Agent may get different Skills from it. The alternative is a per-Agent skill set (`selected` or `all`), like the tool allowlist.
 - **Bundle trust.** Registry bundles are content-addressed but not signed. Only desktop releases are signed.

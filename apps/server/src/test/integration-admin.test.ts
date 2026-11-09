@@ -13,6 +13,9 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { InjectPayload } from "light-my-request";
 import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
+import { AppStore } from "../platform/store/apps.js";
+import { APP_CSP, APP_BRIDGE } from "../platform/http/apps.js";
+import { parseAppFunctions } from "../platform/domain/app-functions.js";
 
 const PASSWORD = "hunter227";
 const CAPTURE = JSON.parse(
@@ -176,7 +179,7 @@ function mcpUrl(): string {
 }
 
 async function call(
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   url: string,
   token?: string,
   payload?: unknown,
@@ -924,5 +927,111 @@ describe("GET/PUT /api/v1/me/approval", () => {
     const badOverrides = await call("PUT", "/api/v1/me/approval", e.memberToken, { overrides: [] });
     expect(badOverrides.statusCode).toBe(400);
     expect(JSON.parse(badOverrides.body)).toEqual(JSON.parse(CAPTURE.approval_put_bad_overrides.body));
+  });
+});
+
+describe("Apps: data functions run as the viewer", () => {
+  let appId: string;
+  let memberId: string;
+  const pageHtml = "<!doctype html><html><head><title>Search</title></head><body>hi</body></html>";
+
+  beforeAll(async () => {
+    await seedIntegration("searxng", { base_url: connectorBase() }, true);
+    // Earlier suites enable other web_search providers; searxng answers it here.
+    await e.env.db.query(
+      "INSERT INTO org_kv (org_id, key, value) VALUES ($1, 'integration_trait_bindings', $2) " +
+        "ON CONFLICT (org_id, key) DO UPDATE SET value = EXCLUDED.value",
+      [e.orgId, JSON.stringify({ web_search: "searxng" })],
+    );
+    const member = await e.env.db.query("SELECT id FROM users WHERE org_id = $1 AND role = 'member'", [e.orgId]);
+    memberId = member.rows[0]!.id as string;
+    const app = await new AppStore(e.env.db).publish({
+      orgId: e.orgId,
+      ownerUserId: memberId,
+      agentId: null,
+      chatId: null,
+      name: "Search board",
+      description: "Web results",
+      html: pageHtml,
+      functions: parseAppFunctions([
+        {
+          name: "search",
+          description: "Search the web",
+          integration: "searxng",
+          tool: "web_search",
+          args: { query: { $param: "q" }, count: 1 },
+          params: { q: { type: "string", required: true, max_length: 100 } },
+        },
+      ]),
+    });
+    appId = app.id;
+  });
+
+  it("lists a private App for its owner only", async () => {
+    const mine = JSON.parse((await call("GET", "/api/v1/apps", e.memberToken)).body) as { items: { id: string }[] };
+    expect(mine.items.map((item) => item.id)).toContain(appId);
+    const theirs = JSON.parse((await call("GET", "/api/v1/apps", e.adminToken)).body) as { items: { id: string }[] };
+    expect(theirs.items.map((item) => item.id)).not.toContain(appId);
+    expect((await call("GET", `/api/v1/apps/${appId}`, e.adminToken)).statusCode).toBe(404);
+  });
+
+  it("shows each function as the viewer may call it", async () => {
+    const res = await call("GET", `/api/v1/apps/${appId}`, e.memberToken);
+    const body = JSON.parse(res.body) as { functions: { name: string; available: boolean; confirm: boolean }[] };
+    expect(body.functions).toEqual([
+      expect.objectContaining({ name: "search", available: true, confirm: false, class: "read" }),
+    ]);
+  });
+
+  it("calls the tool with the bound arguments and audits the call as the App's", async () => {
+    const res = await call("POST", `/api/v1/apps/${appId}/functions/search`, e.memberToken, { params: { q: "guild" } });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = JSON.parse(res.body) as { ok: boolean; content: string };
+    expect(body.ok).toBe(true);
+    expect(body.content).toContain("First result");
+    const audit = await e.env.db.query(
+      "SELECT payload FROM events WHERE kind = 'integration.tool_called' AND payload->>'app_id' = $1",
+      [appId],
+    );
+    expect(audit.rows[0]!.payload).toMatchObject({ via: "app", function: "search", caller: memberId, ok: true });
+  });
+
+  it("refuses parameters the manifest does not allow", async () => {
+    const missing = await call("POST", `/api/v1/apps/${appId}/functions/search`, e.memberToken, { params: {} });
+    expect(missing.statusCode).toBe(400);
+    const extra = await call("POST", `/api/v1/apps/${appId}/functions/search`, e.memberToken, {
+      params: { q: "x", tool: "other" },
+    });
+    expect(extra.statusCode).toBe(400);
+    const unknown = await call("POST", `/api/v1/apps/${appId}/functions/nope`, e.memberToken, { params: {} });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  it("serves the page from a signed link under the App policy, bridge first", async () => {
+    const link = JSON.parse((await call("GET", `/api/v1/apps/${appId}/page_link`, e.memberToken)).body) as {
+      path: string;
+    };
+    const page = await call("GET", link.path);
+    expect(page.statusCode).toBe(200);
+    expect(page.headers["content-security-policy"]).toBe(APP_CSP);
+    expect(page.body.startsWith(`<!doctype html><html><head>${APP_BRIDGE}<title>`)).toBe(true);
+    const forged = await call("GET", link.path.replace(/sig=\d+\./, "sig=9999999999."));
+    expect(forged.statusCode).toBe(401);
+  });
+
+  it("a shared App reaches every member and runs as each viewer", async () => {
+    const shared = await call("PATCH", `/api/v1/apps/${appId}`, e.memberToken, { visibility: "org" });
+    expect(shared.statusCode, shared.body).toBe(200);
+    const theirs = JSON.parse((await call("GET", "/api/v1/apps", e.adminToken)).body) as { items: { id: string }[] };
+    expect(theirs.items.map((item) => item.id)).toContain(appId);
+    const res = await call("POST", `/api/v1/apps/${appId}/functions/search`, e.adminToken, { params: { q: "x" } });
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true });
+    const notOwner = await call("PATCH", `/api/v1/apps/${appId}`, e.adminToken, { visibility: "private" });
+    expect(notOwner.statusCode).toBe(404);
+  });
+
+  it("the owner deletes it", async () => {
+    expect((await call("DELETE", `/api/v1/apps/${appId}`, e.memberToken)).statusCode).toBe(200);
+    expect((await call("GET", `/api/v1/apps/${appId}`, e.memberToken)).statusCode).toBe(404);
   });
 });
