@@ -1,3 +1,15 @@
+## 0.6.83 — Integrations opens from Settings
+
+Pressing the rail's Integrations button on the Settings tab left the reader on
+Settings. A surface owns the whole address, but the patch that opened one kept
+the tab it was opened from, so route state said "settings" while the URL said
+`/integrations`. The settings normalisation then saw that tab, rewrote the
+address back to `/settings/<section>` and dropped the page.
+
+A patch that opens a surface now puts the tab on the chat root, so state and
+URL agree. The settings normalisation also skips a route a surface owns, so a
+surface address is never rewritten as a settings one.
+
 ## 0.6.82 — the preview pane actually renders
 
 0.6.81 shipped a pane that drew a blank page. Two causes. The app's CSP
