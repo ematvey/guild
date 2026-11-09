@@ -432,8 +432,6 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
   const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
   const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-  // A project-bound address implies the Work tab (the parse agrees).
-  const tab = next.tab ?? (projectId ? "work" : route.tab);
   // The skills page is replaced by anything that names a chat or opens a
   // dialog overlay — those are chat-context surfaces. An overlay close
   // (overlay: null) keeps it: the dialog was rendered over the skills page.
@@ -462,6 +460,12 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
       : "chatId" in next || (next.overlay !== undefined && next.overlay !== null) || opensOther || "tab" in next
         ? null
         : route.integrations;
+  // A surface owns the whole address, so the tab is the chat root's — the
+  // parse of a surface URL agrees. Keeping the tab the surface was opened
+  // from would leave route state that the URL does not spell.
+  const onSurface = sk !== null || ag !== null || ig !== null;
+  // A project-bound address implies the Work tab (the parse agrees).
+  const tab = onSurface ? "chats" : (next.tab ?? (projectId ? "work" : route.tab));
   // The scratch composer is chatless: it drops with any open thread,
   // overlay, skills page or agents page, and never rides on Settings.
   const newChat =
@@ -644,7 +648,13 @@ export function canonicalRoute(route: ChatRoute, ctx: RouteContext): RoutePatch 
     }
   }
   if (route.integrations !== null && ctx.role !== "admin") return { ...CHAT_ROOT, tab: "chats" };
-  if (route.tab === "settings" && route.overlay === null && route.skills === null && a === null) {
+  if (
+    route.tab === "settings" &&
+    route.overlay === null &&
+    route.skills === null &&
+    a === null &&
+    route.integrations === null
+  ) {
     const shown = canonicalSettings(route.settingsSection, route.settingsDetail, ctx.role);
     if (shown.section !== route.settingsSection || shown.detail !== route.settingsDetail) {
       return { tab: "settings", settingsSection: shown.section, settingsDetail: shown.detail };

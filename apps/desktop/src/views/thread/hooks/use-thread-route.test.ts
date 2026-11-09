@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyRoutePatch, canonicalRoute, canonicalSurfacePath, parseChatRoute } from "../route";
+import { applyRoutePatch, canonicalRoute, canonicalSurfacePath, parseChatRoute, SURFACE_BASE } from "../route";
+import { INTEGRATIONS_HOME } from "../../integrations/integrations-route";
 import { canonicalSettings } from "../../settings/section-nav";
 import { commitRoute, routePath } from "./use-thread-route";
 
@@ -112,6 +113,19 @@ describe("canonicalRoute", () => {
     expect(fix("/runs/r1", "member")).toBe("/agents");
     expect(fix("/sessions/c1", "member")).toBe("/agents");
     expect(fix("/agents/a1/activity", "member")).toBe("/agents/a1");
+  });
+
+  it("keeps the settings address while a surface opened from it owns the URL", () => {
+    // The rail opens Integrations from the Settings tab: the patch leaves
+    // `tab` on settings while /integrations is the address. Settings
+    // normalisation must not rewrite that route back to /settings/<section>.
+    const route = applyRoutePatch(parseChatRoute("/settings/account", ""), {
+      ...SURFACE_BASE,
+      skills: null,
+      agents: null,
+      integrations: INTEGRATIONS_HOME,
+    });
+    expect(canonicalRoute(route, { role: "admin", hasEngine: true, pathname: "/integrations" })).toBeNull();
   });
 
   it("lands settings on a section the role may open", () => {
