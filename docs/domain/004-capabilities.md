@@ -92,6 +92,10 @@ A Member can add their own MCP servers. Those servers are discovered at every Tu
 
 ## Skills
 
+A Skill's slug, description and body are English. Members read the catalog
+across teams, so one language is the rule. Nothing checks it: the publish
+path validates structure, not language, and the rule holds through review.
+
 ### Publishing
 
 A publish uploads a bundle, which is a `tar.gz` with a manifest. The publish path checks it for traversal and size, stores it under its sha256, and records the version with its `SKILL.md` text and file list. The HTTP route, the skills editor and the `push_skill` tool all publish through this one path.

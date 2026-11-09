@@ -83,6 +83,9 @@ file stays short.
 Skills come from the org catalog. Read one with \`read_skill\` before you use
 it. Publish a local \`skills/<slug>\` tree with \`push_skill\`.
 
+Write a Skill in English: its slug, its description and its body. Members
+read the catalog across teams, so one language is the rule.
+
 ## Tools
 
 Use the relevant skill for tool procedures. Keep local environment notes in
