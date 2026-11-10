@@ -309,7 +309,12 @@ describe("posthog execute", () => {
           JSON.stringify({
             count: 1,
             results: [
-              { key: "new-onboarding", name: "New onboarding", active: true, filters: { groups: [{ rollout_percentage: 25 }] } },
+              {
+                key: "new-onboarding",
+                name: "New onboarding",
+                active: true,
+                filters: { groups: [{ rollout_percentage: 25 }] },
+              },
             ],
           }),
         );

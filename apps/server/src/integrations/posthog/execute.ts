@@ -203,11 +203,7 @@ export async function posthogExecute(
       const id = args["id"];
       const ref = typeof id === "number" ? String(id) : typeof id === "string" ? id.trim() : "";
       if (ref === "") throw new Error("get_dashboard requires id");
-      const body = await posthogJson(
-        config,
-        secrets,
-        projectPath(config, `/dashboards/${encodeURIComponent(ref)}/`),
-      );
+      const body = await posthogJson(config, secrets, projectPath(config, `/dashboards/${encodeURIComponent(ref)}/`));
       const tiles = Array.isArray(body["tiles"]) ? (body["tiles"] as JsonObject[]) : [];
       const lines = [`${text(body["name"]) || "(untitled)"} (id=${text(body["id"])})`];
       const description = text(body["description"]);
@@ -260,7 +256,7 @@ export async function posthogExecute(
           const properties = (p["properties"] ?? {}) as JsonObject;
           const email = text(properties["email"]);
           const distinctIds = Array.isArray(p["distinct_ids"]) ? (p["distinct_ids"] as unknown[]).map(text) : [];
-          const head = email !== "" ? email : distinctIds[0] ?? text(p["uuid"]);
+          const head = email !== "" ? email : (distinctIds[0] ?? text(p["uuid"]));
           const identified = p["is_identified"] === true ? "identified" : "anonymous";
           return `${head} | ${identified} | last_seen=${text(p["last_seen_at"]) || "-"} | uuid=${text(p["uuid"])}`;
         })
