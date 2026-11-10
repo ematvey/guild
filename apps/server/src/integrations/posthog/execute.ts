@@ -37,7 +37,7 @@ export function posthogProject(config: JsonObject): string {
 }
 
 /** One JSON request against the project API. */
-async function posthogJson(
+export async function posthogJson(
   config: JsonObject,
   secrets: [string, string][],
   path: string,

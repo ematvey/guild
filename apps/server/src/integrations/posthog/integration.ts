@@ -1,6 +1,4 @@
-import { posthogBase, posthogExecute, posthogProject } from "./execute.js";
-import { PROBE_TIMEOUT_MS, probe } from "@guild/integration-sdk";
-import { fetchTimeout, secret } from "../shared.js";
+import { posthogBase, posthogExecute, posthogJson, posthogProject } from "./execute.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { apiTool } from "@guild/integration-sdk";
@@ -162,13 +160,11 @@ const plugin: IntegrationPlugin = {
     posthogProject(config);
   },
   async testConnection(config: JsonObject, secrets) {
-    await probe(
-      fetch(
-        `${posthogBase(config)}/api/projects/${posthogProject(config)}/`,
-        fetchTimeout(PROBE_TIMEOUT_MS, { headers: { authorization: `Bearer ${secret(secrets, "api_key")}` } }),
-      ),
-      "posthog",
-    );
+    // The project read is the smallest call that proves the key, the project
+    // and the instance belong together. A refusal carries the reason in its
+    // body ("API key missing required scope 'project:read'"), so the request
+    // reports the body and not just the status.
+    await posthogJson(config, secrets, `/api/projects/${posthogProject(config)}/`);
   },
   execute: posthogExecute,
 };

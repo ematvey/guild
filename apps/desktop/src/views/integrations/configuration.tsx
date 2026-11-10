@@ -222,7 +222,16 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
   const stored = secretsRes.data?.secrets ?? null;
 
   const dirty = JSON.stringify(form) !== JSON.stringify(initial) || Object.values(secretDraft).some((v) => v !== "");
-  const patchDraft = (name: string, value: unknown) => setForm((f) => ({ ...f, draft: { ...f.draft, [name]: value } }));
+  // A save error names the field that failed; the next keystroke may fix it,
+  // so editing clears the message instead of leaving a stale verdict.
+  const patchDraft = (name: string, value: unknown) => {
+    setError(null);
+    setForm((f) => ({ ...f, draft: { ...f.draft, [name]: value } }));
+  };
+  const patchSecret = (name: string, value: string) => {
+    setError(null);
+    setSecretDraft((d) => ({ ...d, [name]: value }));
+  };
 
   const settingFields = fields.filter((f) => f.kind !== "secret");
   const secretFields: FieldSpec[] = [
@@ -340,7 +349,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
                     spellCheck={false}
                     placeholder={placeholder}
                     value={value}
-                    onChange={(e) => setSecretDraft((d) => ({ ...d, [f.name]: e.target.value }))}
+                    onChange={(e) => patchSecret(f.name, e.target.value)}
                   />
                 ) : (
                   <Input
@@ -351,7 +360,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
                     spellCheck={false}
                     placeholder={placeholder}
                     value={value}
-                    onChange={(e) => setSecretDraft((d) => ({ ...d, [f.name]: e.target.value }))}
+                    onChange={(e) => patchSecret(f.name, e.target.value)}
                   />
                 )}
               </FieldRow>
