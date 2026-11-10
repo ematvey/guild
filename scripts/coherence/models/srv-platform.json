@@ -566,6 +566,16 @@
    "role": "domain"
   },
   {
+   "where": "apps/server/src/integrations/posthog/execute.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
+   "where": "apps/server/src/integrations/posthog/integration.ts",
+   "concept": "integration",
+   "role": "domain"
+  },
+  {
    "where": "apps/server/src/integrations/searxng/execute.ts",
    "concept": "integration",
    "role": "domain"

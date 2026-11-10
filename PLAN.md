@@ -1,3 +1,16 @@
+## 0.6.87 — PostHog joins the shop
+
+PostHog is a built-in Integration. One row points at one project: the
+instance URL, the numeric project id, and a personal API key. The project id
+is part of every request path, so a wrong id fails or reads its own project,
+never a neighbour; the key carries the scopes, and the named tools only read.
+
+The tools answer product questions: `query` runs HogQL over events and
+persons, `list_insights`/`get_insight` and `list_dashboards`/`get_dashboard`
+read the saved work, `list_feature_flags` shows the rollout, and
+`search_persons` finds one person. `api` is the generic project API call.
+Setup, scopes and the failure texts are in the plugin README.
+
 ## 0.6.86 — Access lists: one way to say who may read and edit
 
 Agents and Apps now answer "who may reach this" the same way: one list of

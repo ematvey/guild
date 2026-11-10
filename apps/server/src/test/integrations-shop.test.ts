@@ -10,6 +10,7 @@ import { BUILTINS, builtinByName } from "../integrations/loader.js";
 import { TRAIT_BINDINGS_KEY } from "../integrations/connectors.js";
 import { resolveIntegrations } from "../integrations/plugins.js";
 import { grafanaExecute } from "../integrations/grafana/execute.js";
+import { posthogExecute } from "../integrations/posthog/execute.js";
 
 const SECRETS: [string, string][] = [["token", "glsa_test"]];
 
@@ -55,6 +56,30 @@ describe("integration catalog", () => {
       "query_logs",
       "query_metrics",
     ]);
+  });
+});
+
+describe("posthog", () => {
+  it("ships the project tools", async () => {
+    const posthog = builtinByName("posthog")!;
+    expect(posthog.categories).toEqual(["analytics"]);
+    expect(
+      (await posthog.toolSpecs({ base_url: "https://posthog.example.test", project_id: 7 })).map((t) => t.name).sort(),
+    ).toEqual([
+      "api",
+      "get_dashboard",
+      "get_insight",
+      "list_dashboards",
+      "list_feature_flags",
+      "list_insights",
+      "query",
+      "search_persons",
+    ]);
+  });
+
+  it("rejects a config without a numeric project id", async () => {
+    const posthog = builtinByName("posthog")!;
+    await expect(posthog.toolSpecs({ base_url: "https://posthog.example.test" })).rejects.toThrow(/project_id/);
   });
 });
 
@@ -221,5 +246,140 @@ describe("grafana execute", () => {
     await expect(
       grafanaExecute(config(), "query_metrics", { query: "up", datasource: "LOKI1" }, SECRETS, null),
     ).rejects.toThrow(/not prometheus/);
+  });
+});
+
+describe("posthog execute", () => {
+  let server: Server;
+  let base = "";
+  const calls: string[] = [];
+  const keys: (string | undefined)[] = [];
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      calls.push(`${req.method ?? "GET"} ${req.url ?? ""}`);
+      keys.push(req.headers.authorization);
+      const url = req.url ?? "";
+      res.setHeader("content-type", "application/json");
+      if (url === "/api/projects/7/query/") {
+        res.end(JSON.stringify({ columns: ["event", "count()"], results: [["$pageview", 12]], error: null }));
+        return;
+      }
+      if (url.startsWith("/api/projects/7/insights/?")) {
+        res.end(
+          JSON.stringify({
+            count: 1,
+            results: [{ id: 3, short_id: "abc123", name: "Signup funnel", derived_name: null }],
+          }),
+        );
+        return;
+      }
+      if (url.startsWith("/api/projects/7/insights/abc123/")) {
+        res.end(
+          JSON.stringify({
+            id: 3,
+            short_id: "abc123",
+            name: "Signup funnel",
+            description: "signups per step",
+            tags: ["growth"],
+            query: { kind: "InsightVizNode", source: { kind: "FunnelsQuery" } },
+          }),
+        );
+        return;
+      }
+      if (url.startsWith("/api/projects/7/dashboards/?")) {
+        res.end(JSON.stringify({ count: 1, results: [{ id: 2, name: "Growth", description: "weekly growth" }] }));
+        return;
+      }
+      if (url.startsWith("/api/projects/7/dashboards/2/")) {
+        res.end(
+          JSON.stringify({
+            id: 2,
+            name: "Growth",
+            tiles: [
+              { insight: { id: 3, short_id: "abc123", name: "Signup funnel" }, text: null },
+              { insight: null, text: { body: "start here" } },
+            ],
+          }),
+        );
+        return;
+      }
+      if (url.startsWith("/api/projects/7/feature_flags/?")) {
+        res.end(
+          JSON.stringify({
+            count: 1,
+            results: [
+              { key: "new-onboarding", name: "New onboarding", active: true, filters: { groups: [{ rollout_percentage: 25 }] } },
+            ],
+          }),
+        );
+        return;
+      }
+      if (url.startsWith("/api/projects/7/persons/?")) {
+        res.end(
+          JSON.stringify({
+            results: [
+              {
+                uuid: "p-1",
+                is_identified: true,
+                last_seen_at: "2026-11-01T00:00:00Z",
+                distinct_ids: ["user@example.test"],
+                properties: { email: "user@example.test" },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ detail: "Not found." }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const config = () => ({ base_url: base, project_id: 7 });
+  const secrets: [string, string][] = [["api_key", "phx_test"]];
+
+  it("runs a HogQL query and reads the answer as a table", async () => {
+    const out = await posthogExecute(config(), "query", { query: "select event, count() from events" }, secrets, null);
+    expect(out.content).toBe("event | count()\n$pageview | 12");
+    expect(keys.every((k) => k === "Bearer phx_test")).toBe(true);
+  });
+
+  it("lists insights and reads one by short_id", async () => {
+    const list = await posthogExecute(config(), "list_insights", { query: "signup" }, secrets, null);
+    expect(list.content).toContain("Signup funnel | id=3 | short_id=abc123");
+    const one = await posthogExecute(config(), "get_insight", { id: "abc123" }, secrets, null);
+    expect(one.content).toContain("kind=FunnelsQuery");
+    expect(one.content).toContain("tags: growth");
+  });
+
+  it("reads a dashboard with its insights", async () => {
+    const out = await posthogExecute(config(), "get_dashboard", { id: 2 }, secrets, null);
+    expect(out.content).toContain("Growth (id=2)");
+    expect(out.content).toContain("- Signup funnel | id=3 | short_id=abc123");
+    expect(out.content).toContain("text tiles: 1");
+  });
+
+  it("lists feature flags with their rollout", async () => {
+    const out = await posthogExecute(config(), "list_feature_flags", {}, secrets, null);
+    expect(out.content).toBe("new-onboarding | active | rollout=25% | New onboarding");
+  });
+
+  it("finds a person by search term", async () => {
+    const out = await posthogExecute(config(), "search_persons", { search: "user@example.test" }, secrets, null);
+    expect(out.content).toContain("user@example.test | identified");
+    expect(calls.some((c) => c.includes("search=user%40example.test"))).toBe(true);
+  });
+
+  it("reports the vendor error text on a bad query", async () => {
+    await expect(
+      posthogExecute({ base_url: base, project_id: 9 }, "query", { query: "select 1" }, secrets, null),
+    ).rejects.toThrow(/posthog 404 on \/api\/projects\/9\/query\//);
   });
 });

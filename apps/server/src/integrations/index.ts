@@ -9,6 +9,7 @@ import firecrawl from "./firecrawl/integration.js";
 import googleWorkspace from "./google_workspace/integration.js";
 import hubspot from "./hubspot/integration.js";
 import langfuse from "./langfuse/integration.js";
+import posthog from "./posthog/integration.js";
 import atlassian from "./atlassian/integration.js";
 import slack from "./slack/integration.js";
 import github from "./github/integration.js";
@@ -23,6 +24,7 @@ export const PLUGINS: GuildPlugin[] = [
   googleWorkspace,
   hubspot,
   langfuse,
+  posthog,
   atlassian,
   slack,
   github,
