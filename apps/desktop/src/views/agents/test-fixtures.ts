@@ -1,7 +1,12 @@
 // Whole wire rows for tests: each factory fills every field the contract
 // requires, and a test overrides only what it is about.
 
-import type { Agent, AgentRoutine, AgentRun, AgentThread } from "@guild/wire/rest";
+import type {
+  Agent,
+  AgentRoutine,
+  AgentRun,
+  AgentThread,
+} from "@guild/wire/rest";
 
 const AT = "2026-11-01T00:00:00Z";
 
@@ -24,6 +29,7 @@ export function makeAgent(patch: Partial<Agent> = {}): Agent {
     resources: {},
     status: "active",
     is_personal: false,
+    can_manage: false,
     team_ids: [],
     integrations: [],
     integration_warnings: [],

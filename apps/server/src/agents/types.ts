@@ -5,24 +5,29 @@ import type { AgentThreadType } from "../platform/domain/thread-type.js";
 import type { AgentIntegrationEntry } from "../platform/domain/integration-access.js";
 
 export type { AgentThreadType };
-export type AgentVisibility = "private" | "team" | "org";
+export type AgentVisibility = "private" | "org";
 /** An agent access role: `owner` manages and uses (the agent's owner and
- *  org admins), `user` uses (a direct or team grant). Grant rows store
- *  `user`; any other stored role grants nothing. */
-export type AgentRole = "owner" | "user";
-
-/** The one role a grant row confers. */
-export const GRANT_ROLE = "user" satisfies AgentRole;
+ *  org admins), `editor` manages it through an `edit` entry, `user` uses it
+ *  through a `read` entry or its org visibility. */
+export type AgentRole = "owner" | "editor" | "user";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 
-export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "silent" | "skipped" | "cancelled";
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "silent"
+  | "skipped"
+  | "cancelled";
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 export type AgentRoutineKind = "cron" | "once";
 export type AgentRoutineContext = "isolated";
 /** Where a routine run's send_message lands: appended to the routine's one
  *  conversation with the user, or a new conversation per message. */
 export type AgentRoutineDelivery = "thread" | "new_chat";
-export type AgentRoutineOccurrenceStatus = "pending" | "claimed" | "done" | "failed" | "skipped";
+export type AgentRoutineOccurrenceStatus =
+  "pending" | "claimed" | "done" | "failed" | "skipped";
 
 /** Built-in agent tools. Integration/MCP tool names are added by the runtime
  *  on top of this union. */
@@ -108,7 +113,11 @@ export interface Agent {
   status: AgentStatus;
   /** The user's personal agent: one per user, always private, never deleted. */
   is_personal: boolean;
-  /** Teams granted use of a `team`-visibility agent. */
+  /** The viewer manages this agent: the owner, an admin, or an `edit` entry.
+   *  Set by the viewer-scoped reads; false on org-wide rows. */
+  can_manage: boolean;
+  /** Teams granted this agent, at any level: the audience the Integration
+   *  warnings read. */
   team_ids?: string[];
   /** The Integrations this agent's Turns see, each with its class ceiling. */
   integrations: AgentIntegrationEntry[];

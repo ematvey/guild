@@ -1,12 +1,26 @@
-import { ArrowRight, Clock, FileText, MessageSquare, Pencil, Plus, Wrench } from "lucide-react";
+import {
+  ArrowRight,
+  Clock,
+  FileText,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Wrench,
+} from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { relativeTime } from "../../lib/relative-time";
 import { count } from "../../lib/format";
-import { createAgentThread, sendAgentTurn, type Agent, type AgentRoutine, type AgentThread } from "./agents-api";
+import {
+  createAgentThread,
+  sendAgentTurn,
+  type Agent,
+  type AgentRoutine,
+  type AgentThread,
+} from "./agents-api";
 import {
   AGENT_TABS,
   DEFAULT_ACTIVITY_FILTERS,
-  VISIBILITY_LABEL,
+  agentAccessLabel,
   type ActivityFilters,
   type AgentTab,
   type AgentsRoute,
@@ -38,16 +52,8 @@ export interface Viewer {
   role: string;
 }
 
-export function canManageAgent(agent: Agent, viewer: Viewer): boolean {
-  if (viewer.role === "admin" || viewer.role === "owner") return true;
-  const email = viewer.email.toLowerCase();
-  return (
-    (agent.owner_email ?? "").toLowerCase() === email ||
-    (agent.owner_label ?? "").toLowerCase() === email ||
-    (viewer.displayName !== undefined &&
-      viewer.displayName !== null &&
-      (agent.owner_label ?? "") === viewer.displayName)
-  );
+export function canManageAgent(agent: Agent): boolean {
+  return agent.can_manage;
 }
 
 export function AgentPage({
@@ -75,14 +81,22 @@ export function AgentPage({
   // member may see, so an edit, archive or visibility change repaints here.
   const agents = useAgentList();
   const agent = agents?.find((row) => row.id === agentId) ?? null;
-  const error = agents !== null && agent === null ? "This agent does not exist or is not shared with you." : null;
+  const error =
+    agents !== null && agent === null
+      ? "This agent does not exist or is not shared with you."
+      : null;
 
-  const manage = agent !== null && canManageAgent(agent, viewer);
+  const manage = agent !== null && canManageAgent(agent);
 
   const setTab = (next: AgentTab) => {
     onNavigate(
       next === "activity"
-        ? { view: "agent", agentId, tab: next, filters: DEFAULT_ACTIVITY_FILTERS }
+        ? {
+            view: "agent",
+            agentId,
+            tab: next,
+            filters: DEFAULT_ACTIVITY_FILTERS,
+          }
         : { view: "agent", agentId, tab: next },
     );
   };
@@ -140,7 +154,11 @@ export function AgentPage({
           variant="bar"
           title="Agent"
           actions={
-            <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "directory" })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onNavigate({ view: "directory" })}
+            >
               Agents
             </Button>
           }
@@ -168,7 +186,10 @@ export function AgentPage({
         variant="bar"
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <AgentGlyph name={agent.name} className="size-7 rounded-md text-3xs" />
+            <AgentGlyph
+              name={agent.name}
+              className="size-7 rounded-md text-3xs"
+            />
             <span className="truncate">{agent.name}</span>
             <AgentStatusBadge status={agent.status} />
           </span>
@@ -177,7 +198,7 @@ export function AgentPage({
           <span className="flex flex-wrap items-center gap-1.5">
             <span>{agent.owner_label ?? "Unknown owner"}</span>
             <span>·</span>
-            <VisibilityBadge visibility={agent.visibility} />
+            <VisibilityBadge agent={agent} />
             <span>·</span>
             <ModelName id={agent.model} alias={agent.model_alias} />
             <span>·</span>
@@ -197,29 +218,57 @@ export function AgentPage({
                 New thread
               </Button>
             )}
-            <AgentActions agent={agent} manage={manage} onDeleted={() => onNavigate({ view: "directory" })} />
+            <AgentActions
+              agent={agent}
+              manage={manage}
+              onDeleted={() => onNavigate({ view: "directory" })}
+            />
           </>
         }
         tabs={
           <TabBar
             label="Agent sections"
-            tabs={viewer.role === "admin" ? AGENT_TABS : AGENT_TABS.filter(([id]) => id !== "activity")}
+            tabs={
+              viewer.role === "admin"
+                ? AGENT_TABS
+                : AGENT_TABS.filter(([id]) => id !== "activity")
+            }
             value={tab}
             onChange={setTab}
           />
         }
       />
       {tab === "threads" && threadId ? (
-        <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
+        <ThreadList
+          agent={agent}
+          onNavigate={onNavigate}
+          onNewThread={newThread}
+          onOpenChat={onOpenChat}
+        />
       ) : tab === "files" ? (
-        <AgentFiles agentId={agent.id} filePath={filePath} onNavigate={onNavigate} onOpenChat={onOpenChat} />
+        <AgentFiles
+          agentId={agent.id}
+          filePath={filePath}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
       ) : (
         <PageBody>
           {tab === "overview" && (
-            <AgentOverview agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
+            <AgentOverview
+              agent={agent}
+              onNavigate={onNavigate}
+              onNewThread={newThread}
+              onOpenChat={onOpenChat}
+            />
           )}
           {tab === "threads" && (
-            <ThreadList agent={agent} onNavigate={onNavigate} onNewThread={newThread} onOpenChat={onOpenChat} />
+            <ThreadList
+              agent={agent}
+              onNavigate={onNavigate}
+              onNewThread={newThread}
+              onOpenChat={onOpenChat}
+            />
           )}
           {tab === "routines" && (
             <AgentRoutines
@@ -237,7 +286,10 @@ export function AgentPage({
               agentId={agent.id}
               filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
               onFiltersChange={(next, options) =>
-                onNavigate({ view: "agent", agentId, tab: "activity", filters: next }, options)
+                onNavigate(
+                  { view: "agent", agentId, tab: "activity", filters: next },
+                  options,
+                )
               }
               onNavigate={onNavigate}
               onOpenChat={onOpenChat}
@@ -274,7 +326,11 @@ function AgentOverview({
   const runs = runSlice.rows;
   const recent = (threads ?? []).slice(0, 3);
   const recentRuns = [...(runs ?? [])]
-    .sort((a, b) => Date.parse(b.started_at ?? b.created_at) - Date.parse(a.started_at ?? a.created_at))
+    .sort(
+      (a, b) =>
+        Date.parse(b.started_at ?? b.created_at) -
+        Date.parse(a.started_at ?? a.created_at),
+    )
     .slice(0, 4);
 
   return (
@@ -292,7 +348,9 @@ function AgentOverview({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "files" })}
+              onClick={() =>
+                onNavigate({ view: "agent", agentId: agent.id, tab: "files" })
+              }
             >
               <Pencil />
               Edit files
@@ -300,14 +358,21 @@ function AgentOverview({
           }
         >
           <p className="text-sm leading-relaxed text-muted-foreground">
-            The agent reads these files at the start of each thread and can edit them itself. Changes apply on the next
-            turn.
+            The agent reads these files at the start of each thread and can edit
+            them itself. Changes apply on the next turn.
           </p>
         </Section>
 
-        <Section title="Recent threads" description="The default thread is pinned first.">
+        <Section
+          title="Recent threads"
+          description="The default thread is pinned first."
+        >
           {threadSlice.error !== null ? (
-            <ErrorState title="Could not load threads" message={threadSlice.error} onRetry={threadSlice.retry} />
+            <ErrorState
+              title="Could not load threads"
+              message={threadSlice.error}
+              onRetry={threadSlice.retry}
+            />
           ) : threads === null ? (
             <InlineLoading label="Loading threads" />
           ) : recent.length === 0 ? (
@@ -321,14 +386,24 @@ function AgentOverview({
                     onClick={() =>
                       onOpenChat
                         ? onOpenChat(thread.chat_id)
-                        : onNavigate({ view: "agent", agentId: agent.id, tab: "threads" })
+                        : onNavigate({
+                            view: "agent",
+                            agentId: agent.id,
+                            tab: "threads",
+                          })
                     }
                     className="flex w-full items-center gap-2 py-2 text-left text-sm hover:text-foreground"
                   >
                     <MessageSquare className="size-3.5 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-                    {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
-                    <span className="text-xs text-muted-foreground">{relativeTime(thread.last_activity_at)}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {thread.title}
+                    </span>
+                    {thread.is_default && (
+                      <ToneBadge tone="info">Default</ToneBadge>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {relativeTime(thread.last_activity_at)}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -347,7 +422,9 @@ function AgentOverview({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "threads" })}
+              onClick={() =>
+                onNavigate({ view: "agent", agentId: agent.id, tab: "threads" })
+              }
             >
               All threads
               <ArrowRight />
@@ -363,7 +440,13 @@ function AgentOverview({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "activity" })}
+              onClick={() =>
+                onNavigate({
+                  view: "agent",
+                  agentId: agent.id,
+                  tab: "activity",
+                })
+              }
             >
               All activity
               <ArrowRight />
@@ -371,7 +454,11 @@ function AgentOverview({
           }
         >
           {runSlice.error !== null ? (
-            <ErrorState title="Could not load activity" message={runSlice.error} onRetry={runSlice.retry} />
+            <ErrorState
+              title="Could not load activity"
+              message={runSlice.error}
+              onRetry={runSlice.retry}
+            />
           ) : runs === null ? (
             <InlineLoading label="Loading activity" />
           ) : recentRuns.length === 0 ? (
@@ -408,8 +495,8 @@ function AgentOverview({
               </dd>
             </div>
             <div className="flex justify-between gap-2">
-              <dt className="text-muted-foreground">Visibility</dt>
-              <dd>{VISIBILITY_LABEL[agent.visibility]}</dd>
+              <dt className="text-muted-foreground">Access</dt>
+              <dd>{agentAccessLabel(agent)}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">Owner</dt>
@@ -428,7 +515,13 @@ function AgentOverview({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "settings" })}
+              onClick={() =>
+                onNavigate({
+                  view: "agent",
+                  agentId: agent.id,
+                  tab: "settings",
+                })
+              }
             >
               <Wrench />
               Manage
@@ -456,7 +549,9 @@ function AgentOverview({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "files" })}
+              onClick={() =>
+                onNavigate({ view: "agent", agentId: agent.id, tab: "files" })
+              }
             >
               <FileText />
               Browse files
@@ -464,7 +559,13 @@ function AgentOverview({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "routines" })}
+              onClick={() =>
+                onNavigate({
+                  view: "agent",
+                  agentId: agent.id,
+                  tab: "routines",
+                })
+              }
             >
               <Clock />
               Routines

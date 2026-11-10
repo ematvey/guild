@@ -3,9 +3,15 @@
 // the user was. Pure parse/format functions only — the view never keeps
 // navigation in local state.
 
-import type { AgentRunStatus, AgentStatus, AgentTrigger, AgentVisibility } from "@guild/wire/rest";
+import type {
+  AgentRunStatus,
+  AgentStatus,
+  AgentTrigger,
+  AgentVisibility,
+} from "@guild/wire/rest";
 
-export type AgentTab = "overview" | "threads" | "routines" | "files" | "activity" | "settings";
+export type AgentTab =
+  "overview" | "threads" | "routines" | "files" | "activity" | "settings";
 
 export type ActivityTab = "traces" | "calls" | "chats";
 export type ActivityPeriod = "24h" | "7d" | "30d";
@@ -36,8 +42,8 @@ export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
 export type TraceView = "transcript" | "tree" | "timeline";
 
 /** The agent-create wizard's steps, in order. */
-export type CreateStep = "name" | "model" | "tools" | "visibility";
-export const CREATE_STEPS: readonly CreateStep[] = ["name", "model", "tools", "visibility"];
+export type CreateStep = "name" | "model" | "tools";
+export const CREATE_STEPS: readonly CreateStep[] = ["name", "model", "tools"];
 
 export type AgentsRoute =
   | { view: "directory" }
@@ -84,7 +90,10 @@ function filtersFrom(search: string): ActivityFilters {
           ? "chats"
           : tab
         : DEFAULT_ACTIVITY_FILTERS.tab,
-    period: period === "24h" || period === "30d" ? period : DEFAULT_ACTIVITY_FILTERS.period,
+    period:
+      period === "24h" || period === "30d"
+        ? period
+        : DEFAULT_ACTIVITY_FILTERS.period,
     status: params.get("status") ?? DEFAULT_ACTIVITY_FILTERS.status,
     trigger: params.get("trigger") ?? DEFAULT_ACTIVITY_FILTERS.trigger,
     q: params.get("q") ?? DEFAULT_ACTIVITY_FILTERS.q,
@@ -139,13 +148,21 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
-  if (parts[0] === "activity" && parts.length === 1) return { view: "activity", filters: filtersFrom(search) };
-  if (parts[0] === "runs" && parts[1]) return { view: "run", runId: parts[1], ...traceViewFrom(search) };
+  if (parts[0] === "activity" && parts.length === 1)
+    return { view: "activity", filters: filtersFrom(search) };
+  if (parts[0] === "runs" && parts[1])
+    return { view: "run", runId: parts[1], ...traceViewFrom(search) };
   // A turn with no agent run has no run id; its trace id owns its own route.
-  if (parts[0] === "traces" && parts[1]) return { view: "trace", traceId: parts[1], ...traceViewFrom(search) };
+  if (parts[0] === "traces" && parts[1])
+    return { view: "trace", traceId: parts[1], ...traceViewFrom(search) };
   // Old activity chat links used /sessions/<id>; they now resolve to the
   // canonical /chats/<id> address.
-  if ((parts[0] === "chats" || parts[0] === "sessions") && parts[1] && parts[1] !== "new" && parts[1] !== "device")
+  if (
+    (parts[0] === "chats" || parts[0] === "sessions") &&
+    parts[1] &&
+    parts[1] !== "new" &&
+    parts[1] !== "device"
+  )
     return { view: "chat", chatId: parts[1] };
   if (parts[0] !== "agents") return null;
   if (parts.length === 1) return AGENTS_DIRECTORY;
@@ -169,9 +186,17 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
   }
   if (head === "files") {
     const filePath = rest.slice(1).join("/");
-    return filePath ? { view: "agent", agentId, tab: "files", filePath } : { view: "agent", agentId, tab: "files" };
+    return filePath
+      ? { view: "agent", agentId, tab: "files", filePath }
+      : { view: "agent", agentId, tab: "files" };
   }
-  if (head === "activity") return { view: "agent", agentId, tab: "activity", filters: filtersFrom(search) };
+  if (head === "activity")
+    return {
+      view: "agent",
+      agentId,
+      tab: "activity",
+      filters: filtersFrom(search),
+    };
   if (head === "settings") return { view: "agent", agentId, tab: "settings" };
   // An unknown tab segment is the agent root, not a dead URL.
   return { view: "agent", agentId, tab: "overview" };
@@ -183,7 +208,9 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "directory":
       return "/agents";
     case "new":
-      return route.step === undefined || route.step === "name" ? "/agents/new" : `/agents/new/${route.step}`;
+      return route.step === undefined || route.step === "name"
+        ? "/agents/new"
+        : `/agents/new/${route.step}`;
     case "activity":
       return `/activity${filtersSearch(route.filters)}`;
     case "run":
@@ -195,7 +222,8 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "agent": {
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
-      if (route.tab === "routines" && route.routineId) return `${base}/routines/${segment(route.routineId)}`;
+      if (route.tab === "routines" && route.routineId)
+        return `${base}/routines/${segment(route.routineId)}`;
       if (route.tab === "files" && route.filePath)
         return `${base}/files/${route.filePath.split("/").filter(Boolean).map(segment).join("/")}`;
       if (route.tab === "activity")
@@ -212,7 +240,12 @@ export function agentsRouteTab(route: AgentsRoute): AgentTab | null {
 
 /** The rail tab that owns an agents route. */
 export function agentsRailTab(route: AgentsRoute): "agents" | "activity" {
-  if (route.view === "activity" || route.view === "run" || route.view === "trace" || route.view === "chat")
+  if (
+    route.view === "activity" ||
+    route.view === "run" ||
+    route.view === "trace" ||
+    route.view === "chat"
+  )
     return "activity";
   return "agents";
 }
@@ -225,7 +258,9 @@ export function agentTabRoute(agentId: string, tab: AgentTab): AgentsRoute {
 }
 
 /** Breadcrumbs for a workspace path. The root crumb is the workspace. */
-export function fileBreadcrumbs(path: string): { label: string; path: string }[] {
+export function fileBreadcrumbs(
+  path: string,
+): { label: string; path: string }[] {
   const clean = path.replace(/^\/+|\/+$/g, "");
   const out = [{ label: "Workspace", path: "" }];
   if (clean === "") return out;
@@ -257,7 +292,8 @@ export function fileExtension(name: string): string {
 }
 
 /** How the file preview renders a name. */
-export type FilePreviewKind = "text" | "image" | "pdf" | "csv" | "audio" | "video" | "binary";
+export type FilePreviewKind =
+  "text" | "image" | "pdf" | "csv" | "audio" | "video" | "binary";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -319,7 +355,8 @@ const TEXT_EXTENSIONS = new Set([
 /** Preview kind from a file name. Unknown extensions are binary downloads. */
 export function previewKindOf(name: string): FilePreviewKind {
   const ext = fileExtension(name);
-  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"].includes(ext)) return "image";
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"].includes(ext))
+    return "image";
   if (ext === "pdf") return "pdf";
   if (ext === "csv") return "csv";
   if (ext === "tsv") return "csv";
@@ -364,6 +401,15 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
 
 export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   private: "Private",
-  team: "Team",
   org: "Organization",
 };
+
+/** Who can reach an agent, in one word: everyone, the teams it is shared
+ *  with, or the owner alone. */
+export function agentAccessLabel(agent: {
+  visibility: AgentVisibility;
+  team_ids: string[];
+}): string {
+  if (agent.visibility === "org") return VISIBILITY_LABEL.org;
+  return agent.team_ids.length > 0 ? "Shared" : VISIBILITY_LABEL.private;
+}

@@ -13,8 +13,17 @@
 // only when it differs from the one that socket holds: a write another member
 // cannot see sends that member nothing.
 
-import type { AgentGrants, AgentRunStore, AgentStore, AgentThreadStore } from "../agents/store.js";
-import type { Agent as StoreAgent, AgentRoutine as StoreRoutine, AgentRun as StoreRun } from "../agents/types.js";
+import type {
+  AgentGrants,
+  AgentRunStore,
+  AgentStore,
+  AgentThreadStore,
+} from "../agents/store.js";
+import type {
+  Agent as StoreAgent,
+  AgentRoutine as StoreRoutine,
+  AgentRun as StoreRun,
+} from "../agents/types.js";
 import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
 import type { OrgPayload } from "../platform/notify.js";
 import type { IdentityStore } from "../platform/store/identity.js";
@@ -49,7 +58,10 @@ export interface AgentStateDeps {
   readonly trace: Pick<TraceStore, "callCounts">;
   /** Integration audiences: each Agent's warnings and each member's
    *  attachable Integrations. */
-  readonly integrationAccess: Pick<IntegrationAccessStore, "context" | "attachable">;
+  readonly integrationAccess: Pick<
+    IntegrationAccessStore,
+    "context" | "attachable"
+  >;
   /** Installed Integrations' titles and summaries, keyed by slug. */
   integrationDisplay(orgId: string): Promise<Map<string, IntegrationDisplay>>;
 }
@@ -83,16 +95,26 @@ export function agentWire(agent: StoreAgent, access: AccessContext): Agent {
 
 /** A run row on the wire: the joined display names are always present. */
 export function runWire(run: StoreRun): AgentRun {
-  return { ...run, agent_name: run.agent_name ?? null, routine_name: run.routine_name ?? null };
+  return {
+    ...run,
+    agent_name: run.agent_name ?? null,
+    routine_name: run.routine_name ?? null,
+  };
 }
 
 function routineWire(routine: StoreRoutine): AgentRoutine {
-  return { ...routine, last_run: routine.last_run ? runWire(routine.last_run) : null };
+  return {
+    ...routine,
+    last_run: routine.last_run ? runWire(routine.last_run) : null,
+  };
 }
 
 export class AgentStateFeed {
   private readonly chains: KeyedChain;
-  private readonly bursts = new Map<string, { first: number; timer: NodeJS.Timeout }>();
+  private readonly bursts = new Map<
+    string,
+    { first: number; timer: NodeJS.Timeout }
+  >();
   private stopped = false;
 
   constructor(
@@ -136,7 +158,10 @@ export class AgentStateFeed {
     const burst = this.bursts.get(key);
     const first = burst?.first ?? now;
     if (burst !== undefined) clearTimeout(burst.timer);
-    const delay = Math.max(0, Math.min(BURST_QUIET_MS, first + BURST_MAX_MS - now));
+    const delay = Math.max(
+      0,
+      Math.min(BURST_QUIET_MS, first + BURST_MAX_MS - now),
+    );
     const timer = setTimeout(() => {
       this.bursts.delete(key);
       void push();
@@ -175,20 +200,26 @@ export class AgentStateFeed {
   /** `guild_agent_runs`: one run row moved. */
   run({ org_id: orgId, agent_id: agentId, run_id: runId }: OrgPayload): void {
     if (agentId === null || runId === null) return;
-    void this.chains.run(`agent:${agentId}`, "guild_agent_runs", () => this.sendRun(orgId, agentId, runId));
+    void this.chains.run(`agent:${agentId}`, "guild_agent_runs", () =>
+      this.sendRun(orgId, agentId, runId),
+    );
   }
 
   /** `guild_agent_routines`: one agent's routines moved. */
   routines({ org_id: orgId, agent_id: agentId }: OrgPayload): void {
     if (agentId === null) return;
-    void this.chains.run(`agent:${agentId}`, "guild_agent_routines", () => this.sendRoutines(orgId, agentId));
+    void this.chains.run(`agent:${agentId}`, "guild_agent_routines", () =>
+      this.sendRoutines(orgId, agentId),
+    );
   }
 
   /** `guild_agent_threads`: one user's threads with one agent moved. */
   threads({ agent_id: agentId, user_id: userId }: OrgPayload): void {
     if (agentId === null || userId === null) return;
-    void this.chains.run(`threads:${userId}:${agentId}`, "guild_agent_threads", () =>
-      this.sendThreads(userId, agentId),
+    void this.chains.run(
+      `threads:${userId}:${agentId}`,
+      "guild_agent_threads",
+      () => this.sendThreads(userId, agentId),
     );
   }
 
@@ -196,9 +227,15 @@ export class AgentStateFeed {
    *  personal agent exists from here on), the skill catalog and the Apps. */
   connect(orgId: string, userId: string): Promise<void> {
     return Promise.all([
-      this.chains.run(`agents:${orgId}`, "connect", () => this.sendAgentLists(orgId, [userId], true)),
-      this.chains.run(`skills:${orgId}`, "connect", () => this.sendSkillCatalogs(orgId, [userId])),
-      this.chains.run(`apps:${orgId}`, "connect", () => this.sendAppLists(orgId, [userId])),
+      this.chains.run(`agents:${orgId}`, "connect", () =>
+        this.sendAgentLists(orgId, [userId], true),
+      ),
+      this.chains.run(`skills:${orgId}`, "connect", () =>
+        this.sendSkillCatalogs(orgId, [userId]),
+      ),
+      this.chains.run(`apps:${orgId}`, "connect", () =>
+        this.sendAppLists(orgId, [userId]),
+      ),
     ]).then(() => {});
   }
 
@@ -206,10 +243,16 @@ export class AgentStateFeed {
    *  members' visible agent ids and the org's agent rows load in one read
    *  each, whatever the member count; each list keeps the org rows' order.
    *  A member who left the org or was deleted gets nothing. */
-  private async sendAgentLists(orgId: string, userIds: string[], ensurePersonal: boolean): Promise<void> {
+  private async sendAgentLists(
+    orgId: string,
+    userIds: string[],
+    ensurePersonal: boolean,
+  ): Promise<void> {
     const connected = userIds.filter((userId) => this.connected(userId));
     if (connected.length === 0) return;
-    const members = (await this.ctx.identity.getUsers(connected)).filter((user) => user.org_id === orgId);
+    const members = (await this.ctx.identity.getUsers(connected)).filter(
+      (user) => user.org_id === orgId,
+    );
     if (members.length === 0) return;
     if (ensurePersonal) {
       for (const user of members) await this.store.ensurePersonalAgent(user);
@@ -221,12 +264,24 @@ export class AgentStateFeed {
       this.ctx.integrationAccess.context(orgId),
       this.ctx.integrationDisplay(orgId),
     ]);
-    const attachable = await this.ctx.integrationAccess.attachable(orgId, memberIds, (slug) => display.get(slug));
+    const attachable = await this.ctx.integrationAccess.attachable(
+      orgId,
+      memberIds,
+      (slug) => display.get(slug),
+    );
     const wire = rows.map((row) => agentWire(row, access));
     for (const user of members) {
       if (!this.connected(user.id)) continue;
-      const ids = visible.get(user.id);
-      const agents = ids === undefined ? [] : wire.filter((agent) => ids.has(agent.id));
+      const levels = visible.get(user.id);
+      const agents =
+        levels === undefined
+          ? []
+          : wire
+              .filter((agent) => levels.has(agent.id))
+              .map((agent) => ({
+                ...agent,
+                can_manage: levels.get(agent.id) === "edit",
+              }));
       this.sendKeyed(user.id, "agent_list", { type: "agent_list", agents });
       this.sendKeyed(user.id, "integration_access", {
         type: "integration_access",
@@ -235,7 +290,11 @@ export class AgentStateFeed {
     }
   }
 
-  private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {
+  private async sendRun(
+    orgId: string,
+    agentId: string,
+    runId: string,
+  ): Promise<void> {
     const users = this.ctx.hub.memberUsersOfOrg(orgId);
     if (users.length === 0) return;
     const viewers = await this.store.grants.visibleUserIds(agentId, users);
@@ -247,7 +306,8 @@ export class AgentStateFeed {
       return;
     }
     const wire = runWire(run);
-    if (run.finished_at !== null) Object.assign(wire, await this.callCounts(orgId, runId));
+    if (run.finished_at !== null)
+      Object.assign(wire, await this.callCounts(orgId, runId));
     const frame: WsServerMsg = { type: "agent_run", run: wire };
     for (const userId of viewers) this.send(userId, frame);
   }
@@ -255,13 +315,21 @@ export class AgentStateFeed {
   /** A finished run's model and tool call counts, from the same spans the
    *  trace list counts. Unreachable analytics leave the counts out: the
    *  frame still goes, and the client keeps the counts it has. */
-  private async callCounts(orgId: string, runId: string): Promise<{ call_count?: number; tool_count?: number }> {
+  private async callCounts(
+    orgId: string,
+    runId: string,
+  ): Promise<{ call_count?: number; tool_count?: number }> {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), COUNTS_TIMEOUT_MS);
     });
     try {
-      return (await Promise.race([this.ctx.trace.callCounts(orgId, runId), timeout])) ?? {};
+      return (
+        (await Promise.race([
+          this.ctx.trace.callCounts(orgId, runId),
+          timeout,
+        ])) ?? {}
+      );
     } catch {
       return {};
     } finally {
@@ -274,9 +342,16 @@ export class AgentStateFeed {
     if (users.length === 0) return;
     const viewers = await this.store.grants.visibleUserIds(agentId, users);
     if (viewers.length === 0) return;
-    const routines = (await this.store.runs.listRoutines(agentId)).map(routineWire);
-    const frame: WsServerMsg = { type: "agent_routines", agent_id: agentId, routines };
-    for (const userId of viewers) this.sendKeyed(userId, `agent_routines:${agentId}`, frame);
+    const routines = (await this.store.runs.listRoutines(agentId)).map(
+      routineWire,
+    );
+    const frame: WsServerMsg = {
+      type: "agent_routines",
+      agent_id: agentId,
+      routines,
+    };
+    for (const userId of viewers)
+      this.sendKeyed(userId, `agent_routines:${agentId}`, frame);
   }
 
   private async sendThreads(userId: string, agentId: string): Promise<void> {
@@ -289,7 +364,10 @@ export class AgentStateFeed {
     });
   }
 
-  private async sendSkillCatalogs(orgId: string, userIds: string[]): Promise<void> {
+  private async sendSkillCatalogs(
+    orgId: string,
+    userIds: string[],
+  ): Promise<void> {
     const members = userIds.filter((userId) => this.connected(userId));
     if (members.length === 0) return;
     const [items, installs] = await Promise.all([
@@ -297,7 +375,11 @@ export class AgentStateFeed {
       this.ctx.skills.installsForUsers(orgId, members),
     ]);
     for (const userId of members) {
-      this.sendKeyed(userId, "skill_catalog", { type: "skill_catalog", items, installs: installs.get(userId) ?? [] });
+      this.sendKeyed(userId, "skill_catalog", {
+        type: "skill_catalog",
+        items,
+        installs: installs.get(userId) ?? [],
+      });
     }
   }
 
@@ -306,7 +388,10 @@ export class AgentStateFeed {
     if (members.length === 0) return;
     const lists = await this.ctx.apps.listVisible(orgId, members);
     for (const userId of members) {
-      this.sendKeyed(userId, "app_list", { type: "app_list", apps: lists.get(userId) ?? [] });
+      this.sendKeyed(userId, "app_list", {
+        type: "app_list",
+        apps: lists.get(userId) ?? [],
+      });
     }
   }
 
@@ -321,6 +406,7 @@ export class AgentStateFeed {
   /** Sends a whole-value frame to each of the user's sockets that does not
    *  already hold it. */
   private sendKeyed(userId: string, key: string, frame: WsServerMsg): void {
-    for (const sink of this.ctx.hub.memberSinksOfUser(userId)) sendChanged(sink, key, frame);
+    for (const sink of this.ctx.hub.memberSinksOfUser(userId))
+      sendChanged(sink, key, frame);
   }
 }

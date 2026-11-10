@@ -3,7 +3,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Viewer } from "./AgentPage";
-import { Archive, ArchiveRestore, Download, Loader2, MoreHorizontal, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Download,
+  Loader2,
+  MoreHorizontal,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -24,7 +31,13 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@guild/ui/components/select";
 import { modelLabel } from "../../lib/api/models";
 import {
   archiveAgent,
@@ -32,17 +45,19 @@ import {
   exportAgent,
   groupTools,
   listAgentTools,
-  listMyTeams,
   restoreAgent,
   updateAgent,
   type Agent,
   type AgentToolInfo,
-  type TeamOption,
 } from "./agents-api";
-import { VISIBILITY_LABEL, type AgentVisibility } from "./agents-route";
+import { AccessPanel } from "../access/AccessPanel";
 import { Mono, Section } from "./agent-ui";
 import { ModelName, useModelOptions } from "./agent-model";
-import { AgentIntegrationsEditor, CLASS_LABEL, IntegrationWarnings } from "./agent-integrations";
+import {
+  AgentIntegrationsEditor,
+  CLASS_LABEL,
+  IntegrationWarnings,
+} from "./agent-integrations";
 import { useAttachableIntegrations } from "./agents-store";
 import type { AgentIntegration } from "@guild/wire/rest";
 
@@ -61,12 +76,15 @@ export function AgentSettings({
   const [description, setDescription] = useState(agent.description);
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
-  const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
-  const [generativeUi, setGenerativeUi] = useState<boolean>(agent.generative_ui ?? true);
-  const [visibility, setVisibility] = useState<AgentVisibility>(agent.visibility);
-  const [teamIds, setTeamIds] = useState<string[]>(agent.team_ids ?? []);
-  const [teams, setTeams] = useState<TeamOption[]>([]);
-  const [integrations, setIntegrations] = useState<AgentIntegration[]>(agent.integrations);
+  const [toolsMode, setToolsMode] = useState<"selected" | "all">(
+    agent.tools_mode ?? "selected",
+  );
+  const [generativeUi, setGenerativeUi] = useState<boolean>(
+    agent.generative_ui ?? true,
+  );
+  const [integrations, setIntegrations] = useState<AgentIntegration[]>(
+    agent.integrations,
+  );
   const attachable = useAttachableIntegrations();
   const models = useModelOptions();
   const [catalog, setCatalog] = useState<AgentToolInfo[]>([]);
@@ -75,9 +93,6 @@ export function AgentSettings({
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    void listMyTeams()
-      .then(setTeams)
-      .catch(() => setTeams([]));
     void listAgentTools()
       .then(setCatalog)
       .catch(() => setCatalog([]));
@@ -97,13 +112,13 @@ export function AgentSettings({
         tools,
         tools_mode: toolsMode,
         generative_ui: generativeUi,
-        visibility,
-        team_ids: visibility === "team" ? teamIds : [],
         ...(toolsMode === "selected" ? { integrations } : {}),
       });
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the agent.");
+      setError(
+        err instanceof Error ? err.message : "Could not save the agent.",
+      );
     } finally {
       setSaving(false);
     }
@@ -113,7 +128,9 @@ export function AgentSettings({
     return (
       <div className="space-y-4">
         <Section title="Settings">
-          <p className="text-sm text-muted-foreground">Only the owner or an admin can change this agent.</p>
+          <p className="text-sm text-muted-foreground">
+            Only the owner or an admin can change this agent.
+          </p>
         </Section>
         <ReadOnlyConfig agent={agent} />
       </div>
@@ -126,7 +143,11 @@ export function AgentSettings({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="space-y-1.5">
             <span className="text-xs font-medium">Name</span>
-            <Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            <Input
+              value={name}
+              maxLength={80}
+              onChange={(e) => setName(e.target.value)}
+            />
           </label>
           <label className="space-y-1.5">
             <span className="text-xs font-medium">Model</span>
@@ -155,59 +176,14 @@ export function AgentSettings({
               placeholder="What this agent does and when to spawn it."
               onChange={(e) => setDescription(e.target.value)}
             />
-            <span className="text-xs text-muted-foreground">Other agents read this to decide whom to spawn.</span>
+            <span className="text-xs text-muted-foreground">
+              Other agents read this to decide whom to spawn.
+            </span>
           </label>
         </div>
-        <div className="mt-3 space-y-1.5">
-          <span className="text-xs font-medium">Visibility</span>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {(["private", "team", "org"] as AgentVisibility[]).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setVisibility(value)}
-                className={`rounded-lg border px-3 py-2 text-left text-xs outline-none transition-colors ${
-                  visibility === value ? "border-foreground bg-accent" : "border-border hover:bg-accent/50"
-                }`}
-              >
-                <span className="block font-medium">{VISIBILITY_LABEL[value]}</span>
-                <span className="block text-muted-foreground">
-                  {value === "private" ? "Only the owner." : value === "team" ? "Selected teams." : "Every member."}
-                </span>
-              </button>
-            ))}
-          </div>
-          {visibility === "team" && (
-            <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
-              <p className="text-xs font-medium">Teams</p>
-              {teams.length === 0 ? (
-                <p className="text-xs text-muted-foreground">You are not a member of any team yet.</p>
-              ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {teams.map((team) => {
-                    const checked = teamIds.includes(team.id);
-                    return (
-                      <label
-                        key={team.id}
-                        className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            setTeamIds((current) =>
-                              checked ? current.filter((id) => id !== team.id) : [...current, team.id],
-                            )
-                          }
-                        />
-                        <span className="truncate">{team.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+        <div className="mt-4 space-y-2">
+          <span className="text-xs font-medium">Access</span>
+          <AccessPanel kind="agent" id={agent.id} />
         </div>
         <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2">
           <input
@@ -219,7 +195,8 @@ export function AgentSettings({
           <span className="min-w-0">
             <span className="block text-sm font-medium">Generated UI</span>
             <span className="block text-xs text-muted-foreground">
-              Replies can include interactive cards, tables, charts, forms and buttons.
+              Replies can include interactive cards, tables, charts, forms and
+              buttons.
             </span>
           </span>
         </label>
@@ -227,10 +204,18 @@ export function AgentSettings({
 
       <Section
         title="Tools"
-        description={toolsMode === "all" ? "All available tools" : `${tools.length} selected`}
+        description={
+          toolsMode === "all"
+            ? "All available tools"
+            : `${tools.length} selected`
+        }
         action={
           toolsMode === "selected" && catalog.length > 0 ? (
-            <Button variant="outline" size="sm" onClick={() => setTools(catalog.map((t) => t.name))}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTools(catalog.map((t) => t.name))}
+            >
               Select all tools
             </Button>
           ) : undefined
@@ -246,10 +231,13 @@ export function AgentSettings({
               onChange={() => setToolsMode("all")}
             />
             <span className="min-w-0">
-              <span className="block text-sm font-medium">All available tools</span>
+              <span className="block text-sm font-medium">
+                All available tools
+              </span>
               <span className="block text-xs text-muted-foreground">
-                Every built-in tool and every integration an admin makes available to the people who use this
-                agent, at the access the admin grants. Nothing else to set.
+                Every built-in tool and every integration an admin makes
+                available to the people who use this agent, at the access the
+                admin grants. Nothing else to set.
               </span>
             </span>
           </label>
@@ -263,7 +251,9 @@ export function AgentSettings({
             />
             <span className="min-w-0">
               <span className="block text-sm font-medium">Choose tools</span>
-              <span className="block text-xs text-muted-foreground">Only the tools selected below.</span>
+              <span className="block text-xs text-muted-foreground">
+                Only the tools selected below.
+              </span>
             </span>
           </label>
         </div>
@@ -275,19 +265,23 @@ export function AgentSettings({
         {toolsMode === "all" ? (
           <div className="space-y-1.5">
             <p className="text-sm text-muted-foreground">
-              This agent uses every built-in tool and these integrations, as an admin set them up:
+              This agent uses every built-in tool and these integrations, as an
+              admin set them up:
             </p>
             <DerivedIntegrations entries={agent.integrations} />
           </div>
         ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            The org tool catalog did not load. The current allowlist is shown below.
+            The org tool catalog did not load. The current allowlist is shown
+            below.
           </p>
         ) : (
           <div className="space-y-3">
             {groups.map((group) => (
               <div key={group.group} className="space-y-1.5">
-                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{group.group}</p>
+                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {group.group}
+                </p>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {group.tools.map((tool) => {
                     const checked = tools.includes(tool.name);
@@ -311,8 +305,12 @@ export function AgentSettings({
                           }
                         />
                         <span className="min-w-0">
-                          <span className="block text-sm font-medium">{tool.label || tool.name}</span>
-                          <span className="block text-xs text-muted-foreground">{tool.description}</span>
+                          <span className="block text-sm font-medium">
+                            {tool.label || tool.name}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {tool.description}
+                          </span>
                         </span>
                       </label>
                     );
@@ -325,7 +323,10 @@ export function AgentSettings({
         {groups.length === 0 && tools.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {tools.map((tool) => (
-              <span key={tool} className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs">
+              <span
+                key={tool}
+                className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs"
+              >
                 {tool}
               </span>
             ))}
@@ -334,9 +335,15 @@ export function AgentSettings({
       </Section>
 
       {toolsMode === "selected" && (
-        <Section title="Integrations" description={integrations.length === 0 ? "None" : `${integrations.length} added`}>
+        <Section
+          title="Integrations"
+          description={
+            integrations.length === 0 ? "None" : `${integrations.length} added`
+          }
+        >
           <p className="mb-3 text-xs text-muted-foreground">
-            Everyone who can use this agent reaches what is listed here, whatever their own access.
+            Everyone who can use this agent reaches what is listed here,
+            whatever their own access.
           </p>
           <AgentIntegrationsEditor
             value={integrations}
@@ -367,11 +374,14 @@ export function AgentSettings({
       >
         <div className="flex flex-wrap items-center gap-2">
           <AgentActions agent={agent} manage={manage} onDeleted={onDeleted} />
-          <span className="text-xs text-muted-foreground">Archive, restore, export or delete this agent.</span>
+          <span className="text-xs text-muted-foreground">
+            Archive, restore, export or delete this agent.
+          </span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
+            Purge is scheduled after{" "}
+            {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
@@ -385,13 +395,21 @@ export function AgentSettings({
 /** An `all`-tools agent's integrations: what the admin's integration
  *  access gives everyone who uses it. Read-only. */
 function DerivedIntegrations({ entries }: { entries: AgentIntegration[] }) {
-  if (entries.length === 0) return <p className="text-xs text-muted-foreground">No integrations yet.</p>;
+  if (entries.length === 0)
+    return (
+      <p className="text-xs text-muted-foreground">No integrations yet.</p>
+    );
   return (
     <div className="flex flex-wrap gap-1.5">
       {entries.map((entry) => (
-        <span key={entry.slug} className="rounded-md border border-border px-2 py-0.5 text-xs">
+        <span
+          key={entry.slug}
+          className="rounded-md border border-border px-2 py-0.5 text-xs"
+        >
           <span className="font-mono">{entry.slug}</span>{" "}
-          <span className="text-muted-foreground">{CLASS_LABEL[entry.ceiling].toLowerCase()}</span>
+          <span className="text-muted-foreground">
+            {CLASS_LABEL[entry.ceiling].toLowerCase()}
+          </span>
         </span>
       ))}
     </div>
@@ -419,8 +437,14 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
           </dd>
         </div>
         <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">Visibility</dt>
-          <dd>{VISIBILITY_LABEL[agent.visibility]}</dd>
+          <dt className="text-muted-foreground">Access</dt>
+          <dd>
+            {agent.visibility === "org"
+              ? "Everyone in the org"
+              : agent.team_ids.length > 0
+                ? "Shared with teams"
+                : "Only you"}
+          </dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">Generated UI</dt>
@@ -430,7 +454,9 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
           <dt className="text-muted-foreground">Tools</dt>
           <dd className="mt-1 flex flex-wrap gap-1.5">
             {agent.tools_mode === "all" ? (
-              <span className="text-xs">Every built-in tool and integration an admin makes available</span>
+              <span className="text-xs">
+                Every built-in tool and integration an admin makes available
+              </span>
             ) : (
               agent.tools.map((tool) => <Mono key={tool}>{tool}</Mono>)
             )}
@@ -445,10 +471,13 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
               agent.integrations.map((entry) => (
                 <div key={entry.slug}>
                   <span className="text-xs">
-                    <Mono>{entry.slug}</Mono> {CLASS_LABEL[entry.ceiling].toLowerCase()}
+                    <Mono>{entry.slug}</Mono>{" "}
+                    {CLASS_LABEL[entry.ceiling].toLowerCase()}
                   </span>
                   <IntegrationWarnings
-                    warnings={agent.integration_warnings.filter((w) => w.integration === entry.slug)}
+                    warnings={agent.integration_warnings.filter(
+                      (w) => w.integration === entry.slug,
+                    )}
                     title={entry.slug}
                   />
                 </div>
@@ -461,7 +490,15 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
   );
 }
 
-export function AgentActions({ agent, manage, onDeleted }: { agent: Agent; manage: boolean; onDeleted: () => void }) {
+export function AgentActions({
+  agent,
+  manage,
+  onDeleted,
+}: {
+  agent: Agent;
+  manage: boolean;
+  onDeleted: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -508,42 +545,60 @@ export function AgentActions({ agent, manage, onDeleted }: { agent: Agent; manag
         {manage && (
           <>
             {archived ? (
-              <DropdownMenuItem onSelect={() => void act(() => restoreAgent(agent.id))}>
+              <DropdownMenuItem
+                onSelect={() => void act(() => restoreAgent(agent.id))}
+              >
                 <ArchiveRestore className="size-4" />
                 Restore agent
               </DropdownMenuItem>
             ) : (
-              <DropdownMenuItem onSelect={() => void act(() => archiveAgent(agent.id))}>
+              <DropdownMenuItem
+                onSelect={() => void act(() => archiveAgent(agent.id))}
+              >
                 <Archive className="size-4" />
                 Archive agent
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void download()} disabled={exporting}>
+            <DropdownMenuItem
+              onSelect={() => void download()}
+              disabled={exporting}
+            >
               <Download className="size-4" />
               {exporting ? "Preparing export…" : "Export data"}
             </DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setConfirmOpen(true)}>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={() => setConfirmOpen(true)}
+            >
               <Trash2 className="size-4" />
               Delete agent
             </DropdownMenuItem>
           </>
         )}
-        {!manage && <DropdownMenuItem disabled>Owner or admin only</DropdownMenuItem>}
+        {!manage && (
+          <DropdownMenuItem disabled>Owner or admin only</DropdownMenuItem>
+        )}
       </DropdownMenuContent>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The agent stops now and disappears from the directory. Its workspace, threads and runs stay recoverable
-              during the organization&apos;s grace period (30 days by default); after that they are purged. Download an
-              export first if you need the definitions and run history.
+              The agent stops now and disappears from the directory. Its
+              workspace, threads and runs stay recoverable during the
+              organization&apos;s grace period (30 days by default); after that
+              they are purged. Download an export first if you need the
+              definitions and run history.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button variant="outline" onClick={() => void download()} disabled={exporting}>
+            <Button
+              variant="outline"
+              onClick={() => void download()}
+              disabled={exporting}
+            >
               <Download />
               {exporting ? "Preparing…" : "Download export"}
             </Button>
@@ -562,7 +617,9 @@ export function AgentActions({ agent, manage, onDeleted }: { agent: Agent; manag
 
 async function downloadAgentExport(agent: Agent): Promise<void> {
   const bundle = await exportAgent(agent.id);
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+    type: "application/json",
+  });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

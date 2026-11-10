@@ -130,7 +130,8 @@ The later documents explain the terms not introduced above. The **In code** colu
 | Group | Values |
 | --- | --- |
 | Role | admin · member |
-| Agent visibility | private · team · org |
+| Access subject | org · team · user |
+| Access level | read · edit |
 | Agent status | active · archived · deleting |
 | Thread type | user · subagent · routine |
 | Input placement | steer · followUp · write |

@@ -14,7 +14,10 @@ import { applyPlatformMigrations } from "./platform/migrations.js";
 import { ObjectStore } from "./platform/s3.js";
 import { createStores, type PlatformStores } from "./platform/stores.js";
 import { MediaResolver } from "./platform/media-ref.js";
-import { pendingWorkQuery, seedRecoveryBoundary } from "./storage/postgres/queries.js";
+import {
+  pendingWorkQuery,
+  seedRecoveryBoundary,
+} from "./storage/postgres/queries.js";
 import { applyPostgresMigrations } from "./storage/postgres/index.js";
 import { SharedPoolDatabase } from "./chats/durable-mapping.js";
 import { syncSeams } from "./chats/ws-sync.js";
@@ -30,7 +33,10 @@ import { AgentStore } from "./agents/store.js";
 import { AgentScheduler } from "./agents/scheduler.js";
 import { ForkSupervisor } from "./worker/supervisor.js";
 import { NotifyHub } from "./platform/notify.js";
-import { clickhouseFromConfig, type ClickhouseClient } from "./platform/clickhouse.js";
+import {
+  clickhouseFromConfig,
+  type ClickhouseClient,
+} from "./platform/clickhouse.js";
 import { reportMalformedEventRows } from "./hub/protocol.js";
 import { SkillReadSink } from "./platform/skill-reads.js";
 import { UsageSink } from "./platform/usage.js";
@@ -46,7 +52,10 @@ import pino, { type Logger } from "pino";
 /** Every schema step, in order: the platform migrations (which create the
  *  chat ↔ conversation mapping), the durable storage migrations, then the
  *  legacy task boundary the task-failure projection reads. Idempotent. */
-export async function migrateSchema(pool: PlatformPool, log: Logger): Promise<void> {
+export async function migrateSchema(
+  pool: PlatformPool,
+  log: Logger,
+): Promise<void> {
   await applyPlatformMigrations(pool, { log });
   await applyPostgresMigrations(new SharedPoolDatabase(pool));
   await seedRecoveryBoundary(pool);
@@ -67,6 +76,7 @@ export class PlatformContext implements PlatformStores {
   readonly registry: PlatformStores["registry"];
   readonly skills: PlatformStores["skills"];
   readonly apps: PlatformStores["apps"];
+  readonly access: PlatformStores["access"];
   readonly releases: PlatformStores["releases"];
   readonly projects: PlatformStores["projects"];
   readonly teams: PlatformStores["teams"];
@@ -134,7 +144,9 @@ export class PlatformContext implements PlatformStores {
     private readonly log: Logger = pino({ level: "silent" }),
   ) {
     this.secretsKey = masterKeyBytes(config.masterKeyHex);
-    reportMalformedEventRows((error) => log.warn({ err: error }, "thread event row sent unnormalized"));
+    reportMalformedEventRows((error) =>
+      log.warn({ err: error }, "thread event row sent unnormalized"),
+    );
     this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
     this.objects = new ObjectStore(config);
     const stores = createStores(this.pool);
@@ -150,6 +162,7 @@ export class PlatformContext implements PlatformStores {
     this.registry = stores.registry;
     this.skills = stores.skills;
     this.apps = stores.apps;
+    this.access = stores.access;
     this.releases = stores.releases;
     this.projects = stores.projects;
     this.teams = stores.teams;
@@ -168,7 +181,8 @@ export class PlatformContext implements PlatformStores {
       store: this.push,
       lastEventSeq: (chatId) => this.chats.lastEventSeq(chatId),
       readSeq: (userId, chatId) => this.chats.readSeq(userId, chatId),
-      sender: async () => webPushSender(await this.pushKeys(), pushSubject(this.config)),
+      sender: async () =>
+        webPushSender(await this.pushKeys(), pushSubject(this.config)),
       log: (message) => log.warn(message),
     });
     this.hub = new LiveHub();
@@ -204,12 +218,17 @@ export class PlatformContext implements PlatformStores {
     // holds no harness itself; admission routes over IPC.
     this.supervisor =
       config.workerMode === "on"
-        ? new ForkSupervisor(config, log, pendingWorkQuery(this.pool), (call, signal) =>
-            this.machineDispatch.dispatch(call, signal),
+        ? new ForkSupervisor(
+            config,
+            log,
+            pendingWorkQuery(this.pool),
+            (call, signal) => this.machineDispatch.dispatch(call, signal),
           )
         : undefined;
     const placement: TurnPlacement =
-      this.supervisor === undefined ? { kind: "in-process" } : { kind: "workers", supervisor: this.supervisor };
+      this.supervisor === undefined
+        ? { kind: "in-process" }
+        : { kind: "workers", supervisor: this.supervisor };
     this.runtime = new GuildRuntime({
       config,
       pool: this.pool,
@@ -224,8 +243,12 @@ export class PlatformContext implements PlatformStores {
       trace: this.trace,
       usageReports: this.usageReports,
     });
-    this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
-    this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
+    this.supervisor?.setRemoteSubmit((chatId, input) =>
+      this.runtime.submitTurn(chatId, input.orgId, input),
+    );
+    this.runtime.setTurnEnded((chatId, failed) =>
+      this.pushTurnEnded(chatId, failed),
+    );
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: this.agents,
@@ -237,7 +260,8 @@ export class PlatformContext implements PlatformStores {
     });
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
-    this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
+    this.hub.onMachineDisconnected = (_machineId, connId) =>
+      this.machineDispatch.unregisterConnection(connId);
     // Presence flips ride the member socket: the sidebar dot and the
     // machine list move live instead of holding a registry snapshot.
     this.hub.onMachineStatus = (machineId, userId, orgId, online) =>
@@ -309,7 +333,9 @@ export class PlatformContext implements PlatformStores {
 
   /** Resolves a gateway bearer token to the credential the LLM gateway
    *  endpoints meter against (platform/http/auth.ts). */
-  gatewayCredential(req: { headers: Record<string, unknown> }): Promise<GatewayCredential> {
+  gatewayCredential(req: {
+    headers: Record<string, unknown>;
+  }): Promise<GatewayCredential> {
     return gatewayCredential(this, req);
   }
 
@@ -336,17 +362,21 @@ export class PlatformContext implements PlatformStores {
   private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
     const owner = await this.chats.ownerOf(chatId);
     if (owner === null) return;
-    const target = await turnEndPushTarget(this.agents.threads, chatId).catch((error: unknown) => {
-      this.log.warn({ err: error, chatId }, "push target read failed");
-      return null;
-    });
+    const target = await turnEndPushTarget(this.agents.threads, chatId).catch(
+      (error: unknown) => {
+        this.log.warn({ err: error, chatId }, "push target read failed");
+        return null;
+      },
+    );
     if (target === null) return;
     const chat =
       target.title === null
-        ? await this.chats.getChatInOrg(owner.org_id, target.chat_id).catch((error: unknown) => {
-            this.log.warn({ err: error, chatId }, "push title read failed");
-            return null;
-          })
+        ? await this.chats
+            .getChatInOrg(owner.org_id, target.chat_id)
+            .catch((error: unknown) => {
+              this.log.warn({ err: error, chatId }, "push title read failed");
+              return null;
+            })
         : null;
     void this.pushNotifier.turnEnded({
       orgId: owner.org_id,

@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./agents-api", async (original) => ({
   ...(await original<typeof import("./agents-api")>()),
   listAgentTools: vi.fn(async () => []),
-  listMyTeams: vi.fn(async () => []),
 }));
 vi.mock("./agent-model", () => ({
   useModelOptions: () => [{ id: "m1", alias: "Auto" }],
@@ -20,8 +19,13 @@ import { AgentCreate, reachableStep } from "./AgentCreate";
 describe("AgentCreate step address", () => {
   it("replaces a deep link past the empty name step with the name step", async () => {
     const onNavigate = vi.fn();
-    render(<AgentCreate step="visibility" onNavigate={onNavigate} />);
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith({ view: "new", step: "name" }, { replace: true }));
+    render(<AgentCreate step="tools" onNavigate={onNavigate} />);
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith(
+        { view: "new", step: "name" },
+        { replace: true },
+      ),
+    );
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 

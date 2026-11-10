@@ -30,14 +30,25 @@ An admin's read of another Member's Thread is a read only. Every write to a Thre
 
 ## Agents
 
-An Agent is visible to a Member when the Member owns it, when the Member is an admin (every Agent of the Org, personal ones included, for inspection and analytics), or when it is not personal and one of these holds: its visibility is `org`, or its visibility is `team` and one of the Member's Teams holds a grant. Seeing an Agent gives one of two levels:
+An Agent is visible to a Member when the Member owns it, when the Member is an admin (every Agent of the Org, personal ones included, for inspection and analytics), or when it is not personal and its Access list names the Member, names one of the Member's Teams, or shares it with everyone. Seeing an Agent gives one of two levels:
 
 | Level | Who | Allows |
 | --- | --- | --- |
-| manage | The owner, and admins on non-personal Agents | Edit, share, archive, delete and restore the Agent; create and run its Routines |
+| manage | The owner, an admin, and an `edit` entry | Edit the Agent and its Access list, archive, delete and restore it; create and run its Routines |
 | use | Anyone else who sees it | Start Threads with it and spawn it |
 
-A personal Agent is visible to its owner and to admins, and reaches no other Member. The chat composer offers each Member only their own personal Agent and the shared Agents they can use, never another Member's personal Agent. It cannot be made non-private, archived or deleted. An invisible Agent and a missing one answer the same 404.
+A personal Agent is visible to its owner and to admins, and reaches no other Member. Its Access list stays empty.
+
+### Access lists
+
+An Agent and an App answer "who may reach this" the same way: one list of entries, each naming a subject and a level. The subject is everyone in the Org, one Team, or one Member. The level is `read` or `edit`. The owner and an admin always manage the item; an entry never takes that away.
+
+The org entry is always `read`: sharing with everyone never hands out management. Team and Member entries carry either level. An `edit` entry manages the item but cannot delete it — only the owner and an admin delete.
+
+The list is the whole rule. There is no separate visibility flag: an Agent or an App is private when its list is empty, shared when the list names Teams or Members, and org-wide when the list holds the org entry. A new Agent or App starts with an empty list.
+
+A Team entry follows the Team's membership: a Member added to the Team reaches the item at once, and one removed from it loses the item. An invisible item and a missing one answer the same 404. Changing a list needs manage, and one write replaces the whole list.
+ The chat composer offers each Member only their own personal Agent and the shared Agents they can use, never another Member's personal Agent. It cannot be made non-private, archived or deleted. An invisible Agent and a missing one answer the same 404.
 
 Status limits use. Only an `active` Agent starts Runs. Archiving cancels its in-flight Runs. A `deleting` Agent keeps its Threads readable through a grace period (30 days by default), refuses new Threads and Turns with `agent_deleting`, and is purged afterwards. Restore works from `archived` or `deleting`.
 
@@ -133,6 +144,5 @@ An admin reads the whole Org's usage, Runs, traces and conversations. A Member r
 
 - An Agent's Workspace is shared by everyone who uses it, so what one caller's Turn fetches from an Integration and writes there, a later caller can read. The Agent is the unit of access; the audience warnings are the check.
 
-- The schema still allows grant roles other than `user`; such a row grants nothing. Only team grants are written today.
 - The `deleted` Agent status exists in the type, but a purge removes the row instead.
 - Agent `resources` are recorded but not enforced. The sandbox runner applies its own limits.

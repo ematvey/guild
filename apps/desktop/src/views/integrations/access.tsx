@@ -10,11 +10,21 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import type { AgentIntegration } from "@guild/wire/rest";
 import { Button } from "@guild/ui/components/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@guild/ui/components/select";
 import { useCachedGet } from "../settings/use-cached-api";
 import { useAgentList } from "../agents/agents-store";
 import { CLASS_LABEL, IntegrationWarnings } from "../agents/agent-integrations";
-import { agentTabRoute, agentsRoutePath, VISIBILITY_LABEL } from "../agents/agents-route";
+import {
+  agentAccessLabel,
+  agentTabRoute,
+  agentsRoutePath,
+} from "../agents/agents-route";
 import {
   integrationAccessPath,
   putIntegrationAccess,
@@ -40,7 +50,10 @@ function CeilingSelect({
   label: string;
 }) {
   return (
-    <Select value={value} onValueChange={(next) => onChange(next as GrantCeiling)}>
+    <Select
+      value={value}
+      onValueChange={(next) => onChange(next as GrantCeiling)}
+    >
       <SelectTrigger className="w-40" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
@@ -74,14 +87,22 @@ export function AccessTab({
     if (data === null) return;
     setAudience(data.audience);
     setOrgCeiling(data.org_ceiling);
-    setGrants(Object.fromEntries(data.grants.map((grant) => [grant.team_id, grant.ceiling])));
+    setGrants(
+      Object.fromEntries(
+        data.grants.map((grant) => [grant.team_id, grant.ceiling]),
+      ),
+    );
   }, [data]);
 
   const agents = useAgentList();
   const using = useMemo(
     () =>
       (agents ?? [])
-        .filter((agent) => agent.status !== "deleting" && agent.integrations.some((entry) => entry.slug === slug))
+        .filter(
+          (agent) =>
+            agent.status !== "deleting" &&
+            agent.integrations.some((entry) => entry.slug === slug),
+        )
         .sort((a, b) => a.name.localeCompare(b.name)),
     [agents, slug],
   );
@@ -92,12 +113,17 @@ export function AccessTab({
       await putIntegrationAccess(id, {
         audience,
         org_ceiling: orgCeiling,
-        grants: Object.entries(grants).map(([team_id, ceiling]) => ({ team_id, ceiling })),
+        grants: Object.entries(grants).map(([team_id, ceiling]) => ({
+          team_id,
+          ceiling,
+        })),
       });
       toast.success("Access saved", { description: title });
       res.reload();
     } catch (e) {
-      toast.error("Could not save access", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Could not save access", {
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
@@ -111,15 +137,18 @@ export function AccessTab({
     );
   }
 
-  const warned = using.filter((agent) => agent.integration_warnings.some((w) => w.integration === slug)).length;
+  const warned = using.filter((agent) =>
+    agent.integration_warnings.some((w) => w.integration === slug),
+  ).length;
 
   return (
     <div className="space-y-8">
       <section>
         <h2 className="text-lg font-semibold">Who can add it to an agent</h2>
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-          An agent that lists {title} gives it to everyone who can use that agent. The audience decides who may add it,
-          and the highest access they may give. Admins can always add it.
+          An agent that lists {title} gives it to everyone who can use that
+          agent. The audience decides who may add it, and the highest access
+          they may give. Admins can always add it.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
           {AUDIENCES.map(([value, label, hint]) => (
@@ -128,7 +157,9 @@ export function AccessTab({
               type="button"
               onClick={() => setAudience(value)}
               className={`rounded-lg border px-3 py-2 text-left text-xs outline-none transition-colors ${
-                audience === value ? "border-foreground bg-accent" : "border-border hover:bg-accent/50"
+                audience === value
+                  ? "border-foreground bg-accent"
+                  : "border-border hover:bg-accent/50"
               }`}
             >
               <span className="block font-medium">{label}</span>
@@ -139,18 +170,27 @@ export function AccessTab({
         {audience === "org" && (
           <div className="mt-4 flex items-center gap-3">
             <span className="text-sm">Members may give up to</span>
-            <CeilingSelect value={orgCeiling} onChange={setOrgCeiling} label="Highest access for members" />
+            <CeilingSelect
+              value={orgCeiling}
+              onChange={setOrgCeiling}
+              label="Highest access for members"
+            />
           </div>
         )}
         {audience === "team" && (
           <div className="mt-4 divide-y divide-border border-y border-border">
             {data.teams.length === 0 ? (
-              <p className="py-3 text-sm text-muted-foreground">The organization has no teams yet.</p>
+              <p className="py-3 text-sm text-muted-foreground">
+                The organization has no teams yet.
+              </p>
             ) : (
               data.teams.map((team) => {
                 const granted = grants[team.id];
                 return (
-                  <div key={team.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                  <div
+                    key={team.id}
+                    className="flex flex-wrap items-center gap-3 py-2.5"
+                  >
                     <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -170,7 +210,12 @@ export function AccessTab({
                     {granted !== undefined && (
                       <CeilingSelect
                         value={granted}
-                        onChange={(ceiling) => setGrants((current) => ({ ...current, [team.id]: ceiling }))}
+                        onChange={(ceiling) =>
+                          setGrants((current) => ({
+                            ...current,
+                            [team.id]: ceiling,
+                          }))
+                        }
                         label={`Highest access for ${team.name}`}
                       />
                     )}
@@ -184,7 +229,10 @@ export function AccessTab({
           <Button
             size="sm"
             onClick={() => void save()}
-            disabled={saving || (audience === "team" && Object.keys(grants).length === 0)}
+            disabled={
+              saving ||
+              (audience === "team" && Object.keys(grants).length === 0)
+            }
           >
             {saving && <Loader2 className="animate-spin" />}
             Save access
@@ -204,14 +252,24 @@ export function AccessTab({
         {using.length > 0 && (
           <ul className="mt-2 divide-y divide-border border-y border-border">
             {using.map((agent) => {
-              const entry = agent.integrations.find((item) => item.slug === slug) as AgentIntegration;
+              const entry = agent.integrations.find(
+                (item) => item.slug === slug,
+              ) as AgentIntegration;
               return (
                 <li key={agent.id} className="py-2.5">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <a
-                      href={agentsRoutePath(agentTabRoute(agent.id, "settings"))}
+                      href={agentsRoutePath(
+                        agentTabRoute(agent.id, "settings"),
+                      )}
                       onClick={(event) => {
-                        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+                        if (
+                          event.metaKey ||
+                          event.ctrlKey ||
+                          event.shiftKey ||
+                          event.button !== 0
+                        )
+                          return;
                         event.preventDefault();
                         onOpenAgent(agent.id);
                       }}
@@ -220,12 +278,16 @@ export function AccessTab({
                       {agent.name}
                     </a>
                     <span className="text-xs text-muted-foreground">
-                      {agent.is_personal ? "Personal" : VISIBILITY_LABEL[agent.visibility]}
-                      {agent.owner_label ? ` · ${agent.owner_label}` : ""} · {CLASS_LABEL[entry.ceiling].toLowerCase()}
+                      {agent.is_personal ? "Personal" : agentAccessLabel(agent)}
+                      {agent.owner_label
+                        ? ` · ${agent.owner_label}`
+                        : ""} · {CLASS_LABEL[entry.ceiling].toLowerCase()}
                     </span>
                   </div>
                   <IntegrationWarnings
-                    warnings={agent.integration_warnings.filter((w) => w.integration === slug)}
+                    warnings={agent.integration_warnings.filter(
+                      (w) => w.integration === slug,
+                    )}
                     title={title}
                   />
                 </li>

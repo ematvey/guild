@@ -1,6 +1,8 @@
 // The agent rows: create (with the default thread and its chat), the
-// personal agent, visibility-filtered reads, configuration updates and team
-// grants, and the authorization check every agent route and tool runs.
+// personal agent, visibility-filtered reads, and configuration updates, and
+// the authorization check every agent route and tool runs. Access entries
+// live in `agent_access` and are read and written by the shared access
+// store.
 
 import { ApiError } from "../../platform/errors.js";
 import { withTransaction, type PlatformPool } from "../../platform/db.js";
@@ -8,9 +10,20 @@ import { jsonbText } from "../../platform/domain/text.js";
 import { isUuid, uuidv7 } from "../../platform/time.js";
 import type { ChatStore } from "../../platform/store/chats.js";
 import type { UserRow } from "../../platform/store/identity.js";
-import type { Agent, AgentAccess, AgentStatus, AgentToolRef, AgentToolsMode, AgentVisibility } from "../types.js";
-import { DEFAULT_AGENT_TOOLS, GRANT_ROLE } from "../types.js";
-import { visiblePredicate, type AgentGrants } from "./access.js";
+import type {
+  Agent,
+  AgentAccess,
+  AgentStatus,
+  AgentToolRef,
+  AgentToolsMode,
+  AgentVisibility,
+} from "../types.js";
+import { DEFAULT_AGENT_TOOLS } from "../types.js";
+import {
+  editablePredicate,
+  visiblePredicate,
+  type AgentGrants,
+} from "./access.js";
 import { AGENT_COLUMNS, toAgent } from "./rows.js";
 
 export interface CreateAgentInput {
@@ -22,7 +35,6 @@ export interface CreateAgentInput {
   tools?: AgentToolRef[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
-  team_ids?: string[];
 }
 
 export interface UpdateAgentInput {
@@ -34,7 +46,6 @@ export interface UpdateAgentInput {
   tools?: AgentToolRef[];
   visibility?: AgentVisibility;
   resources?: Record<string, unknown>;
-  team_ids?: string[];
 }
 
 /** Which statuses a list returns: active only by default; `includeArchived`
@@ -58,7 +69,9 @@ function statusClause(options: AgentListOptions, params: unknown[]): string {
     params.push(options.status);
     return `a.status = $${params.length}`;
   }
-  return options.includeArchived === true ? "a.status IN ('active', 'archived', 'deleting')" : "a.status = 'active'";
+  return options.includeArchived === true
+    ? "a.status IN ('active', 'archived', 'deleting')"
+    : "a.status = 'active'";
 }
 
 /** The order every agent list returns: newest first. */
@@ -70,12 +83,19 @@ export class AgentCatalog {
     private readonly chats: Pick<ChatStore, "createChatOn">,
     private readonly agentGrants: AgentGrants,
     /** Seeds a new agent's workspace config files; absent: none seeded. */
-    private readonly seedFiles?: (agent: { id: string; org_id: string }) => Promise<unknown>,
+    private readonly seedFiles?: (agent: {
+      id: string;
+      org_id: string;
+    }) => Promise<unknown>,
   ) {}
 
   /** Seeds the workspace config files for a new agent. Best-effort: a
    *  missing volume or a permission error must not fail the create. */
-  private async seedWorkspace(agent: { id: string; org_id: string; name: string }): Promise<void> {
+  private async seedWorkspace(agent: {
+    id: string;
+    org_id: string;
+    name: string;
+  }): Promise<void> {
     if (this.seedFiles === undefined) return;
     try {
       await this.seedFiles(agent);
@@ -104,17 +124,21 @@ export class AgentCatalog {
             input.tools_mode ?? "selected",
             input.visibility ?? "private",
             jsonbText(
-              input.resources === undefined || Object.keys(input.resources).length === 0
+              input.resources === undefined ||
+                Object.keys(input.resources).length === 0
                 ? DEFAULT_AGENT_RESOURCES
                 : input.resources,
             ),
             input.generative_ui ?? true,
           ],
         );
-        if (input.team_ids !== undefined && input.team_ids.length > 0) {
-          await this.replaceTeamGrants(client, user.org_id, id, input.team_ids);
-        }
-        const chat = await this.chats.createChatOn(client, user.org_id, user.id, "Main thread", null);
+        const chat = await this.chats.createChatOn(
+          client,
+          user.org_id,
+          user.id,
+          "Main thread",
+          null,
+        );
         await client.query(
           `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type, is_default)
            VALUES ($1, $2, $3, $4, 'Main thread', false, 'user', true)`,
@@ -123,7 +147,10 @@ export class AgentCatalog {
       });
     } catch (error) {
       if ((error as { code?: string }).code === "23505") {
-        throw ApiError.conflict("name_taken", "you already have an agent with this name");
+        throw ApiError.conflict(
+          "name_taken",
+          "you already have an agent with this name",
+        );
       }
       throw error;
     }
@@ -151,7 +178,10 @@ export class AgentCatalog {
 
   /** Same, addressed by ids: the chat turn path adopts a plain chat without
    *  loading the full user row. */
-  async ensurePersonalAgentFor(orgId: string, userId: string): Promise<Agent | null> {
+  async ensurePersonalAgentFor(
+    orgId: string,
+    userId: string,
+  ): Promise<Agent | null> {
     const find = async (): Promise<Agent | null> => {
       const res = await this.pool.query<Record<string, unknown>>(
         `SELECT ${AGENT_COLUMNS} FROM agents a
@@ -170,7 +200,14 @@ export class AgentCatalog {
       await this.pool.query(
         `INSERT INTO agents (id, org_id, owner_user_id, name, model, tools, tools_mode, visibility, resources, is_personal)
          VALUES ($1, $2, $3, 'Assistant', $4, $5::jsonb, 'all', 'private', $6::jsonb, true)`,
-        [uuidv7(), orgId, userId, model, jsonbText(DEFAULT_AGENT_TOOLS), jsonbText(DEFAULT_AGENT_RESOURCES)],
+        [
+          uuidv7(),
+          orgId,
+          userId,
+          model,
+          jsonbText(DEFAULT_AGENT_TOOLS),
+          jsonbText(DEFAULT_AGENT_RESOURCES),
+        ],
       );
     } catch (error) {
       if ((error as { code?: string }).code !== "23505") throw error;
@@ -185,7 +222,7 @@ export class AgentCatalog {
     const params: unknown[] = [user.org_id, user.role === "admin", user.id];
     const where = `${visiblePredicate("a")} AND ${statusClause(options, params)}`;
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${AGENT_COLUMNS} FROM agents a WHERE ${where} ${LIST_ORDER}`,
+      `SELECT ${AGENT_COLUMNS}, (${editablePredicate("a")}) AS can_manage FROM agents a WHERE ${where} ${LIST_ORDER}`,
       params,
     );
     return res.rows.map(toAgent);
@@ -193,7 +230,10 @@ export class AgentCatalog {
 
   /** Every agent of the org, unfiltered by viewer, in the list's order: the
    *  member socket narrows it per member with `AgentGrants.visibleAgentIds`. */
-  async listForOrg(orgId: string, options: AgentListOptions = {}): Promise<Agent[]> {
+  async listForOrg(
+    orgId: string,
+    options: AgentListOptions = {},
+  ): Promise<Agent[]> {
     const params: unknown[] = [orgId];
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.org_id = $1 AND ${statusClause(options, params)} ${LIST_ORDER}`,
@@ -205,7 +245,7 @@ export class AgentCatalog {
   /** Loads one visible agent; invisible and missing agents are the same 404. */
   async get(user: UserRow, agentId: string): Promise<Agent> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.id = $4 AND ${visiblePredicate("a")}`,
+      `SELECT ${AGENT_COLUMNS}, (${editablePredicate("a")}) AS can_manage FROM agents a WHERE a.id = $4 AND ${visiblePredicate("a")}`,
       [user.org_id, user.role === "admin", user.id, agentId],
     );
     const row = res.rows[0];
@@ -219,7 +259,7 @@ export class AgentCatalog {
   async findVisible(user: UserRow, reference: string): Promise<Agent[]> {
     const match = isUuid(reference) ? "a.id = $4" : "lower(a.name) = lower($4)";
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${AGENT_COLUMNS} FROM agents a
+      `SELECT ${AGENT_COLUMNS}, (${editablePredicate("a")}) AS can_manage FROM agents a
        WHERE ${match} AND ${visiblePredicate("a")}
        ORDER BY a.created_at ASC, a.id ASC`,
       [user.org_id, user.role === "admin", user.id, reference],
@@ -242,12 +282,20 @@ export class AgentCatalog {
     const agent = await this.get(user, agentId);
     const access = await this.access(user, agent);
     if (mode === "manage" ? !access.can_manage : !access.can_use) {
-      throw ApiError.forbidden(mode === "manage" ? "you cannot manage this agent" : "you cannot use this agent");
+      throw ApiError.forbidden(
+        mode === "manage"
+          ? "you cannot manage this agent"
+          : "you cannot use this agent",
+      );
     }
     return { agent, access };
   }
 
-  async update(user: UserRow, agentId: string, patch: UpdateAgentInput): Promise<Agent> {
+  async update(
+    user: UserRow,
+    agentId: string,
+    patch: UpdateAgentInput,
+  ): Promise<Agent> {
     const { agent } = await this.requireAccess(user, agentId, "manage");
     const sets: string[] = [];
     const params: unknown[] = [agent.org_id, agentId];
@@ -258,34 +306,35 @@ export class AgentCatalog {
     if (patch.name !== undefined) add("name", patch.name);
     if (patch.description !== undefined) add("description", patch.description);
     if (patch.tools_mode !== undefined) add("tools_mode", patch.tools_mode);
-    if (patch.generative_ui !== undefined) add("generative_ui", patch.generative_ui);
+    if (patch.generative_ui !== undefined)
+      add("generative_ui", patch.generative_ui);
     if (patch.model !== undefined) add("model", patch.model);
-    if (patch.tools !== undefined) add("tools", jsonbText(patch.tools), "::jsonb");
+    if (patch.tools !== undefined)
+      add("tools", jsonbText(patch.tools), "::jsonb");
     if (patch.visibility !== undefined) {
       if (agent.is_personal && patch.visibility !== "private") {
         throw ApiError.badRequest("the personal agent is always private");
       }
       add("visibility", patch.visibility);
     }
-    if (patch.resources !== undefined) add("resources", jsonbText(patch.resources), "::jsonb");
-    if (sets.length === 0 && patch.team_ids === undefined) return agent;
-    // The row and its team grants change together or not at all.
-    await withTransaction(this.pool, async (client) => {
-      if (sets.length > 0) {
-        sets.push("updated_at = now()");
-        try {
-          await client.query(`UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`, params);
-        } catch (error) {
-          if ((error as { code?: string }).code === "23505") {
-            throw ApiError.conflict("name_taken", "you already have an agent with this name");
-          }
-          throw error;
-        }
+    if (patch.resources !== undefined)
+      add("resources", jsonbText(patch.resources), "::jsonb");
+    if (sets.length === 0) return agent;
+    sets.push("updated_at = now()");
+    try {
+      await this.pool.query(
+        `UPDATE agents SET ${sets.join(", ")} WHERE org_id = $1 AND id = $2`,
+        params,
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw ApiError.conflict(
+          "name_taken",
+          "you already have an agent with this name",
+        );
       }
-      if (patch.team_ids !== undefined) {
-        await this.replaceTeamGrants(client, agent.org_id, agentId, patch.team_ids);
-      }
-    });
+      throw error;
+    }
     return this.fetchInOrg(agent.org_id, agentId);
   }
 
@@ -301,30 +350,10 @@ export class AgentCatalog {
     return row.description;
   }
 
-  /** Replaces an agent's team grants after checking every team belongs to
-   *  the same organization. */
-  private async replaceTeamGrants(
-    db: { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: unknown[] }> },
+  private async fetchById(
     orgId: string,
     agentId: string,
-    teamIds: string[],
-  ): Promise<void> {
-    const unique = [...new Set(teamIds)];
-    if (unique.length > 0) {
-      const valid = await db.query("SELECT id FROM teams WHERE org_id = $1 AND id = ANY($2::uuid[])", [orgId, unique]);
-      if (valid.rowCount !== unique.length) throw ApiError.badRequest("unknown team");
-    }
-    await db.query("DELETE FROM agent_team_grants WHERE agent_id = $1", [agentId]);
-    for (const teamId of unique) {
-      await db.query(
-        `INSERT INTO agent_team_grants (agent_id, team_id, role) VALUES ($1, $2, $3)
-         ON CONFLICT (agent_id, team_id) DO NOTHING`,
-        [agentId, teamId, GRANT_ROLE],
-      );
-    }
-  }
-
-  private async fetchById(orgId: string, agentId: string): Promise<Agent | null> {
+  ): Promise<Agent | null> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT ${AGENT_COLUMNS} FROM agents a WHERE a.org_id = $1 AND a.id = $2`,
       [orgId, agentId],

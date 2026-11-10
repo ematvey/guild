@@ -3,6 +3,7 @@
 // from here, so neither constructs a store of its own.
 
 import type { PlatformPool } from "./db.js";
+import { AccessStore } from "./store/access.js";
 import { ApiKeyStore } from "./store/api-keys.js";
 import { AppStore } from "./store/apps.js";
 import { AttachmentStore } from "./store/attachments.js";
@@ -12,7 +13,10 @@ import { ConversationMapStore } from "./store/conversations.js";
 import { EventStore } from "./store/events.js";
 import { GatewayStore } from "./store/gateway.js";
 import { IdentityStore } from "./store/identity.js";
-import { IntegrationSecretStore, IntegrationStore } from "./store/integrations.js";
+import {
+  IntegrationSecretStore,
+  IntegrationStore,
+} from "./store/integrations.js";
 import { MachineStore } from "./store/machines.js";
 import { OidcStore } from "./store/oidc.js";
 import { KvStore, OrgKvStore } from "./store/org-kv.js";
@@ -64,12 +68,16 @@ export interface PlatformStores {
   readonly conversationHistory: ConversationHistoryStore;
   /** Apps and their published versions. */
   readonly apps: AppStore;
+  /** Who may reach an Agent or an App, and how. */
+  readonly access: AccessStore;
 }
 
 export function createStores(pool: PlatformPool): PlatformStores {
   const events = new EventStore(pool);
   return {
-    identity: new IdentityStore(pool, (orgId, kind, payload) => events.emit(orgId, kind, payload)),
+    identity: new IdentityStore(pool, (orgId, kind, payload) =>
+      events.emit(orgId, kind, payload),
+    ),
     pairing: new PairingStore(pool),
     events,
     attachments: new AttachmentStore(pool),
@@ -96,5 +104,6 @@ export function createStores(pool: PlatformPool): PlatformStores {
     conversations: new ConversationMapStore(pool),
     conversationHistory: new ConversationHistoryStore(pool),
     apps: new AppStore(pool),
+    access: new AccessStore(pool),
   };
 }

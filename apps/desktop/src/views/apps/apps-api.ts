@@ -33,7 +33,8 @@ export interface AppDetail {
   functions: ViewerFunction[];
 }
 
-export type CallResult = { ok: true; content: string; meta: unknown } | { ok: false; error: string };
+export type CallResult =
+  { ok: true; content: string; meta: unknown } | { ok: false; error: string };
 
 const base = (id: string) => `/api/v1/apps/${encodeURIComponent(id)}`;
 
@@ -42,12 +43,21 @@ export const getAppDetail = (id: string) => request<AppDetail>("GET", base(id));
 export const getAppPageLink = (id: string) =>
   request<{ path: string; version: number }>("GET", `${base(id)}/page_link`);
 
-export const callAppFunction = (id: string, name: string, params: unknown, confirmed: boolean, remember: boolean) =>
-  request<CallResult>("POST", `${base(id)}/functions/${encodeURIComponent(name)}`, { params, confirmed, remember });
+export const callAppFunction = (
+  id: string,
+  name: string,
+  params: unknown,
+  confirmed: boolean,
+  remember: boolean,
+) =>
+  request<CallResult>(
+    "POST",
+    `${base(id)}/functions/${encodeURIComponent(name)}`,
+    { params, confirmed, remember },
+  );
 
-export const clearAppGrants = (id: string) => request<{ cleared: boolean }>("DELETE", `${base(id)}/grants`);
+export const clearAppGrants = (id: string) =>
+  request<{ cleared: boolean }>("DELETE", `${base(id)}/grants`);
 
-export const setAppVisibility = (id: string, visibility: App["visibility"]) =>
-  request<{ app: App }>("PATCH", base(id), { visibility });
-
-export const deleteApp = (id: string) => request<{ deleted: boolean }>("DELETE", base(id));
+export const deleteApp = (id: string) =>
+  request<{ deleted: boolean }>("DELETE", base(id));

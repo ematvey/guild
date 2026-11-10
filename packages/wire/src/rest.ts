@@ -144,9 +144,16 @@ export interface EventRow {
 // routine, chat-tree and skill-catalog socket frames carry.
 // ---------------------------------------------------------------------------
 
-export type AgentVisibility = "private" | "team" | "org";
+export type AgentVisibility = "private" | "org";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
-export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "silent" | "skipped" | "cancelled";
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "silent"
+  | "skipped"
+  | "cancelled";
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 
 /** One persistent agent as its viewers see it. */
@@ -175,7 +182,11 @@ export interface Agent {
   status: AgentStatus;
   /** The user's personal agent: always private, never deleted. */
   is_personal: boolean;
-  /** Teams granted use of a team-visibility agent. */
+  /** The viewer manages this agent: the owner, an admin, or an `edit` entry.
+   *  False on rows built for the whole org. */
+  can_manage: boolean;
+  /** Teams granted this agent, at any level: the audience the Integration
+   *  warnings read. */
   team_ids: string[];
   /** The Integrations the agent's Turns see, each with its class ceiling.
    *  Integrations are never implied by `tools_mode`. */
@@ -354,6 +365,32 @@ export interface AppFunction {
   params: { [name: string]: AppParam };
 }
 
+/** Who one entry of an item's access list names, and at which level. */
+export type AccessSubjectKind = "org" | "team" | "user";
+export type AccessLevel = "read" | "edit";
+
+/** One entry of an Agent's or an App's access list. `subject_id` is null for
+ *  the org entry. */
+export interface AccessEntry {
+  subject_kind: AccessSubjectKind;
+  subject_id: string | null;
+  subject_label: string;
+  level: AccessLevel;
+}
+
+/** An item's access list as the viewer may read it. */
+export interface AccessList {
+  entries: AccessEntry[];
+  can_edit: boolean;
+}
+
+/** One member an access picker offers. */
+export interface AccessPerson {
+  id: string;
+  label: string;
+  avatar_url: string | null;
+}
+
 /** One App as lists carry it: everything but the page. */
 export interface App {
   id: string;
@@ -366,6 +403,8 @@ export interface App {
   name: string;
   description: string;
   visibility: "private" | "org";
+  /** The viewer manages this app: its owner, an admin, or an `edit` entry. */
+  can_edit: boolean;
   version: number;
   functions: AppFunction[];
   created_at: string;

@@ -4,7 +4,15 @@
 // address; the list is socket state (`app_list`).
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Globe, LayoutGrid, Lock, MessageSquare, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Globe,
+  LayoutGrid,
+  MessageSquare,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { EmptyState } from "@guild/ui/components/empty-state";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
@@ -20,16 +28,41 @@ import { useMemberProfile } from "../../lib/profile-store";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
 import { APPS_HOME, type AppsRoute } from "./apps-route";
-import { clearAppGrants, deleteApp, getAppDetail, setAppVisibility, type AppDetail } from "./apps-api";
+import {
+  clearAppGrants,
+  deleteApp,
+  getAppDetail,
+  type AppDetail,
+} from "./apps-api";
 import { AppFrame } from "./AppFrame";
+import { AccessPanel } from "../access/AccessPanel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@guild/ui/components/dialog";
 
 type Navigate = (next: AppsRoute, options?: { replace?: boolean }) => void;
 
 function GroupLabel({ children }: { children: React.ReactNode }) {
-  return <p className="px-2.5 pb-1 pt-4 text-xs font-medium text-muted-foreground first:pt-1">{children}</p>;
+  return (
+    <p className="px-2.5 pb-1 pt-4 text-xs font-medium text-muted-foreground first:pt-1">
+      {children}
+    </p>
+  );
 }
 
-function AppRow({ app, selected, onClick }: { app: App; selected: boolean; onClick: () => void }) {
+function AppRow({
+  app,
+  selected,
+  onClick,
+}: {
+  app: App;
+  selected: boolean;
+  onClick: () => void;
+}) {
   return (
     <li>
       <button
@@ -46,7 +79,12 @@ function AppRow({ app, selected, onClick }: { app: App; selected: boolean; onCli
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className="truncate text-sm font-medium">{app.name}</span>
-            {app.visibility === "org" && <Globe aria-label="Shared with the org" className="size-3 shrink-0" />}
+            {app.visibility === "org" && (
+              <Globe
+                aria-label="Shared with the org"
+                className="size-3 shrink-0"
+              />
+            )}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
             {app.description !== "" ? app.description : `by ${app.owner_label}`}
@@ -75,13 +113,19 @@ function ListPane({
       <div className="px-4 pb-3 pt-5">
         <h1 className="text-lg font-semibold">Apps</h1>
       </div>
-      <nav aria-label="Apps" className="min-h-0 flex-1 overflow-y-auto px-2 pb-6" data-scrollable>
+      <nav
+        aria-label="Apps"
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-6"
+        data-scrollable
+      >
         {apps === null ? (
           <div className="space-y-2 px-2 pt-3">
             <SkeletonRows rows={4} />
           </div>
         ) : apps.length === 0 ? (
-          <p className="px-2.5 pt-1 text-sm text-muted-foreground">No apps yet.</p>
+          <p className="px-2.5 pt-1 text-sm text-muted-foreground">
+            No apps yet.
+          </p>
         ) : (
           (
             [
@@ -119,9 +163,10 @@ function NoApps() {
         title="Apps your agents build"
         hint={
           <>
-            Ask an agent for a page that shows live data, for example “build an app with open deals by stage from
-            HubSpot”. It publishes the page here; you can share it with the org. Each person who opens it sees data
-            through their own integration access.
+            Ask an agent for a page that shows live data, for example “build an
+            app with open deals by stage from HubSpot”. It publishes the page
+            here; you can share it with the org. Each person who opens it sees
+            data through their own integration access.
           </>
         }
       />
@@ -139,6 +184,7 @@ function AppHeader({
   onOpenChat,
   onDeleted,
   onGrantsCleared,
+  onEditAccess,
 }: {
   app: App;
   detail: AppDetail | null;
@@ -149,6 +195,7 @@ function AppHeader({
   onOpenChat: ((chatId: string) => void) | null;
   onDeleted: () => void;
   onGrantsCleared: () => void;
+  onEditAccess: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,24 +211,36 @@ function AppHeader({
     }
   };
   const unavailable = (detail?.functions ?? []).filter((fn) => !fn.available);
-  const asks = (detail?.functions ?? []).some((fn) => fn.available && fn.confirm);
+  const asks = (detail?.functions ?? []).some(
+    (fn) => fn.available && fn.confirm,
+  );
   return (
     <header className="border-b border-border px-4 py-3">
       <div className="flex items-center gap-2">
         {isMobile && (
-          <Button variant="ghost" size="icon" aria-label="All apps" onClick={onBack}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="All apps"
+            onClick={onBack}
+          >
             <ArrowLeft />
           </Button>
         )}
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-semibold">{app.name}</h2>
           <p className="truncate text-xs text-muted-foreground">
-            {app.visibility === "org" ? "Shared with the org" : "Only you"} · by {app.owner_label}
-            {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v{app.version} · updated{" "}
-            {relativeTime(app.updated_at)}
+            {app.visibility === "org" ? "Shared with the org" : "Private"} · by{" "}
+            {app.owner_label}
+            {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v
+            {app.version} · updated {relativeTime(app.updated_at)}
           </p>
         </div>
-        {(isOwner || canDelete || asks || (onOpenChat !== null && app.chat_id !== null)) && (
+        {(isOwner ||
+          app.can_edit ||
+          canDelete ||
+          asks ||
+          (onOpenChat !== null && app.chat_id !== null)) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy}>
@@ -191,7 +250,8 @@ function AppHeader({
             <DropdownMenuContent align="end" className="w-56">
               {onOpenChat !== null && app.chat_id !== null && (
                 <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
-                  <MessageSquare className="size-4" /> Open the chat that built it
+                  <MessageSquare className="size-4" /> Open the chat that built
+                  it
                 </DropdownMenuItem>
               )}
               {asks && (
@@ -203,17 +263,13 @@ function AppHeader({
                     })
                   }
                 >
-                  <ShieldCheck className="size-4" /> Ask again before data access
+                  <ShieldCheck className="size-4" /> Ask again before data
+                  access
                 </DropdownMenuItem>
               )}
-              {isOwner && (
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void act(() => setAppVisibility(app.id, app.visibility === "org" ? "private" : "org"))
-                  }
-                >
-                  {app.visibility === "org" ? <Lock className="size-4" /> : <Globe className="size-4" />}
-                  {app.visibility === "org" ? "Make private" : "Share with the org"}
+              {(isOwner || app.can_edit) && (
+                <DropdownMenuItem onSelect={() => onEditAccess()}>
+                  <Users className="size-4" /> Who has access
                 </DropdownMenuItem>
               )}
               {canDelete && (
@@ -222,7 +278,12 @@ function AppHeader({
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onSelect={() => {
-                      if (!window.confirm(`Delete ${app.name}? Everyone it is shared with loses it.`)) return;
+                      if (
+                        !window.confirm(
+                          `Delete ${app.name}? Everyone it is shared with loses it.`,
+                        )
+                      )
+                        return;
                       void act(async () => {
                         await deleteApp(app.id);
                         onDeleted();
@@ -245,7 +306,10 @@ function AppHeader({
       {unavailable.length > 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
           Some data is not available to you:{" "}
-          {unavailable.map((fn) => `${fn.name} (${fn.reason ?? "no access"})`).join(", ")}.
+          {unavailable
+            .map((fn) => `${fn.name} (${fn.reason ?? "no access"})`)
+            .join(", ")}
+          .
         </p>
       )}
     </header>
@@ -286,7 +350,8 @@ function OpenApp({
     };
   }, [app.id, app.version, epoch]);
   const isOwner = me !== null && app.owner_user_id === me.id;
-  const canDelete = isOwner || (me?.role === "admin" && app.visibility === "org");
+  const canDelete = isOwner || me?.role === "admin";
+  const [accessOpen, setAccessOpen] = useState(false);
   const current = detail !== null && detail.app.id === app.id ? detail : null;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -300,14 +365,29 @@ function OpenApp({
         onOpenChat={onOpenChat}
         onDeleted={() => navigate(APPS_HOME, { replace: true })}
         onGrantsCleared={() => setEpoch((n) => n + 1)}
+        onEditAccess={() => setAccessOpen(true)}
       />
+      <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Who has access to {app.name}</DialogTitle>
+            <DialogDescription>
+              Everyone listed can open this app. Can edit also lets them publish
+              it.
+            </DialogDescription>
+          </DialogHeader>
+          <AccessPanel kind="app" id={app.id} />
+        </DialogContent>
+      </Dialog>
       <div className="min-h-0 flex-1">
         {error !== null ? (
           <p role="alert" className="p-6 text-sm text-destructive">
             {error}
           </p>
         ) : current === null ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Opening…</div>
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Opening…
+          </div>
         ) : (
           <AppFrame
             key={epoch}
@@ -334,12 +414,22 @@ export function AppsPage({
   const apps = useApps();
   const profile = useMemberProfile();
   const me = profile === null ? null : { id: profile.id, role: profile.role };
-  const open = route.appId === null ? null : ((apps ?? []).find((app) => app.id === route.appId) ?? null);
+  const open =
+    route.appId === null
+      ? null
+      : ((apps ?? []).find((app) => app.id === route.appId) ?? null);
   const missing = route.appId !== null && apps !== null && open === null;
 
   const page =
     open !== null ? (
-      <OpenApp key={open.id} app={open} me={me} isMobile={isMobile} navigate={navigate} onOpenChat={onOpenChat} />
+      <OpenApp
+        key={open.id}
+        app={open}
+        me={me}
+        isMobile={isMobile}
+        navigate={navigate}
+        onOpenChat={onOpenChat}
+      />
     ) : missing ? (
       <div className="flex h-full items-center justify-center p-6">
         <EmptyState
@@ -347,7 +437,10 @@ export function AppsPage({
           title="This app is gone"
           hint="It was deleted, or its owner stopped sharing it."
           action={
-            <Button variant="outline" onClick={() => navigate(APPS_HOME, { replace: true })}>
+            <Button
+              variant="outline"
+              onClick={() => navigate(APPS_HOME, { replace: true })}
+            >
               All apps
             </Button>
           }
@@ -358,12 +451,26 @@ export function AppsPage({
     );
 
   if (isMobile) {
-    return route.appId === null ? <ListPane apps={apps} route={route} navigate={navigate} me={me?.id ?? null} /> : page;
+    return route.appId === null ? (
+      <ListPane
+        apps={apps}
+        route={route}
+        navigate={navigate}
+        me={me?.id ?? null}
+      />
+    ) : (
+      page
+    );
   }
   return (
     <div className="flex h-full min-h-0">
       <aside className="w-72 shrink-0 border-r border-border bg-sidebar">
-        <ListPane apps={apps} route={route} navigate={navigate} me={me?.id ?? null} />
+        <ListPane
+          apps={apps}
+          route={route}
+          navigate={navigate}
+          me={me?.id ?? null}
+        />
       </aside>
       <section className="min-w-0 flex-1">{page}</section>
     </div>

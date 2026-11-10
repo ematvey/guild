@@ -24,16 +24,28 @@ const routes: AgentsRoute[] = [
   { view: "agent", agentId: "a1", tab: "routines", routineId: "r1" },
   { view: "agent", agentId: "a1", tab: "files" },
   { view: "agent", agentId: "a1", tab: "files", filePath: "notes/today.md" },
-  { view: "agent", agentId: "a1", tab: "activity", filters: DEFAULT_ACTIVITY_FILTERS },
+  {
+    view: "agent",
+    agentId: "a1",
+    tab: "activity",
+    filters: DEFAULT_ACTIVITY_FILTERS,
+  },
   { view: "agent", agentId: "a1", tab: "settings" },
   AGENTS_ACTIVITY,
-  { view: "activity", filters: { ...DEFAULT_ACTIVITY_FILTERS, tab: "calls", period: "30d", q: "deploy" } },
+  {
+    view: "activity",
+    filters: {
+      ...DEFAULT_ACTIVITY_FILTERS,
+      tab: "calls",
+      period: "30d",
+      q: "deploy",
+    },
+  },
   { view: "run", runId: "run-1" },
   { view: "trace", traceId: "trace-1" },
   { view: "chat", chatId: "chat-1" },
   { view: "new", step: "model" },
   { view: "new", step: "tools" },
-  { view: "new", step: "visibility" },
   { view: "run", runId: "run-1", traceView: "tree" },
   { view: "trace", traceId: "trace-1", traceView: "timeline" },
 ];
@@ -41,13 +53,20 @@ const routes: AgentsRoute[] = [
 describe("trace view and create step addresses", () => {
   it("puts the trace view in the query, transcript being the bare URL", () => {
     expect(agentsRoutePath({ view: "run", runId: "r" })).toBe("/runs/r");
-    expect(agentsRoutePath({ view: "run", runId: "r", traceView: "tree" })).toBe("/runs/r?view=tree");
-    expect(parseAgentsRoute("/traces/t?view=bogus")).toEqual({ view: "trace", traceId: "t" });
+    expect(
+      agentsRoutePath({ view: "run", runId: "r", traceView: "tree" }),
+    ).toBe("/runs/r?view=tree");
+    expect(parseAgentsRoute("/traces/t?view=bogus")).toEqual({
+      view: "trace",
+      traceId: "t",
+    });
   });
 
   it("gives each wizard step its own path; unknown steps start over", () => {
     expect(agentsRoutePath({ view: "new" })).toBe("/agents/new");
-    expect(agentsRoutePath({ view: "new", step: "tools" })).toBe("/agents/new/tools");
+    expect(agentsRoutePath({ view: "new", step: "tools" })).toBe(
+      "/agents/new/tools",
+    );
     expect(parseAgentsRoute("/agents/new/bogus")).toEqual({ view: "new" });
   });
 });
@@ -66,12 +85,18 @@ describe("agents route contract", () => {
     expect(agentsRailTab({ view: "trace", traceId: "t" })).toBe("activity");
     expect(agentsRailTab({ view: "chat", chatId: "c" })).toBe("activity");
     expect(agentsRailTab({ view: "directory" })).toBe("agents");
-    expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe("agents");
-    expect(agentsRailTab({ view: "agent", agentId: "a", tab: "activity" })).toBe("agents");
+    expect(agentsRailTab({ view: "agent", agentId: "a", tab: "files" })).toBe(
+      "agents",
+    );
+    expect(
+      agentsRailTab({ view: "agent", agentId: "a", tab: "activity" }),
+    ).toBe("agents");
   });
 
   it("keeps the agent tab from the URL", () => {
-    expect(agentsRouteTab(parseAgentsRoute("/agents/a1/settings")!)).toBe("settings");
+    expect(agentsRouteTab(parseAgentsRoute("/agents/a1/settings")!)).toBe(
+      "settings",
+    );
     expect(agentsRouteTab({ view: "directory" })).toBeNull();
   });
 
@@ -85,7 +110,10 @@ describe("agents route contract", () => {
 
   it("returns null for paths owned by other surfaces", () => {
     expect(parseAgentsRoute("/chats")).toBeNull();
-    expect(parseAgentsRoute("/sessions/old")).toEqual({ view: "chat", chatId: "old" });
+    expect(parseAgentsRoute("/sessions/old")).toEqual({
+      view: "chat",
+      chatId: "old",
+    });
     expect(parseAgentsRoute("/thread/x")).toBeNull();
     expect(parseAgentsRoute("/skills")).toBeNull();
     expect(parseAgentsRoute("/")).toBeNull();
@@ -99,11 +127,15 @@ describe("agents route contract", () => {
       tab: "files",
       filePath: "my notes/a?b.md",
     });
-    expect(agentsRoutePath(route!)).toBe("/agents/a%2Fb/files/my%20notes/a%3Fb.md");
+    expect(agentsRoutePath(route!)).toBe(
+      "/agents/a%2Fb/files/my%20notes/a%3Fb.md",
+    );
   });
 
   it("keeps the canonical agent tab URL free of stale sub-page ids", () => {
-    expect(agentsRoutePath(agentTabRoute("a1", "threads"))).toBe("/agents/a1/threads");
+    expect(agentsRoutePath(agentTabRoute("a1", "threads"))).toBe(
+      "/agents/a1/threads",
+    );
     expect(agentsRoutePath(agentTabRoute("a1", "overview"))).toBe("/agents/a1");
   });
 });

@@ -274,13 +274,14 @@
         ],
         "tools_mode": "selected",
         "generative_ui": true,
-        "visibility": "team",
+        "visibility": "private",
         "resources": {
           "vcpu": 1,
           "memory_mb": 2048
         },
         "status": "active",
         "is_personal": false,
+        "can_manage": true,
         "team_ids": [
           "018f0b7c-0000-7000-8000-000000000081"
         ],
@@ -471,6 +472,7 @@
         "name": "Pipeline",
         "description": "Deals by stage",
         "visibility": "org",
+        "can_edit": true,
         "version": 2,
         "functions": [
           {

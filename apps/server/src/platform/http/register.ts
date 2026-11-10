@@ -5,7 +5,12 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../../composition.js";
-import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
+import type {
+  ChatsCtx,
+  GatewayCtx,
+  IdentityCtx,
+  InfraContext,
+} from "../route-contexts.js";
 import { ApiError, TextError } from "../errors.js";
 import { JSON_REJECTION_PREFIX } from "../llm-gateway.js";
 import { installErrorHandling, jsonContentParser } from "./error.js";
@@ -31,14 +36,22 @@ import { registerSkillRoutes } from "./skills.js";
 import { registerReleaseRoutes } from "./releases.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
-import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
+import {
+  registerAdminUserRoutes,
+  registerAdminPromptRoutes,
+  registerAdminIntegrationRoutes,
+} from "./admin.js";
 import { registerPluginCatalogRoutes } from "./plugin-catalogs.js";
 import { registerIntegrationToolRoutes } from "./integration-tools.js";
 import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
 import { registerAppRoutes } from "./apps.js";
+import { registerAccessRoutes } from "./access.js";
 
-export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
+export async function registerPlatformRoutes(
+  app: FastifyInstance,
+  ctx: PlatformContext,
+): Promise<void> {
   // Composition glue: the full context is sliced here and each route group
   // receives only the collaborators it uses.
   const infra: InfraContext = ctx;
@@ -52,14 +65,20 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     scope.addContentTypeParser(
       "application/json",
       { parseAs: "string" },
-      jsonContentParser(() => ApiError.badRequest("request body is not valid JSON")),
+      jsonContentParser(() =>
+        ApiError.badRequest("request body is not valid JSON"),
+      ),
     );
 
     // Binary bodies (attachment uploads, logo uploads, bundles): raw bytes,
     // any content type.
-    scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
-      done(null, body);
-    });
+    scope.addContentTypeParser(
+      "*",
+      { parseAs: "buffer" },
+      (_req, body, done) => {
+        done(null, body);
+      },
+    );
 
     registerAuthRoutes(scope, auth);
     registerOrgRoutes(scope, auth, ctx.objects);
@@ -80,7 +99,8 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerPreviewLinkRoutes(scope, chats, auth);
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
     registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
-      onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),
+      onInstallChange: (orgId, userId) =>
+        ctx.runtime.skillsRuntime.syncUser(orgId, userId),
       runtime: ctx.runtime.skillsRuntime,
     });
     registerReleaseRoutes(scope, gateway, auth, ctx.objects);
@@ -93,6 +113,30 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerUserMcpRoutes(scope, auth);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
     registerAppRoutes(scope, auth, gateway, ctx.apps);
+    registerAccessRoutes(scope, auth, ctx.access, {
+      agent: {
+        level: async (user, id) => {
+          const agent = await ctx.agents.get(user, id);
+          return (await ctx.agents.access(user, agent)).can_manage
+            ? "edit"
+            : "read";
+        },
+        manage: async (user, id) => {
+          await ctx.agents.requireAccess(user, id, "manage");
+        },
+      },
+      app: {
+        level: async (user, id) =>
+          (await ctx.apps.getVisible(user.org_id, id, user)).can_edit
+            ? "edit"
+            : "read",
+        manage: async (user, id) => {
+          const row = await ctx.apps.getVisible(user.org_id, id, user);
+          if (!row.can_edit)
+            throw ApiError.forbidden("you cannot change who sees this app");
+        },
+      },
+    });
   });
 
   // The script-facing integration tool API accepts ANY content type as raw
@@ -102,9 +146,13 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
   // JSON object".
   await app.register(async (scope) => {
     installErrorHandling(scope);
-    scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
-      done(null, body);
-    });
+    scope.addContentTypeParser(
+      "*",
+      { parseAs: "buffer" },
+      (_req, body, done) => {
+        done(null, body);
+      },
+    );
     registerIntegrationToolRoutes(scope, auth, gateway);
   });
 
@@ -114,18 +162,26 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
   // shape follows the request path.
   await app.register(async (scope) => {
     installErrorHandling(scope, (error, path) =>
-      path.startsWith("/anthropic") ? renderAnthropicError(error) : renderOpenAiError(error),
+      path.startsWith("/anthropic")
+        ? renderAnthropicError(error)
+        : renderOpenAiError(error),
     );
     // The raw body text is kept: it is the request payload the trace
     // captures, and a parse failure is a plain-text rejection.
     scope.addContentTypeParser(
       "application/json",
       { parseAs: "string" },
-      jsonContentParser((detail) => new TextError(400, `${JSON_REJECTION_PREFIX}${detail}`)),
+      jsonContentParser(
+        (detail) => new TextError(400, `${JSON_REJECTION_PREFIX}${detail}`),
+      ),
     );
-    scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
-      done(null, body);
-    });
+    scope.addContentTypeParser(
+      "*",
+      { parseAs: "buffer" },
+      (_req, body, done) => {
+        done(null, body);
+      },
+    );
     registerOpenAiRoutes(scope, gateway);
     registerAnthropicRoutes(scope, gateway);
   });

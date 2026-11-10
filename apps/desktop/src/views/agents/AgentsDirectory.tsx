@@ -4,12 +4,18 @@ import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { relativeTime } from "../../lib/relative-time";
 import type { AgentsRoute } from "./agents-route";
-import { VISIBILITY_LABEL } from "./agents-route";
+import { agentAccessLabel } from "./agents-route";
 import type { Agent } from "./agents-api";
 import { useAgentList } from "./agents-store";
 import { count } from "../../lib/format";
 import { ModelName } from "./agent-model";
-import { AgentGlyph, AgentStatusBadge, LoadingRows, PageBody, ToneBadge } from "./agent-ui";
+import {
+  AgentGlyph,
+  AgentStatusBadge,
+  LoadingRows,
+  PageBody,
+  ToneBadge,
+} from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -38,13 +44,20 @@ export function sortAgents(agents: Agent[]): Agent[] {
   });
 }
 
-export function AgentsDirectory({ onNavigate }: { onNavigate: (route: AgentsRoute) => void }) {
+export function AgentsDirectory({
+  onNavigate,
+}: {
+  onNavigate: (route: AgentsRoute) => void;
+}) {
   // Every agent this member may see, archived ones included: the member
   // socket pushes the list on connect and on every agent change.
   const agents = useAgentList();
   const [query, setQuery] = useState("");
 
-  const visible = useMemo(() => sortAgents(filterAgents(agents ?? [], query)), [agents, query]);
+  const visible = useMemo(
+    () => sortAgents(filterAgents(agents ?? [], query)),
+    [agents, query],
+  );
   const active = visible.filter((a) => a.status === "active");
   const archived = visible.filter((a) => a.status !== "active");
 
@@ -79,7 +92,11 @@ export function AgentsDirectory({ onNavigate }: { onNavigate: (route: AgentsRout
         {agents !== null && visible.length === 0 && (
           <EmptyState
             icon={Bot}
-            title={query.trim() === "" ? "No agents yet" : `No agents match "${query.trim()}"`}
+            title={
+              query.trim() === ""
+                ? "No agents yet"
+                : `No agents match "${query.trim()}"`
+            }
             hint={
               query.trim() === ""
                 ? "Create an agent to give it instructions, tools and a durable workspace."
@@ -97,9 +114,17 @@ export function AgentsDirectory({ onNavigate }: { onNavigate: (route: AgentsRout
         )}
         {agents !== null && visible.length > 0 && (
           <div className="space-y-6">
-            <AgentGroup title="Active" agents={active} onNavigate={onNavigate} />
+            <AgentGroup
+              title="Active"
+              agents={active}
+              onNavigate={onNavigate}
+            />
             {archived.length > 0 && (
-              <AgentGroup title="Archived and deleting" agents={archived} onNavigate={onNavigate} />
+              <AgentGroup
+                title="Archived and deleting"
+                agents={archived}
+                onNavigate={onNavigate}
+              />
             )}
           </div>
         )}
@@ -120,7 +145,9 @@ function AgentGroup({
   if (agents.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-1.5 px-3 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
+      <h2 className="mb-1.5 px-3 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </h2>
       <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60 bg-card/40">
         {agents.map((agent) => (
           <li key={agent.id}>
@@ -137,15 +164,29 @@ function AgentGroup({
  * description and its facts on a single line of meta text; only the
  * exceptional state (not active) gets a badge.
  */
-export function AgentRow({ agent, onNavigate }: { agent: Agent; onNavigate: (route: AgentsRoute) => void }) {
+export function AgentRow({
+  agent,
+  onNavigate,
+}: {
+  agent: Agent;
+  onNavigate: (route: AgentsRoute) => void;
+}) {
   const last = agent.updated_at;
   const owner = agent.owner_label ?? "Unknown owner";
-  const ownerEmail = agent.owner_email && agent.owner_email !== agent.owner_label ? agent.owner_email : null;
-  const tools = agent.tools_mode === "all" ? "All tools" : count(agent.tools.length, "tool");
+  const ownerEmail =
+    agent.owner_email && agent.owner_email !== agent.owner_label
+      ? agent.owner_email
+      : null;
+  const tools =
+    agent.tools_mode === "all"
+      ? "All tools"
+      : count(agent.tools.length, "tool");
   return (
     <button
       type="button"
-      onClick={() => onNavigate({ view: "agent", agentId: agent.id, tab: "overview" })}
+      onClick={() =>
+        onNavigate({ view: "agent", agentId: agent.id, tab: "overview" })
+      }
       aria-label={`Open agent ${agent.name}`}
       className="flex w-full items-start gap-3 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/60"
     >
@@ -154,22 +195,31 @@ export function AgentRow({ agent, onNavigate }: { agent: Agent; onNavigate: (rou
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">{agent.name}</span>
           {agent.visibility === "private" && (
-            <ToneBadge tone="neutral" title="Only the owner can see and use this agent">
+            <ToneBadge
+              tone="neutral"
+              title="Only the owner can see and use this agent"
+            >
               <Lock className="size-3" />
               Private
             </ToneBadge>
           )}
-          {agent.status !== "active" && <AgentStatusBadge status={agent.status} />}
+          {agent.status !== "active" && (
+            <AgentStatusBadge status={agent.status} />
+          )}
         </div>
         <p className="mt-0.5 truncate text-2xs text-muted-foreground">
           {owner}
           {ownerEmail !== null ? ` · ${ownerEmail}` : ""}
         </p>
-        {agent.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{agent.description}</p>}
+        {agent.description && (
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            {agent.description}
+          </p>
+        )}
         <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-2xs text-muted-foreground">
           {agent.visibility !== "private" && (
             <>
-              <span>{VISIBILITY_LABEL[agent.visibility]}</span>
+              <span>{agentAccessLabel(agent)}</span>
               <Separator />
             </>
           )}
@@ -180,7 +230,10 @@ export function AgentRow({ agent, onNavigate }: { agent: Agent; onNavigate: (rou
           <span>{tools}</span>
         </p>
       </div>
-      <span className="shrink-0 pt-0.5 text-2xs text-muted-foreground" title={last}>
+      <span
+        className="shrink-0 pt-0.5 text-2xs text-muted-foreground"
+        title={last}
+      >
         {relativeTime(last)}
       </span>
     </button>

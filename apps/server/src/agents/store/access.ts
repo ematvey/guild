@@ -1,85 +1,66 @@
-// Agent visibility and grant roles: the one predicate every visibility-
-// filtered read applies, the caller's role on one agent, and the bulk
-// reads the member socket scopes its agent frames by.
+// Agent access (docs/domain/002-access.md, "Agents"): the caller's level on
+// one agent, and the bulk reads the member socket scopes its agent frames by.
+// The entries themselves live in `agent_access` and the predicate is the
+// shared one, so an Agent and an App answer "who may reach this" the same way.
 
 import type { PlatformPool } from "../../platform/db.js";
 import type { UserRow } from "../../platform/store/identity.js";
+import type { AccessLevel, AccessStore } from "../../platform/store/access.js";
+import {
+  accessPredicate,
+  editPredicate,
+  userViewer,
+  type ViewerSql,
+} from "../../platform/store/access.js";
 import type { Agent, AgentAccess, AgentRole } from "../types.js";
-import { GRANT_ROLE } from "../types.js";
 
-/** The viewer columns of the visibility predicate: SQL expressions for the
- *  org id, whether the viewer is an admin, and the viewer's user id. */
-export interface ViewerSql {
-  org: string;
-  admin: string;
-  user: string;
-}
-
-/** The fixed placeholders a single-viewer read binds: $1 = org id,
+/** Visibility-filtered agent reads bind the viewer as $1 = org id,
  *  $2 = caller is admin, $3 = caller user id. */
-export const VIEWER_PARAMS: ViewerSql = { org: "$1", admin: "$2::boolean", user: "$3" };
+export const visiblePredicate = (alias: string, viewer?: ViewerSql): string =>
+  accessPredicate("agent", alias, viewer);
 
-/** The viewer columns of a `users` alias. */
-export function userViewer(alias: string): ViewerSql {
-  return { org: `${alias}.org_id`, admin: `(${alias}.role = 'admin')`, user: `${alias}.id` };
-}
+/** The managing viewer's agent reads also bind the edit entry. */
+export const editablePredicate = (alias: string): string =>
+  editPredicate("agent", alias);
 
-/** Visibility predicate over an `agents` alias. An admin reads every agent
- *  of the org, personal and private included: the directory is the admin's
- *  map of who works with what. A member sees their own agents, the `org`
- *  ones, and the agents granted to them by user or team; a personal agent
- *  belongs to exactly one user and never reaches another member. */
-export function visiblePredicate(alias: string, viewer: ViewerSql = VIEWER_PARAMS): string {
-  return `(${alias}.org_id = ${viewer.org} AND (
-    ${alias}.owner_user_id = ${viewer.user}
-    OR ${viewer.admin}
-    OR (${alias}.is_personal = false AND (
-      ${alias}.visibility = 'org'
-      OR EXISTS (SELECT 1 FROM agent_grants g
-        WHERE g.agent_id = ${alias}.id AND g.user_id = ${viewer.user} AND g.role = '${GRANT_ROLE}')
-      OR (${alias}.visibility = 'team' AND EXISTS (
-        SELECT 1 FROM agent_team_grants tg
-        JOIN team_members tm ON tm.team_id = tg.team_id
-        WHERE tg.agent_id = ${alias}.id AND tm.user_id = ${viewer.user} AND tg.role = '${GRANT_ROLE}'))
-    ))
-  ))`;
-}
-
-function accessForRole(
-  role: AgentRole | null,
-  canManage: boolean,
-  canUse: boolean = role !== null || canManage,
-): AgentAccess {
-  return { role, can_manage: canManage, can_use: canUse };
+function accessForLevel(level: AccessLevel | null): AgentAccess {
+  if (level === "edit") {
+    return { role: "editor", can_manage: true, can_use: true };
+  }
+  if (level === "read") {
+    return { role: "user", can_manage: false, can_use: true };
+  }
+  return { role: null, can_manage: false, can_use: false };
 }
 
 export class AgentGrants {
-  constructor(private readonly pool: PlatformPool) {}
+  constructor(
+    private readonly pool: PlatformPool,
+    private readonly accessStore: AccessStore,
+  ) {}
 
-  /** The caller's grant role and capability flags for one agent. Admins
-   *  resolve as owner. */
+  /** The caller's role and capability flags for one agent. The owner and an
+   *  admin manage it; an `edit` entry manages it; a `read` entry or `org`
+   *  visibility uses it. */
   async access(user: UserRow, agent: Agent): Promise<AgentAccess> {
     if (user.role === "admin" || agent.owner_user_id === user.id) {
-      return accessForRole("owner", true);
+      return {
+        role: "owner" satisfies AgentRole,
+        can_manage: true,
+        can_use: true,
+      };
     }
-    // Only a `user` grant confers use; a row with any other role is ignored.
-    const granted = await this.pool.query(
-      `SELECT 1 FROM agent_grants WHERE agent_id = $1 AND user_id = $2 AND role = $3
-       UNION ALL
-       SELECT 1 FROM agent_team_grants tg
-       JOIN team_members tm ON tm.team_id = tg.team_id
-       WHERE tg.agent_id = $1 AND tm.user_id = $2 AND tg.role = $3
-       LIMIT 1`,
-      [agent.id, user.id, GRANT_ROLE],
+    return accessForLevel(
+      await this.accessStore.level("agent", agent.id, user),
     );
-    if (granted.rows.length > 0) return accessForRole(GRANT_ROLE, false);
-    if (agent.visibility === "org") return accessForRole(null, false, true);
-    return accessForRole(null, false);
   }
 
   /** The users among `userIds` who may see the agent: the list's predicate,
    *  evaluated per user. */
-  async visibleUserIds(agentId: string, userIds: readonly string[]): Promise<string[]> {
+  async visibleUserIds(
+    agentId: string,
+    userIds: readonly string[],
+  ): Promise<string[]> {
     if (userIds.length === 0) return [];
     const res = await this.pool.query<{ id: string }>(
       `SELECT u.id FROM users u JOIN agents a ON a.id = $1
@@ -91,19 +72,12 @@ export class AgentGrants {
   }
 
   /** For each of `userIds` in the org, the ids of the org's agents that user
-   *  may see (any status), in one read. A user outside the org, or one who
-   *  sees nothing, maps to an empty set. */
-  async visibleAgentIds(orgId: string, userIds: readonly string[]): Promise<Map<string, Set<string>>> {
-    const out = new Map<string, Set<string>>(userIds.map((userId) => [userId, new Set<string>()]));
-    if (userIds.length === 0) return out;
-    const res = await this.pool.query<{ user_id: string; agent_id: string }>(
-      `SELECT u.id AS user_id, a.id AS agent_id
-       FROM users u JOIN agents a ON a.org_id = u.org_id
-       WHERE u.org_id = $1 AND u.id = ANY($2::uuid[])
-         AND ${visiblePredicate("a", userViewer("u"))}`,
-      [orgId, userIds],
-    );
-    for (const row of res.rows) out.get(row.user_id)?.add(row.agent_id);
-    return out;
+   *  may see and their level on each, in one read. A user outside the org, or
+   *  one who sees nothing, maps to an empty map. */
+  async visibleAgentIds(
+    orgId: string,
+    userIds: readonly string[],
+  ): Promise<Map<string, Map<string, AccessLevel>>> {
+    return this.accessStore.visibleIds(orgId, "agent", userIds);
   }
 }

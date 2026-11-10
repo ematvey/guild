@@ -1,3 +1,27 @@
+## 0.6.86 — Access lists: one way to say who may read and edit
+
+Agents and Apps now answer "who may reach this" the same way: one list of
+entries, each naming everyone in the org, a Team, or a Member, at `read` or
+`edit`. A `team` visibility and a grant table became one concept, so an item
+is private when its list is empty and org-wide when the list holds the org
+entry. The org entry is always `read`; only the owner and an admin delete.
+A grant row now carries its level, and `edit` is live for the first time:
+an editor edits an Agent and its list, and republishes an App.
+
+One route pair serves both kinds (`GET`/`PUT /api/v1/access/{kind}/{id}`)
+over `agent_access` and `app_access`; `agent_grants` and `agent_team_grants`
+migrated into `agent_access` and are gone. The Apps page's share toggle and
+the Agent form's visibility radios became one component
+(`views/access/AccessPanel`), used by the Agent settings tab and the App's
+Manage menu. A new Agent or App starts private; the create wizard no longer
+asks about visibility. `GET /api/v1/access/people` offers the org's Members
+to the picker.
+
+An admin now reads every App of the Org, as it already did every Agent: the
+Apps list and one App's read carry `can_edit` for the viewer, the Agent row
+carries `can_manage`. Skills are unchanged: the catalog is org-wide and an
+owner gates publishing, so a skill has no access list to edit.
+
 ## 0.6.85 — App confirmations: always allow, one question at a time
 
 A dashboard built over `hubspot_api` (the raw API tool, `write`-class

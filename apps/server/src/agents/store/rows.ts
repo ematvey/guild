@@ -24,8 +24,8 @@ export const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.descrip
   (SELECT u.email FROM users u WHERE u.id = a.owner_user_id) AS owner_email,
   (SELECT u.avatar_url FROM users u WHERE u.id = a.owner_user_id) AS owner_avatar_url,
   (SELECT r.alias FROM model_routes r WHERE r.org_id = a.org_id AND r.model = a.model LIMIT 1) AS model_alias,
-  COALESCE((SELECT array_agg(tg.team_id::text ORDER BY tg.team_id)
-            FROM agent_team_grants tg WHERE tg.agent_id = a.id), '{}') AS team_ids,
+  COALESCE((SELECT array_agg(g.team_id::text ORDER BY g.team_id)
+            FROM agent_access g WHERE g.agent_id = a.id AND g.team_id IS NOT NULL), '{}') AS team_ids,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', i.name, 'ceiling', ai.ceiling) ORDER BY i.name)
             FROM agent_integrations ai JOIN integrations i ON i.id = ai.integration_id
             WHERE ai.agent_id = a.id), '[]'::jsonb) AS integrations,
@@ -48,7 +48,9 @@ export const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.
   ${utcText("n.read_at")} AS read_at, ${utcText("n.created_at")} AS created_at`;
 
 function optionalTime(value: unknown): string | null {
-  return value === null || value === undefined ? null : pgTimestampToRfc3339(value as string);
+  return value === null || value === undefined
+    ? null
+    : pgTimestampToRfc3339(value as string);
 }
 
 export function toAgent(row: Record<string, unknown>): Agent {
@@ -65,11 +67,15 @@ export function toAgent(row: Record<string, unknown>): Agent {
     model_alias: (row.model_alias as string | null) ?? null,
     tools: (row.tools as AgentToolRef[] | null) ?? [],
     tools_mode: (row.tools_mode as AgentToolsMode | null) ?? "selected",
-    generative_ui: row.generative_ui === undefined || row.generative_ui === null ? true : Boolean(row.generative_ui),
+    generative_ui:
+      row.generative_ui === undefined || row.generative_ui === null
+        ? true
+        : Boolean(row.generative_ui),
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,
     is_personal: Boolean(row.is_personal),
+    can_manage: row.can_manage === true,
     team_ids: (row.team_ids as string[] | null) ?? [],
     integrations: (row.integrations as AgentIntegrationEntry[] | null) ?? [],
     deleted_at: optionalTime(row.deleted_at),

@@ -8,7 +8,11 @@ import type { PlatformPool } from "../../platform/db.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { IdentityStore, type UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
-import { AgentStateFeed, agentWire, type AgentStateDeps } from "../../hub/agent-state.js";
+import {
+  AgentStateFeed,
+  agentWire,
+  type AgentStateDeps,
+} from "../../hub/agent-state.js";
 import { IntegrationAccessStore } from "../../platform/store/integration-access.js";
 import type { WsServerMsg } from "../../hub/protocol.js";
 import { waitFor } from "../support/wait.js";
@@ -19,7 +23,10 @@ const env: HubTestEnv | null = await createAgentsTestEnv();
 const dbDescribe = env === null ? describe.skip : describe;
 
 /** The pool with a running count of `query` calls. */
-function countingPool(pool: PlatformPool): { pool: PlatformPool; count(): number } {
+function countingPool(pool: PlatformPool): {
+  pool: PlatformPool;
+  count(): number;
+} {
   let calls = 0;
   const counted = new Proxy(pool, {
     get(target, key) {
@@ -30,7 +37,9 @@ function countingPool(pool: PlatformPool): { pool: PlatformPool; count(): number
         };
       }
       const value = Reflect.get(target, key) as unknown;
-      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      return typeof value === "function"
+        ? (value as (...a: unknown[]) => unknown).bind(target)
+        : value;
     },
   });
   return { pool: counted, count: () => calls };
@@ -41,7 +50,10 @@ dbDescribe("agent list feed", () => {
   let users: UserRow[];
   let store: AgentStore;
 
-  async function makeUser(email: string, role: "admin" | "member"): Promise<UserRow> {
+  async function makeUser(
+    email: string,
+    role: "admin" | "member",
+  ): Promise<UserRow> {
     const id = randomUUID();
     await env!.db.query(
       `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
@@ -55,7 +67,10 @@ dbDescribe("agent list feed", () => {
     if (env === null) return;
     store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     orgId = randomUUID();
-    await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agent-list-feed-org')", [orgId]);
+    await env.db.query(
+      "INSERT INTO orgs (id, name) VALUES ($1, 'agent-list-feed-org')",
+      [orgId],
+    );
     const [owner, teamMember, granted, admin, outsider] = [
       await makeUser("feed-owner@example.test", "member"),
       await makeUser("feed-team@example.test", "member"),
@@ -65,18 +80,42 @@ dbDescribe("agent list feed", () => {
     ];
     users = [owner!, teamMember!, granted!, admin!, outsider!];
     const teamId = randomUUID();
-    await env.db.query("INSERT INTO teams (id, org_id, name) VALUES ($1, $2, 'feed-team')", [teamId, orgId]);
-    await env.db.query("INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)", [teamId, teamMember!.id]);
+    await env.db.query(
+      "INSERT INTO teams (id, org_id, name) VALUES ($1, $2, 'feed-team')",
+      [teamId, orgId],
+    );
+    await env.db.query(
+      "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)",
+      [teamId, teamMember!.id],
+    );
 
     await store.create(owner!, { name: "Private", model: "GLM-Test" });
-    await store.create(owner!, { name: "Org-wide", model: "GLM-Test", visibility: "org" });
-    await store.create(owner!, { name: "Team", model: "GLM-Test", visibility: "team", team_ids: [teamId] });
-    const shared = await store.create(owner!, { name: "Granted", model: "GLM-Test" });
-    await env.db.query("INSERT INTO agent_grants (agent_id, user_id, role) VALUES ($1, $2, 'user')", [
-      shared.id,
-      granted!.id,
-    ]);
-    const archived = await store.create(owner!, { name: "Archived", model: "GLM-Test", visibility: "org" });
+    await store.create(owner!, {
+      name: "Org-wide",
+      model: "GLM-Test",
+      visibility: "org",
+    });
+    const teamAgent = await store.create(owner!, {
+      name: "Team",
+      model: "GLM-Test",
+    });
+    await env.db.query(
+      "INSERT INTO agent_access (agent_id, team_id, level) VALUES ($1, $2, 'read')",
+      [teamAgent.id, teamId],
+    );
+    const shared = await store.create(owner!, {
+      name: "Granted",
+      model: "GLM-Test",
+    });
+    await env.db.query(
+      "INSERT INTO agent_access (agent_id, user_id, level) VALUES ($1, $2, 'read')",
+      [shared.id, granted!.id],
+    );
+    const archived = await store.create(owner!, {
+      name: "Archived",
+      model: "GLM-Test",
+      visibility: "org",
+    });
     await store.lifecycle.archive(owner!, archived.id);
     await store.create(admin!, { name: "Admin's", model: "GLM-Test" });
     for (const user of users) {
@@ -94,8 +133,13 @@ dbDescribe("agent list feed", () => {
 
   it("sends each member its visible list in a bounded number of queries", async () => {
     const counting = countingPool(env!.db);
-    const countedStore = new AgentStore({ pool: counting.pool, chats: new ChatStore(counting.pool) });
-    const received = new Map<string, WsServerMsg[]>(users.map((user) => [user.id, []]));
+    const countedStore = new AgentStore({
+      pool: counting.pool,
+      chats: new ChatStore(counting.pool),
+    });
+    const received = new Map<string, WsServerMsg[]>(
+      users.map((user) => [user.id, []]),
+    );
     const sinks = new Map(
       users.map((user) => [
         user.id,
@@ -116,7 +160,10 @@ dbDescribe("agent list feed", () => {
       },
       agents: countedStore,
       identity: new IdentityStore(counting.pool),
-      skills: { catalog: async () => [], installsForUsers: async () => new Map() },
+      skills: {
+        catalog: async () => [],
+        installsForUsers: async () => new Map(),
+      },
       trace: { callCounts: async () => ({}) },
       // The Integration audience reads are per org, not per member; they run
       // on the uncounted pool so the count below stays the agent reads.
@@ -128,9 +175,17 @@ dbDescribe("agent list feed", () => {
     });
     try {
       const before = counting.count();
-      feed.agents({ org_id: orgId, agent_id: null, run_id: null, user_id: null });
+      feed.agents({
+        org_id: orgId,
+        agent_id: null,
+        run_id: null,
+        user_id: null,
+      });
       await waitFor(
-        async () => [...received.values()].every((frames) => frames.some((frame) => frame.type === "agent_list")),
+        async () =>
+          [...received.values()].every((frames) =>
+            frames.some((frame) => frame.type === "agent_list"),
+          ),
         5_000,
       );
       // The member rows, the visible ids and the org's agent rows: three
@@ -140,19 +195,34 @@ dbDescribe("agent list feed", () => {
       feed.stop();
     }
     for (const user of users) {
-      const frame = received.get(user.id)!.find((item) => item.type === "agent_list")!;
+      const frame = received
+        .get(user.id)!
+        .find((item) => item.type === "agent_list")!;
       const context = await new IntegrationAccessStore(env!.db).context(orgId);
-      const expected = (await store.list(user, { includeArchived: true })).map((agent) => agentWire(agent, context));
+      const expected = (await store.list(user, { includeArchived: true })).map(
+        (agent) => agentWire(agent, context),
+      );
       expect(frame).toEqual({ type: "agent_list", agents: expected });
       expect(expected.length).toBeGreaterThan(0);
     }
     const names = (userIndex: number) =>
       (
-        received.get(users[userIndex]!.id)!.find((item) => item.type === "agent_list") as { agents: { name: string }[] }
+        received
+          .get(users[userIndex]!.id)!
+          .find((item) => item.type === "agent_list") as {
+          agents: { name: string }[];
+        }
       ).agents
         .map((agent) => agent.name)
         .sort();
-    expect(names(0)).toEqual(["Archived", "Assistant", "Granted", "Org-wide", "Private", "Team"]);
+    expect(names(0)).toEqual([
+      "Archived",
+      "Assistant",
+      "Granted",
+      "Org-wide",
+      "Private",
+      "Team",
+    ]);
     expect(names(1)).toEqual(["Archived", "Assistant", "Org-wide", "Team"]);
     expect(names(2)).toEqual(["Archived", "Assistant", "Granted", "Org-wide"]);
     expect(names(3)).toEqual([

@@ -8,6 +8,7 @@
 import type { PlatformPool } from "../platform/db.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { TraceStore } from "../platform/trace.js";
+import { AccessStore } from "../platform/store/access.js";
 import { AgentGrants } from "./store/access.js";
 import { AgentCatalog } from "./store/catalog.js";
 import { AgentLifecycleStore } from "./store/lifecycle.js";
@@ -66,19 +67,29 @@ export class AgentStore extends AgentCatalog {
   readonly lifecycle: AgentLifecycleStore;
 
   constructor(deps: AgentStoreDeps) {
-    const grants = new AgentGrants(deps.pool);
+    const grants = new AgentGrants(deps.pool, new AccessStore(deps.pool));
     const root = deps.workspaceRoot;
     super(
       deps.pool,
       deps.chats,
       grants,
-      root === undefined ? undefined : (agent) => seedAgentWorkspace(agentWorkspaceDir(root, agent.org_id, agent.id)),
+      root === undefined
+        ? undefined
+        : (agent) =>
+            seedAgentWorkspace(agentWorkspaceDir(root, agent.org_id, agent.id)),
     );
     this.grants = grants;
-    this.threads = new AgentThreadStore(deps.pool, deps.chats, (agentId) => this.fetchAgent(agentId));
+    this.threads = new AgentThreadStore(deps.pool, deps.chats, (agentId) =>
+      this.fetchAgent(agentId),
+    );
     this.tree = new AgentTreeStore(deps.pool);
     this.runs = new AgentRunStore(deps.pool, deps.trace);
     this.notices = new AgentNoticeStore(deps.pool);
-    this.lifecycle = new AgentLifecycleStore(deps.pool, this, this.threads, this.runs);
+    this.lifecycle = new AgentLifecycleStore(
+      deps.pool,
+      this,
+      this.threads,
+      this.runs,
+    );
   }
 }
