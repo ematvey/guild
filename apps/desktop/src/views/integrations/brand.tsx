@@ -9,6 +9,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   search: "Search",
   fetch: "Fetch",
   observability: "Observability",
+  analytics: "Analytics",
   crm: "CRM",
   messaging: "Messaging",
   docs: "Docs",
