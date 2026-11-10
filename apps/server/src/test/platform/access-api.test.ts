@@ -94,7 +94,7 @@ interface Reply {
 }
 
 const call = (
-  method: "GET" | "PUT" | "POST" | "DELETE",
+  method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE",
   url: string,
   token: string,
   payload?: unknown,

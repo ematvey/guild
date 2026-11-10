@@ -465,8 +465,18 @@ export function registerAgentRoutes(
     const context = await integrationAccess.context(orgId);
     return agents.map((agent) => agentWire(agent, context));
   };
-  const wireOne = async (agent: Agent): Promise<WireAgent> =>
-    (await wire(agent.org_id, [agent]))[0]!;
+  /** One agent as the caller sees it, `can_manage` included: the REST
+   *  response and the `agent_list` frame agree on it. */
+  const wireOne = async (
+    agent: Agent,
+    viewer: Awaited<ReturnType<typeof requireUser>>,
+  ): Promise<WireAgent> => {
+    const row = (await wire(agent.org_id, [agent]))[0]!;
+    return {
+      ...row,
+      can_manage: (await store.access(viewer, agent)).can_manage,
+    };
+  };
 
   /** Replaces an agent's Integration list as `user`, then re-reads it. */
   const setIntegrations = async (
@@ -601,7 +611,7 @@ export function registerAgentRoutes(
         ? agent
         : await setIntegrations(user, agent, entries);
     return sendJson(reply, {
-      agent: await wireOne(created),
+      agent: await wireOne(created, user),
       access: await store.access(user, created),
     });
   });
@@ -633,7 +643,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const agent = await store.get(user, agentId);
     return sendJson(reply, {
-      agent: await wireOne(agent),
+      agent: await wireOne(agent, user),
       access: await store.access(user, agent),
     });
   });
@@ -672,7 +682,7 @@ export function registerAgentRoutes(
     // An `all`-tools Agent derives its Integrations; a submitted list is ignored.
     if (entries !== undefined && agent.tools_mode !== "all")
       agent = await setIntegrations(user, agent, entries);
-    return sendJson(reply, { agent: await wireOne(agent) });
+    return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   /** Stops the turns of an agent that just left service (archived or
@@ -693,7 +703,7 @@ export function registerAgentRoutes(
       parseUuidParam(req, "id"),
     );
     await stopAgentWork(agent.id);
-    return sendJson(reply, { agent: await wireOne(agent) });
+    return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   app.post("/api/v1/agents/:id/restore", async (req, reply) => {
@@ -702,7 +712,7 @@ export function registerAgentRoutes(
       user,
       parseUuidParam(req, "id"),
     );
-    return sendJson(reply, { agent: await wireOne(agent) });
+    return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   app.delete("/api/v1/agents/:id", async (req, reply) => {
@@ -712,7 +722,7 @@ export function registerAgentRoutes(
       parseUuidParam(req, "id"),
     );
     await stopAgentWork(agent.id);
-    return sendJson(reply, { agent: await wireOne(agent) });
+    return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   app.get("/api/v1/agents/:id/export", async (req, reply) => {
