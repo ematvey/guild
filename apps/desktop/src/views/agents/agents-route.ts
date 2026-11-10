@@ -401,6 +401,8 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
 
 export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   private: "Private",
+  // The server no longer writes `team`; a client that predates 0.6.86 reads it.
+  team: "Shared",
   org: "Organization",
 };
 
