@@ -144,7 +144,11 @@ export interface EventRow {
 // routine, chat-tree and skill-catalog socket frames carry.
 // ---------------------------------------------------------------------------
 
-export type AgentVisibility = "private" | "org";
+// `team` is retired: the server never writes it, and a client that still
+// knows it renders it. It leaves the enum when no shipped client predates
+// 0.6.86.
+// coherence:seam owner=@maintainer until=2027-06-01 reason="shipped clients carry the team visibility"
+export type AgentVisibility = "private" | "team" | "org";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 export type AgentRunStatus =
   | "queued"

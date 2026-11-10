@@ -945,7 +945,7 @@
         "tools": { "type": "array", "items": { "type": "string" } },
         "tools_mode": { "type": "string", "enum": ["selected", "all"] },
         "generative_ui": { "type": "boolean", "description": "Replies may carry Generated UI (`openui` blocks) the client renders as components." },
-        "visibility": { "type": "string", "enum": ["private", "org"] },
+        "visibility": { "type": "string", "enum": ["private", "team", "org"] },
         "resources": { "$ref": "#/$defs/Json", "description": "The agent's sandbox budget." },
         "status": { "type": "string", "enum": ["active", "archived", "deleting", "deleted"] },
         "is_personal": { "type": "boolean", "description": "The user's personal agent: always private, never deleted." },
