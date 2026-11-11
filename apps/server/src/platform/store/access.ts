@@ -35,6 +35,12 @@ export interface AccessPerson {
   avatar_url: string | null;
 }
 
+/** One team a picker offers: every team of the org, by name. */
+export interface AccessTeam {
+  id: string;
+  label: string;
+}
+
 /** The viewer columns of the visibility predicate: SQL expressions for the
  *  org id, whether the viewer is an admin, and the viewer's user id. */
 export interface ViewerSql {
@@ -328,6 +334,18 @@ export class AccessStore {
     for (const row of res.rows)
       out.get(row.user_id)?.set(row.item_id, row.level);
     return out;
+  }
+
+  /** The org's teams, by name: what an access picker offers. */
+  async teams(orgId: string): Promise<AccessTeam[]> {
+    const res = await this.pool.query(
+      "SELECT id, name FROM teams WHERE org_id = $1 ORDER BY name",
+      [orgId],
+    );
+    return (res.rows as Record<string, unknown>[]).map((row) => ({
+      id: row.id as string,
+      label: row.name as string,
+    }));
   }
 
   /** The org's people, by display name: what an access picker offers. */

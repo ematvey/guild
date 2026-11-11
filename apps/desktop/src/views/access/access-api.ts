@@ -2,7 +2,12 @@
 // org's people for the picker. Agents and Apps share them.
 
 import { request } from "../../lib/api/request";
-import type { AccessEntry, AccessList, AccessPerson } from "@guild/wire/rest";
+import type {
+  AccessEntry,
+  AccessList,
+  AccessPerson,
+  AccessTeam,
+} from "@guild/wire/rest";
 
 /** The item kinds whose access list this panel edits. */
 export type AccessKind = "agent" | "app";
@@ -32,4 +37,12 @@ export async function listAccessPeople(): Promise<AccessPerson[]> {
     "/api/v1/access/people",
   );
   return body.people;
+}
+
+export async function listAccessTeams(): Promise<AccessTeam[]> {
+  const body = await request<{ teams: AccessTeam[] }>(
+    "GET",
+    "/api/v1/access/teams",
+  );
+  return body.teams;
 }

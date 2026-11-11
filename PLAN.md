@@ -1,3 +1,15 @@
+## 0.6.91 — Sharing: every Team, and no boilerplate
+
+The sharing dialog offered only the Teams the caller belongs to, so a
+second Team was often missing. `GET /api/v1/access/teams` now lists every
+Team of the Org for the picker, beside `/access/people`. The picker stays
+open after a pick, so several Teams or Members are added in one pass.
+
+The dialog is `Sharing` and says nothing else: the two paragraphs that
+restated the title and each other are gone, the panel is wider, and the
+level select no longer truncates. `GET /api/v1/access/teams` returns
+`AccessTeam` (`id`, `label`).
+
 ## 0.6.87 — PostHog joins the shop
 
 PostHog is a built-in Integration. One row points at one project: the

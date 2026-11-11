@@ -234,4 +234,13 @@ describe("access lists", () => {
     expect(people.map((person) => person.id)).toContain(e.memberId);
     expect(people.every((person) => person.label.includes("@"))).toBe(true);
   });
+
+  it("lists every team of the org for the picker, member or not", async () => {
+    const res = await call("GET", "/api/v1/access/teams", e.memberToken);
+    expect(res.statusCode, res.body).toBe(200);
+    const teams = (
+      JSON.parse(res.body) as { teams: { id: string; label: string }[] }
+    ).teams;
+    expect(teams).toContainEqual({ id: e.teamId, label: "Sales" });
+  });
 });

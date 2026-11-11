@@ -63,4 +63,10 @@ export function registerAccessRoutes(
     const user = await requireUser(auth, req);
     return sendJson(reply, { people: await access.people(user.org_id) });
   });
+
+  // `GET /api/v1/access/teams` — every Team of the org, for the picker.
+  app.get("/api/v1/access/teams", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    return sendJson(reply, { teams: await access.teams(user.org_id) });
+  });
 }

@@ -19,11 +19,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import type { AccessEntry, AccessLevel, AccessPerson } from "@guild/wire/rest";
-import { listMyTeams, type TeamOption } from "../agents/agents-api";
+import type {
+  AccessEntry,
+  AccessLevel,
+  AccessPerson,
+  AccessTeam,
+} from "@guild/wire/rest";
 import {
   getAccess,
   listAccessPeople,
+  listAccessTeams,
   putAccess,
   type AccessKind,
 } from "./access-api";
@@ -51,7 +56,7 @@ function EntryRow({
   onRemove: () => void;
 }) {
   return (
-    <li className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2">
+    <li className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2.5">
       <Icon entry={entry} />
       <span className="min-w-0 flex-1 truncate text-sm">
         {entry.subject_label}
@@ -64,7 +69,7 @@ function EntryRow({
           onValueChange={(value) => onLevel(value as AccessLevel)}
           disabled={disabled}
         >
-          <SelectTrigger className="h-8 w-28">
+          <SelectTrigger className="h-8 w-32 shrink-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -99,7 +104,7 @@ export function AccessPanel({
   const [entries, setEntries] = useState<AccessEntry[] | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [people, setPeople] = useState<AccessPerson[]>([]);
-  const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [teams, setTeams] = useState<AccessTeam[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -121,7 +126,7 @@ export function AccessPanel({
         if (!dead) setPeople(rows);
       })
       .catch(() => setPeople([]));
-    void listMyTeams()
+    void listAccessTeams()
       .then((rows) => {
         if (!dead) setTeams(rows);
       })
@@ -170,7 +175,7 @@ export function AccessPanel({
       {
         subject_kind: "team",
         subject_id: team.id,
-        subject_label: team.name,
+        subject_label: team.label,
         level: "read",
       },
     ]);
@@ -203,20 +208,14 @@ export function AccessPanel({
   const peopleChoices = people.filter((person) => !named.has(person.id));
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          Everyone listed can open this {KIND_NOUN[kind]}. Can edit also lets
-          them change it.
-        </p>
-        {busy && (
-          <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-        )}
-      </div>
+    <div className="space-y-2.5">
+      {busy && (
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      )}
       {entries === null ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : entries.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border px-2.5 py-3 text-xs text-muted-foreground">
+        <p className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
           Only you can open this {KIND_NOUN[kind]}.
         </p>
       ) : (
@@ -264,9 +263,12 @@ export function AccessPanel({
                 {teamChoices.map((team) => (
                   <DropdownMenuItem
                     key={team.id}
-                    onSelect={() => addTeam(team.id)}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      addTeam(team.id);
+                    }}
                   >
-                    {team.name}
+                    {team.label}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -291,7 +293,10 @@ export function AccessPanel({
                 {peopleChoices.map((person) => (
                   <DropdownMenuItem
                     key={person.id}
-                    onSelect={() => addPerson(person.id)}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      addPerson(person.id);
+                    }}
                   >
                     {person.label}
                   </DropdownMenuItem>

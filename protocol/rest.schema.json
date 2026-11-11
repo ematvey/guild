@@ -64,6 +64,7 @@
     "AccessEntry": { "$ref": "#/$defs/AccessEntry" },
     "AccessList": { "$ref": "#/$defs/AccessList" },
     "AccessPerson": { "$ref": "#/$defs/AccessPerson" },
+    "AccessTeam": { "$ref": "#/$defs/AccessTeam" },
     "AppFunction": { "$ref": "#/$defs/AppFunction" },
     "AppParam": { "$ref": "#/$defs/AppParam" },
     "UserInfo": { "$ref": "#/$defs/UserInfo" },
@@ -1171,6 +1172,16 @@
         "id": { "$ref": "#/$defs/Uuid" },
         "label": { "type": "string" },
         "avatar_url": { "type": ["string", "null"] }
+      }
+    },
+    "AccessTeam": {
+      "description": "One team an access picker offers.",
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "label": { "type": "string" }
       }
     },
     "App": {

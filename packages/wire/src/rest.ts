@@ -395,6 +395,12 @@ export interface AccessPerson {
   avatar_url: string | null;
 }
 
+/** One team an access picker offers. */
+export interface AccessTeam {
+  id: string;
+  label: string;
+}
+
 /** One App as lists carry it: everything but the page. */
 export interface App {
   id: string;

@@ -39,7 +39,6 @@ import { AccessPanel } from "../access/AccessPanel";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@guild/ui/components/dialog";
@@ -269,7 +268,7 @@ function AppHeader({
               )}
               {(isOwner || app.can_edit) && (
                 <DropdownMenuItem onSelect={() => onEditAccess()}>
-                  <Users className="size-4" /> Who has access
+                  <Users className="size-4" /> Sharing
                 </DropdownMenuItem>
               )}
               {canDelete && (
@@ -368,13 +367,12 @@ function OpenApp({
         onEditAccess={() => setAccessOpen(true)}
       />
       <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
-        <DialogContent>
+        <DialogContent
+          className="max-h-[85vh] max-w-2xl overflow-y-auto"
+          aria-describedby={undefined}
+        >
           <DialogHeader>
-            <DialogTitle>Who has access to {app.name}</DialogTitle>
-            <DialogDescription>
-              Everyone listed can open this app. Can edit also lets them publish
-              it.
-            </DialogDescription>
+            <DialogTitle>Sharing</DialogTitle>
           </DialogHeader>
           <AccessPanel kind="app" id={app.id} />
         </DialogContent>
