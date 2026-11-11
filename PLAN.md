@@ -1,3 +1,20 @@
+## 0.6.92 — One sidebar, on every page
+
+Five lists called themselves a sidebar and behaved differently: the chat,
+project and settings panels resized and collapsed, the Apps list was a fixed
+`w-72` aside, the Integrations list a fixed `w-[19rem]` block, and only the
+chat header offered a way back. `views/sidebar/sidebar.tsx` now owns the
+column: `Sidebar` draws the aside with the drag handle, `useSidebar` holds
+the width and the collapse flag, and `lib/sidebar.ts` persists both, so a
+resize or a collapse holds across pages. Every list renders inside it.
+
+The rail's first slot toggles the sidebar: the Guild mark while it is open,
+the expand button while it is collapsed. The workspace switcher left that
+slot and joined the account menu, which now carries every signed-in server,
+the add-a-server action, its per-server sign-out and Sign out itself. The
+chat header no longer needs its own expand button, and the mobile drawer
+keeps the mark alone.
+
 ## 0.6.91 — Sharing: every Team, and no boilerplate
 
 The sharing dialog offered only the Teams the caller belongs to, so a

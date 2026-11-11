@@ -1,18 +1,12 @@
-//! The server switcher (desktop only): the daemon's signed-in servers in a
-//! dropdown anchored at the sidebar top. Switching re-points the engine's
-//! active session, the webview re-mirrors session.info, and the app reloads —
-//! the same restore path a fresh launch takes.
+//! The server switcher (desktop only): the daemon's signed-in servers in the
+//! account menu. Switching re-points the engine's active session, the webview
+//! re-mirrors session.info, and the app reloads — the same restore path a
+//! fresh launch takes.
 
 import { useEffect, useState } from "react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@guild/ui/components/dropdown-menu";
-import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
+import { DropdownMenuItem } from "@guild/ui/components/dropdown-menu";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { Plus, X } from "lucide-react";
-import { DesktopTooltip } from "../components/desktop-tooltip";
 import { HAS_ENGINE } from "../lib/session";
 import { serverList, serverSignOut, serverSwitch, type ServerList } from "../lib/api/servers";
 
@@ -138,51 +132,5 @@ export function ServerMenuItems({
         );
       })}
     </>
-  );
-}
-
-/** Rail trigger: the active server's logo as a compact icon button (the
- * rail's first button); the dropdown carries the switcher rows. On the web
- * (single server) it renders nothing. */
-export function ServerRailButton({
-  onAddWorkspace,
-  onReload,
-}: {
-  onAddWorkspace?: (baseUrl?: string) => void;
-  /** Runs after a switch or sign-out (the caller reloads the app). */
-  onReload: () => void;
-}) {
-  const list = useServerList();
-  if (!HAS_ENGINE) return null;
-  const activeRow = (list?.workspaces ?? []).find((w) => w.base_url === (list?.active ?? null));
-  const label = activeRow ? activeRow.name || shortOrigin(activeRow.base_url) : "Guild";
-  return (
-    <DropdownMenu>
-      <DesktopTooltip label="Switch server" side="right">
-        <DropdownMenuTrigger asChild>
-          <button
-            className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-            aria-label="Switch server"
-          >
-            {list === null ? (
-              <Skeleton className="size-6 shrink-0" />
-            ) : activeRow?.logo_url ? (
-              <img
-                src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
-                alt=""
-                className="size-6 shrink-0 rounded object-contain"
-              />
-            ) : (
-              <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
-                {label.slice(0, 1).toUpperCase()}
-              </span>
-            )}
-          </button>
-        </DropdownMenuTrigger>
-      </DesktopTooltip>
-      <DropdownMenuContent side="bottom" align="start" className="w-60">
-        <ServerMenuItems list={list} onAddWorkspace={onAddWorkspace} onReload={onReload} />
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

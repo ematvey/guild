@@ -10,14 +10,14 @@ import {
   LayoutGrid,
   MessageSquare,
   Package,
+  PanelLeftOpen,
   Plug,
   Settings,
 } from "lucide-react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
-import { ServerRailButton } from "./server-menu";
-import { HAS_SHELL } from "../lib/session";
+import { ServerMenuItems } from "./server-menu";
 import type { ChatRoute } from "./thread/route";
 
 /** A rail entry is a projection of the route, never stored panel state: the
@@ -76,6 +76,36 @@ function RailButton({
   );
 }
 
+/** The rail's first slot: the Guild mark while the sidebar is open, and the
+ *  expand button while it is collapsed. Without a toggle (the mobile
+ *  drawer) it is the mark alone. */
+function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle?: () => void }) {
+  if (collapsed) {
+    return <RailButton label="Expand sidebar" icon={PanelLeftOpen} active={false} onClick={() => onToggle?.()} />;
+  }
+  const logo = (
+    <>
+      <img src="/brand/guild-icon-light.svg" alt="" className="size-7 dark:hidden" />
+      <img src="/brand/guild-icon-dark.svg" alt="" className="hidden size-7 dark:block" />
+    </>
+  );
+  if (!onToggle) {
+    return <span className="flex size-9 items-center justify-center">{logo}</span>;
+  }
+  return (
+    <DesktopTooltip label="Collapse sidebar" hotkey="mod+B" side="right">
+      <button
+        type="button"
+        aria-label="Collapse sidebar"
+        onClick={onToggle}
+        className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
+      >
+        {logo}
+      </button>
+    </DesktopTooltip>
+  );
+}
+
 export function SidebarRail({
   activeTab,
   onTabChange,
@@ -90,6 +120,8 @@ export function SidebarRail({
   isMobile,
   unreadChats,
   unreadProjects,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   activeTab: RailTab;
   onTabChange: (tab: RailTab) => void;
@@ -100,7 +132,8 @@ export function SidebarRail({
   avatarUrl?: string | null;
   onOpenDevice: () => void;
   onSignOut: () => void;
-  /** Desktop multi-workspace: the rail's first button hosts the switcher. */
+  /** Desktop multi-workspace: the account menu carries the switcher rows
+   *  and the add-a-server action. */
   onAddWorkspace?: (baseUrl?: string) => void;
   /** Activity is an admin surface; members never see its rail entry. */
   role?: string;
@@ -111,6 +144,10 @@ export function SidebarRail({
   unreadChats?: number;
   /** Unseen chats the Projects panel lists. */
   unreadProjects?: number;
+  /** The sidebar panel is collapsed: the first slot offers to expand it. */
+  collapsed?: boolean;
+  /** Absent in the mobile drawer, where there is no sidebar to collapse. */
+  onToggleCollapse?: () => void;
 }) {
   const tabs = (role === "admin" ? TABS : TABS.filter((tab) => !ADMIN_TABS.includes(tab.id))).filter(
     (tab) => !(isMobile && tab.id === "skills"),
@@ -118,9 +155,7 @@ export function SidebarRail({
   return (
     <nav className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 text-sidebar-foreground">
       <div className="flex flex-col items-center gap-1">
-        {/* First button: the active workspace (logo/initial); its dropdown
-            carries the switcher rows. Renders nothing on the web. */}
-        <ServerRailButton onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
+        <SidebarToggle collapsed={collapsed} onToggle={onToggleCollapse} />
         {tabs.map(({ id, label, icon: Icon }) => (
           <RailButton
             key={id}
@@ -142,16 +177,21 @@ export function SidebarRail({
         />
         <div className="p-1">
           <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
+            {/* Desktop multi-workspace: every signed-in server, the add
+                action and the per-server sign-out. The web has one server,
+                so the section is absent there. */}
+            {onAddWorkspace && (
+              <>
+                <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
             <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
-            {/* Browser only: the desktop sign-out lives on the workspace rows
-                (inline ×). */}
-            {!HAS_SHELL && <DropdownMenuSeparator />}
-            {!HAS_SHELL && (
-              <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-                Sign out
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+              Sign out
+            </DropdownMenuItem>
           </UserBadge>
         </div>
       </div>
