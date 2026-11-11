@@ -562,13 +562,19 @@ export async function saveIntegration(
   const schemaFields = connector.fields;
   const enabled = typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
   // Required settings must be filled (a missing optional falls back to the
-  // manifest default or stays absent). Credential fields are skipped here —
-  // they are enforced by the missing-secrets gate below, which reports the
-  // proper conflict code.
+  // manifest default or stays absent). Each kind has its own "present": a
+  // number field is filled when the config carries a finite number. Credential
+  // fields are skipped here — they are enforced by the missing-secrets gate
+  // below, which reports the proper conflict code.
   for (const f of schemaFields) {
     if (!f.required || f.kind === "secret") continue;
     const value = configForTools[f.name];
-    const present = f.kind === "boolean" ? typeof value === "boolean" : typeof value === "string" && value !== "";
+    const present =
+      f.kind === "boolean"
+        ? typeof value === "boolean"
+        : f.kind === "number"
+          ? typeof value === "number" && Number.isFinite(value)
+          : typeof value === "string" && value !== "";
     if (!present) {
       const label = f.label ?? f.name;
       throw ApiError.badRequest(`field ${label} is required`);

@@ -842,6 +842,34 @@ describe("admin integration save path", () => {
     );
   });
 
+  it("a required number setting is filled by a number, not only by a string", async () => {
+    const id = await seedIntegration("posthog", {}, false);
+    const saved = await call(
+      "PUT",
+      `/api/v1/admin/integrations/${id}`,
+      e.adminToken,
+      {
+        config: { base_url: connectorBase(), project_id: 7 },
+        secrets: { api_key: "phx_test" },
+      },
+    );
+    expect(saved.statusCode).toBe(200);
+    const row = (
+      await e.env.db.query("SELECT config FROM integrations WHERE id = $1", [id])
+    ).rows[0]!;
+    expect(row.config.project_id).toBe(7);
+    const missing = await call(
+      "PUT",
+      `/api/v1/admin/integrations/${id}`,
+      e.adminToken,
+      { config: { base_url: connectorBase() } },
+    );
+    expect(missing.statusCode).toBe(400);
+    expect(JSON.parse(missing.body).error.message).toBe(
+      "invalid integration config: posthog config requires a numeric project_id",
+    );
+  });
+
   it("a settings save never touches the tools curation map (the PUT tools endpoint is its only writer)", async () => {
     const id = await seedIntegration(
       "langfuse",
