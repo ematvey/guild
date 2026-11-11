@@ -209,9 +209,6 @@ export function AccessPanel({
 
   return (
     <div className="space-y-2.5">
-      {busy && (
-        <Loader2 className="size-4 animate-spin text-muted-foreground" />
-      )}
       {entries === null ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : entries.length === 0 ? (
@@ -303,6 +300,9 @@ export function AccessPanel({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+          )}
+          {busy && (
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
           )}
         </div>
       )}
