@@ -1,3 +1,26 @@
+## 0.6.96 — develop and master merged, one version
+
+The two branches carried their own version bumps (0.6.94 on `develop`,
+0.6.95 on `master`), so the merge had no single answer in `Cargo.toml`,
+the workspace `package.json` files or the two lockfiles. The merge keeps
+both trees and sets the product version to 0.6.96 with
+`scripts/bump-version.sh`. `master` and `develop` now hold the same
+tree; work continues on `develop`.
+
+## 0.6.95 — the sandbox home is a tmpfs, not a workspace dir
+
+A package store grew on the agent workspace volume: `HOME`, the
+npm/pip/cargo caches and user installs all pointed at
+`/workspace/.sandbox-home`, so one agent left a 183 MB chromium and
+145 MB of pip cache there, 1.2 GB total. The home is now a 512m tmpfs at
+`/home/sandbox` (`GUILD_SANDBOX_HOME_SIZE`). User-level installs and
+caches work inside one container and die with it; project-local installs
+under `/workspace` still persist. The agent prompt says the workspace is
+a home, not a package store, and that egress reaches package registries
+only. Agent tools ask for a timeout on any command that can block:
+`agent_bash` has no default one, so one stuck command held a run for
+21 minutes.
+
 ## 0.6.94 — web_fetch reads what firecrawl refuses
 
 `web_fetch` failed on three kinds of URL that exist: JSON and plain-text

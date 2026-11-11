@@ -65,7 +65,7 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       const { out } = await sh(env, "cat /proc/self/environ | tr '\\0' '\\n'; cat /proc/1/environ | tr '\\0' '\\n'");
       expect(out).not.toMatch(/GUILD_SANDBOX_RUNNER_TOKEN|GUILD_MASTER_KEY|GUILD_DATABASE_URL|GUILD_JWT/);
       expect(out).not.toContain(TOKEN);
-      expect(out).toMatch(/HOME=\/workspace\/\.sandbox-home/);
+      expect(out).toMatch(/HOME=\/home\/sandbox/);
     });
 
     it("cannot see the data volume, the docker socket, or other workspaces", async () => {
@@ -147,20 +147,21 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       expect(pip.out).toContain("1.16.0");
     }, 600_000);
 
-    it("keeps workspace files and installs across sandbox removal", async () => {
+    it("keeps workspace files and project installs, drops the home, across sandbox removal", async () => {
       await sh(env, "echo persisted > keep.txt");
       env.disconnect();
       await runner.remove(main.key);
       const fresh = envFor(main);
       const { code, out } = await sh(
         fresh,
-        "cat keep.txt; command -v cowsay; python3 -c 'import six; print(six.__version__)'; ls proj/node_modules",
+        "cat keep.txt; ls proj/node_modules; command -v cowsay; python3 -c 'import six' 2>&1 | tail -1",
       );
       expect(code, out).toBe(0);
       expect(out).toContain("persisted");
-      expect(out).toContain("/workspace/.sandbox-home/.npm-global/bin/cowsay");
-      expect(out).toContain("1.16.0");
       expect(out).toContain("left-pad");
+      // The home is a tmpfs: a user-level install does not outlive the container.
+      expect(out).not.toContain("cowsay");
+      expect(out).toMatch(/No module named six/);
       env = fresh;
     }, 300_000);
   });

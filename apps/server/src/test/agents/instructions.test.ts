@@ -45,6 +45,13 @@ describe("composeAgentInstructions", () => {
     expect(text).toContain("Do not mention workspace paths");
   });
 
+  it("keeps the workspace out of the package-store role", () => {
+    const text = composeAgentInstructions({ name: "Echo", is_personal: false }, config(FULL));
+    expect(text).toContain("It is your home, not a package store");
+    expect(text).toContain("do not install browsers, desktop apps, models or datasets");
+    expect(text).toContain("Egress reaches package registries only");
+  });
+
   it("uses the description as the agent's purpose", () => {
     const text = composeAgentInstructions(
       { name: "Scout", description: "Finds sources and checks claims.", is_personal: false },

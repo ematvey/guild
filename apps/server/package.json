@@ -1,7 +1,7 @@
 {
   "name": "@guild/server",
   "private": true,
-  "version": "0.6.94",
+  "version": "0.6.96",
   "type": "module",
   "description": "Guild cloud server (TypeScript, on pi-durable).",
   "scripts": {
