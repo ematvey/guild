@@ -54,7 +54,8 @@ import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
 import { useAgentPick } from "./hooks/use-agent-pick";
 import { useChatActions } from "./hooks/use-chat-actions";
-import { useChatColumnWidth, useSidebarWidth } from "./hooks/use-column-resize";
+import { useChatColumnWidth } from "./hooks/use-column-resize";
+import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { useMobileGestures } from "./hooks/use-mobile-gestures";
 import { useScrollPin } from "./hooks/use-scroll-pin";
 import { useMemberProfile } from "../../lib/profile-store";
@@ -278,8 +279,9 @@ function ThreadView(props: ThreadProps) {
   thread.resyncRef.current = () => socketRef.current?.resync();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
-  const [collapsed, setCollapsed] = useState(false); // desktop sidebar
-  const { width, resizing, startDrag } = useSidebarWidth();
+  // Desktop sidebar: one shared width and collapse flag, persisted, so the
+  // chat, project, settings, apps and integrations lists behave alike.
+  const sidebarState = useSidebar();
   const column = useChatColumnWidth(pane);
   const shell = useRef<HTMLDivElement>(null);
   const openDrawer = useCallback(() => setOpen(true), []);
@@ -449,7 +451,7 @@ function ThreadView(props: ThreadProps) {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey) return;
       if (e.code === "KeyB" && !e.altKey) {
         e.preventDefault();
-        setCollapsed((c) => !c);
+        sidebarState.toggleCollapsed();
       } else if (e.code === "KeyN" && (HAS_SHELL ? true : e.altKey)) {
         e.preventDefault();
         newChatRef.current();
@@ -457,7 +459,7 @@ function ThreadView(props: ThreadProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isMobile]);
+  }, [isMobile, sidebarState.toggleCollapsed]);
 
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Navigates to the project's addressed scratch view — the pick effect
@@ -599,6 +601,9 @@ function ThreadView(props: ThreadProps) {
       },
       isMobile,
     );
+    // A collapsed sidebar hides the target's list — a tab pick is an intent
+    // to see it, so the pick re-expands the sidebar.
+    if (target.expandsPanel) sidebarState.setCollapsed(false);
     if (tab === "apps") {
       pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: null, apps: APPS_HOME });
       return;
@@ -635,9 +640,6 @@ function ThreadView(props: ThreadProps) {
       newChat: false,
       ...(tab === "settings" ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null } : {}),
     });
-    // A collapsed panel hides the tab's content — a tab pick is an intent
-    // to see it, so the panel re-expands on the newly picked tab.
-    if (target.expandsPanel) setCollapsed(false);
   };
   // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
   // route tabs (agents / activity) render in the main column, so the
@@ -663,7 +665,7 @@ function ThreadView(props: ThreadProps) {
     [pushRoute, isMobile],
   );
 
-  const sidebarCollapse = useCallback(() => setCollapsed(true), []);
+  const sidebarCollapse = useCallback(() => sidebarState.setCollapsed(true), [sidebarState.setCollapsed]);
   const sidebarClose = useCallback(() => setOpen(false), []);
   // The mobile drawer carries the rail too, so every panel tab renders there;
   // its header X closes the sheet (the built-in corner close is suppressed:
@@ -748,6 +750,8 @@ function ThreadView(props: ThreadProps) {
 
   const railProps = {
     activeTab: railTab,
+    collapsed: sidebarState.collapsed,
+    onToggleCollapse: sidebarState.toggleCollapsed,
     email,
     displayName,
     avatarUrl,
@@ -800,23 +804,9 @@ function ThreadView(props: ThreadProps) {
           </SheetContent>
         </Sheet>
       ) : !paneLayout.aside ? null : (
-        <aside
-          className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
-            resizing ? "" : "transition-[width] duration-150"
-          } ${collapsed ? "" : "border-r border-border"}`}
-          style={{ width: collapsed ? 0 : width }}
-        >
-          {/* Collapsed = panel fully gone (the icon rail stays); the header
-              toggle reopens it and the central pane reflows on toggle. */}
-          {!collapsed && sidebar}
-          {!collapsed && (
-            <div
-              className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
-              onMouseDown={startDrag}
-              title="Drag to resize"
-            />
-          )}
-        </aside>
+        // Collapsed = the column is gone (the icon rail stays and offers
+        // the expand button); the central pane reflows on toggle.
+        <Sidebar collapsed={sidebarState.collapsed}>{sidebar}</Sidebar>
       )}
 
       {/* main column */}
@@ -851,9 +841,7 @@ function ThreadView(props: ThreadProps) {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader
                 isMobile={isMobile}
-                collapsed={collapsed}
                 onOpenDrawer={openDrawer}
-                onExpandSidebar={() => setCollapsed(false)}
                 chatId={viewChatId}
                 title={activeTitle}
                 titleLoading={threadLoading && blocks.length === 0}

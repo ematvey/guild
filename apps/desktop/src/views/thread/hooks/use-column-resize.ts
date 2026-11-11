@@ -1,55 +1,8 @@
-// The thread view's two drag-resizable widths: the sidebar panel and the
-// centered conversation column. Each persists its width and follows a
-// resize made by another surface (the settings pane) through its event.
+// The thread view's drag-resizable conversation column. The sidebar column
+// has its own shared state in views/sidebar/sidebar.tsx.
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
-import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../../../lib/sidebar-width";
+import { trackDrag } from "../../../lib/drag";
 import { CHAT_DEFAULT_W, clampChatWidth, saveChatWidth, storedChatWidth } from "../../../lib/chat-width";
-
-/** Follows the pointer from mousedown to mouseup; the end commits once. */
-function trackDrag(move: (clientX: number) => void, end: () => void): void {
-  const onMove = (ev: MouseEvent) => move(ev.clientX);
-  const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
-    end();
-  };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
-}
-
-/** The desktop sidebar panel's width. While dragging, `resizing` lets the
- *  view suspend its width transition — an animated width chases the cursor
- *  and reads as lag. */
-export function useSidebarWidth() {
-  const [width, setWidth] = useState<number>(() => storedSidebarWidth());
-  const [resizing, setResizing] = useState(false);
-  // Settings may resize the shared width while this sidebar stays mounted.
-  useEffect(() => {
-    const resync = () => setWidth(storedSidebarWidth());
-    window.addEventListener("guild:sidebar-width-changed", resync);
-    return () => window.removeEventListener("guild:sidebar-width-changed", resync);
-  }, []);
-  const startDrag = useCallback(
-    (e: ReactMouseEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = width;
-      setResizing(true);
-      trackDrag(
-        (x) => setWidth(clampSidebarWidth(startW + x - startX)),
-        () => {
-          setResizing(false);
-          setWidth((w) => {
-            saveSidebarWidth(w);
-            return w;
-          });
-        },
-      );
-    },
-    [width],
-  );
-  return { width, resizing, startDrag };
-}
 
 /** The conversation column's width, with one drag handle per edge. The
  *  column is centered, so one pixel of cursor travel moves both edges — the

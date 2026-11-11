@@ -284,13 +284,14 @@ export function pruneStopping(
 }
 
 /** Layout mode for one route (desktop rail). The skills and agents pages
- *  are full main-column swaps: NO sidebar aside at all — the page replaces
+ *  are full main-column swaps with no sidebar at all — the page replaces
  *  the chat thread — so picking one must not touch the persisted sidebar
  *  collapsed state either (leaving restores the sidebar exactly as it was).
- *  Every other tab keeps the resizable panel next to the chat, and a tab
- *  pick re-expands a collapsed panel. Mobile has no aside (the rail and
- *  panels live in the drawer); its main pane is the surface the URL names,
- *  the same page as on desktop. */
+ *  Every other route shows a sidebar: the chat panel's own tab, or the list
+ *  pane the apps and integrations pages render inside the same column. A
+ *  tab pick re-expands a collapsed sidebar. Mobile has no aside (the rail
+ *  and panels live in the drawer); its main pane is the surface the URL
+ *  names, the same page as on desktop. */
 export type TabPane = "chat" | "skillsPage" | "agentsPage" | "integrationsPage" | "appsPage" | "settingsPage";
 export function tabPaneLayout(
   route: Pick<ChatRoute, "tab" | "skills" | "agents"> & {
@@ -316,8 +317,8 @@ export function tabPaneLayout(
   }
   if (route.skills !== null) return { aside: false, mainPane: "skillsPage", expandsPanel: false };
   if (route.agents !== null) return { aside: false, mainPane: "agentsPage", expandsPanel: false };
-  if ((route.integrations ?? null) !== null) return { aside: false, mainPane: "integrationsPage", expandsPanel: false };
-  if ((route.apps ?? null) !== null) return { aside: false, mainPane: "appsPage", expandsPanel: false };
+  if ((route.integrations ?? null) !== null) return { aside: false, mainPane: "integrationsPage", expandsPanel: true };
+  if ((route.apps ?? null) !== null) return { aside: false, mainPane: "appsPage", expandsPanel: true };
   if (route.tab === "settings") return { aside: true, mainPane: "settingsPage", expandsPanel: true };
   return { aside: true, mainPane: "chat", expandsPanel: true };
 }

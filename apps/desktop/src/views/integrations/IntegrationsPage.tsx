@@ -47,6 +47,8 @@ import { InstalledDetail } from "./installed";
 import { CatalogLandingPage } from "./landing";
 import { AddOrgMcp } from "./connect-mcp";
 import { CatalogSources, InstallBundle } from "./sources";
+import { CollapseButton } from "../sidebar/chrome";
+import { Sidebar, useSidebar } from "../sidebar/sidebar";
 
 type Navigate = (next: IntegrationsRoute, options?: { replace?: boolean }) => void;
 
@@ -136,6 +138,7 @@ function ListPane({
   updates,
   catalog,
   loading,
+  onCollapse,
 }: {
   route: IntegrationsRoute;
   navigate: Navigate;
@@ -144,6 +147,8 @@ function ListPane({
   updates: Map<string, AvailableUpdate>;
   catalog: CatalogGroup[];
   loading: boolean;
+  /** Desktop only: collapse the sidebar from its own header. */
+  onCollapse?: () => void;
 }) {
   const view = route.view === "catalog" ? "catalog" : "installed";
   const q = route.view === "installed" || route.view === "catalog" ? route.q : "";
@@ -170,31 +175,34 @@ function ListPane({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-5">
         <h1 className="text-lg font-semibold">Integrations</h1>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Add an integration"
-              className="flex size-9 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Plus className="size-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-60">
-            <DropdownMenuItem onSelect={() => navigate(INTEGRATIONS_CATALOG)}>
-              <BookOpen className="size-4" /> Browse the catalog
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => navigate({ view: "connect", kind: "mcp" })}>
-              <Server className="size-4" /> Connect an MCP server
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => navigate({ view: "connect", kind: "file" })}>
-              <Upload className="size-4" /> Install a plugin bundle
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => navigate({ view: "sources" })}>
-              <BookOpen className="size-4" /> Catalog sources
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <span className="flex items-center gap-1">
+          <CollapseButton onCollapse={onCollapse} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Add an integration"
+                className="flex size-9 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Plus className="size-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuItem onSelect={() => navigate(INTEGRATIONS_CATALOG)}>
+                <BookOpen className="size-4" /> Browse the catalog
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => navigate({ view: "connect", kind: "mcp" })}>
+                <Server className="size-4" /> Connect an MCP server
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => navigate({ view: "connect", kind: "file" })}>
+                <Upload className="size-4" /> Install a plugin bundle
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => navigate({ view: "sources" })}>
+                <BookOpen className="size-4" /> Catalog sources
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
       </div>
       <div className="px-4">
         <div role="tablist" aria-label="List" className="grid grid-cols-2 rounded-lg bg-sidebar-accent p-0.5">
@@ -503,6 +511,7 @@ export function IntegrationsPage({
   isMobile: boolean;
 }) {
   const data = useIntegrationsData();
+  const sidebar = useSidebar();
   const items = data.items;
   const installed = useMemo(
     () => (items ?? []).filter((i) => i.configured).sort((a, b) => a.title.localeCompare(b.title)),
@@ -612,6 +621,7 @@ export function IntegrationsPage({
       updates={updates}
       catalog={catalog}
       loading={loading}
+      onCollapse={() => sidebar.setCollapsed(true)}
     />
   );
 
@@ -638,7 +648,7 @@ export function IntegrationsPage({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <div className="w-[19rem] shrink-0 border-r border-border bg-sidebar">{list}</div>
+      <Sidebar collapsed={sidebar.collapsed}>{list}</Sidebar>
       <main className="min-w-0 flex-1 overflow-y-auto" data-scrollable>
         <div className="w-full max-w-[90rem] px-8 pb-20 pt-10 lg:px-12 2xl:px-16">{page}</div>
       </main>

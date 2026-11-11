@@ -25,6 +25,8 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import type { App } from "@guild/wire/rest";
 import { useMemberProfile } from "../../lib/profile-store";
+import { CollapseButton } from "../sidebar/chrome";
+import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
 import { APPS_HOME, type AppsRoute } from "./apps-route";
@@ -99,18 +101,22 @@ function ListPane({
   route,
   navigate,
   me,
+  onCollapse,
 }: {
   apps: App[] | null;
   route: AppsRoute;
   navigate: Navigate;
   me: string | null;
+  /** Desktop only: collapse the sidebar from its own header. */
+  onCollapse?: () => void;
 }) {
   const mine = (apps ?? []).filter((app) => app.owner_user_id === me);
   const shared = (apps ?? []).filter((app) => app.owner_user_id !== me);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="px-4 pb-3 pt-5">
+      <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-5">
         <h1 className="text-lg font-semibold">Apps</h1>
+        <CollapseButton onCollapse={onCollapse} />
       </div>
       <nav
         aria-label="Apps"
@@ -410,6 +416,7 @@ export function AppsPage({
   onOpenChat: ((chatId: string) => void) | null;
 }) {
   const apps = useApps();
+  const sidebar = useSidebar();
   const profile = useMemberProfile();
   const me = profile === null ? null : { id: profile.id, role: profile.role };
   const open =
@@ -462,14 +469,15 @@ export function AppsPage({
   }
   return (
     <div className="flex h-full min-h-0">
-      <aside className="w-72 shrink-0 border-r border-border bg-sidebar">
+      <Sidebar collapsed={sidebar.collapsed}>
         <ListPane
           apps={apps}
           route={route}
           navigate={navigate}
           me={me?.id ?? null}
+          onCollapse={() => sidebar.setCollapsed(true)}
         />
-      </aside>
+      </Sidebar>
       <section className="min-w-0 flex-1">{page}</section>
     </div>
   );

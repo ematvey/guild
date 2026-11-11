@@ -1349,6 +1349,19 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
     });
   });
 
+  it("the apps and integrations pages carry their own list pane", () => {
+    for (const [routeValue, pane] of [
+      [{ ...route("chats"), apps: { appId: null } }, "appsPage"],
+      [{ ...route("chats"), integrations: { view: "installed", slug: null, tab: null, q: "" } }, "integrationsPage"],
+    ] as const) {
+      expect(tabPaneLayout(routeValue as Parameters<typeof tabPaneLayout>[0], false)).toEqual({
+        aside: false,
+        mainPane: pane,
+        expandsPanel: true,
+      });
+    }
+  });
+
   it("the other desktop tabs keep the panel sidebar and the chat thread", () => {
     for (const tab of ["chats", "work", "settings"] as ChatRoute["tab"][]) {
       expect(tabPaneLayout(route(tab), false)).toEqual({
