@@ -44,6 +44,8 @@ import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import { MachineTargetError, MachineTargets, type MachineFacts } from "../machines/targets.js";
+import { hubMachineFacts } from "../machines/hub-facts.js";
 import type { SandboxTarget } from "../sandbox/client.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
@@ -86,7 +88,6 @@ import { SkillRuntime } from "./skills.js";
 import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
 import { ConversationExecutors } from "./executors.js";
-import { MachineTargets } from "../machines/targets.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
 import { appFunctionCheck } from "../agents/publish-app.js";
 import { appFunctionCall, appFunctionGate, createAppCallGate, renderAppsIndex } from "../agents/app-tools.js";
@@ -138,6 +139,9 @@ export interface RuntimeDeps {
   readonly objects?: ObjectStore;
   /** The machine/member socket registry (the server only). */
   readonly hub?: MachineDispatchHost;
+  /** A worker's answers to the machine facts the hub would give the server:
+   *  which machines are live, and where one's home folder is. */
+  readonly machineFacts?: MachineFacts;
   readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">;
   /** The LLM trace sink: the approval judge self-reports through it. */
   readonly trace?: TraceStore;
@@ -417,16 +421,20 @@ export class GuildRuntime {
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (built-in coding tools enabled) + codemode.
+    // The hub holds every machine socket; a worker holds none and answers
+    // liveness and the home folder over its IPC seam instead.
+    const facts = deps.machineFacts ?? (this.hub === undefined ? undefined : hubMachineFacts(this.hub));
     this.machineTargets = new MachineTargets({
       listForUser: (orgId, userId) => stores.machines.listForUser(orgId, userId),
-      machineOnline: (machineId) => this.hub?.machineOnline(machineId) ?? false,
-      machineHolder: (machineId) => this.hub?.machineHolder(machineId) ?? null,
-      machineRequest: async (machineId, orgId, op, payload, timeoutMs) =>
-        (await this.hub?.machineRequest(machineId, orgId, op, payload, timeoutMs)) ?? {
-          ok: false,
-          error: { kind: "offline" as const },
+      facts: facts ?? {
+        online: async () => new Set<string>(),
+        home: async () => {
+          throw new MachineTargetError("no machine link is available in this process");
         },
-      dispatch: () => this.dispatch(),
+      },
+      // The same dispatch the executors use: the worker's IPC proxy in
+      // worker mode, the hub's registry in the server.
+      dispatch: () => this.turns.machineDispatch ?? this.dispatch(),
       timeoutMs: () => config.clientToolTimeoutMs,
     });
     this.guildExtension = createGuildExtension({

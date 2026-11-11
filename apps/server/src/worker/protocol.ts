@@ -56,7 +56,13 @@ export type WorkerRequest =
   | { t: "remote-submit"; ref: number; chatId: string; input: SubmitTurnInput }
   /** A worker writing an entry into another chat's conversation (an agent
    *  message to a routine feed, a notice). */
-  | { t: "remote-write-entry"; ref: number; chatId: string; entry: EntryDraft };
+  | { t: "remote-write-entry"; ref: number; chatId: string; entry: EntryDraft }
+  /** Which of these machines hold a live socket right now: the worker's
+   *  answer for `MachineFacts.online`. */
+  | { t: "machine-online"; ref: number; orgId: string; machineIds: string[] }
+  /** One machine's home folder (an `fs_home` request on its own link): the
+   *  worker's answer for `MachineFacts.home`. */
+  | { t: "machine-home"; ref: number; orgId: string; machineId: string };
 
 /** Worker → server: a fire-and-forget cancel of one of its dispatches. */
 export type WorkerCancel = { t: "dispatch_cancel"; ref: number };

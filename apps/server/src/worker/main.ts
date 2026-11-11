@@ -17,6 +17,7 @@ import { GuildRuntime, type SubmitTurnInput } from "../harness/runtime.js";
 import { loadWorkerConfig } from "../config.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 import { IpcMachineDispatch } from "./dispatch-proxy.js";
+import { IpcMachineFacts } from "./machine-facts.js";
 import { failure, failureError, type BufferUpdate, type ServerToWorker, type WorkerToServer } from "./protocol.js";
 
 /** How long a worker waits for the server to answer one of its requests. */
@@ -41,6 +42,9 @@ const nextRef = (): number => (workerRef += 1);
 // The worker has no hub connection: machine-tool dispatch proxies to the
 // server over the fork IPC channel (worker/dispatch-proxy.ts).
 const ipcDispatch = new IpcMachineDispatch((message) => send(message), nextRef);
+// Liveness and a machine's home folder live on the server's hub connection,
+// which this process does not hold: both are asked over the same channel.
+const ipcMachineFacts = new IpcMachineFacts((message) => send(message), nextRef);
 const remotePending = new Map<
   number,
   { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -84,6 +88,7 @@ const runtime = new GuildRuntime({
   masterKey: () => secretsKey,
   objects,
   trace,
+  machineFacts: ipcMachineFacts,
   placement: {
     kind: "worker",
     chatId,
@@ -168,7 +173,8 @@ process.on("message", (raw: unknown) => {
       else pending.reject(failureError(message));
       return;
     }
-    ipcDispatch.onReply(message);
+    if (ipcDispatch.onReply(message)) return;
+    ipcMachineFacts.onReply(message);
     return;
   }
   const request = message;

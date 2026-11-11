@@ -1,3 +1,19 @@
+## 0.6.99 — the machine facts a worker cannot read itself
+
+0.6.98 read machine liveness and the machine's home folder from the hub, and
+the hub lives in the server process. Every chat runs in its own forked worker,
+which holds no hub, so every machine read as offline: the prompt listed three
+online machines as offline, and a call naming one failed with `machine
+offline` before it reached anything.
+
+The two facts are now a dependency (`MachineFacts`) with two answers: the
+server reads the hub, and a worker asks the server over the same IPC channel
+its machine dispatch already uses (`machine-online`, `machine-home`). The
+worker's dispatch comes from its turn placement, not from a hub it does not
+have. `worker-mode.test.ts` covers the path a plain chat takes: a call that
+names a machine crosses IPC, the home comes back from the machine, and the
+prompt does not call a live machine offline.
+
 ## 0.6.99 — a tool's class is the admin's call, not only an MCP one
 
 The class of an integration tool decides two things: who may use it (the reach

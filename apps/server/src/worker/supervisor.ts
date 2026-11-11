@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import { workerConfigEnv, type Config } from "../config.js";
 import type { MachineToolOutcome } from "../machines/dispatch.js";
+import type { MachineFacts } from "../machines/targets.js";
 import type { SubmitTurnInput } from "../harness/turn-backend.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import {
@@ -177,6 +178,9 @@ export class ForkSupervisor {
       respawnDelays?: readonly number[];
       /** How long a stop may wait for the worker before it is killed. */
       stopSettleTimeoutMs?: number;
+      /** The two machine facts a worker cannot read itself — liveness and a
+       *  machine's home folder — answered from the server's hub. */
+      machineFacts?: MachineFacts;
     } = {},
   ) {}
 
@@ -388,6 +392,23 @@ export class ForkSupervisor {
       this.serve(handle, message.ref, () => {
         if (!this.submitRemote) throw new Error("remote submit is unavailable");
         return this.submitRemote(message.chatId, message.input);
+      });
+      return;
+    }
+    // Worker-initiated machine facts: liveness and the home folder live on
+    // the server's hub connection, which a worker does not hold.
+    if (message.t === "machine-online") {
+      this.serve(handle, message.ref, async () => {
+        if (!this.options.machineFacts) throw new Error("machine facts unavailable");
+        const online = await this.options.machineFacts.online(message.orgId, message.machineIds);
+        return { online: [...online] };
+      });
+      return;
+    }
+    if (message.t === "machine-home") {
+      this.serve(handle, message.ref, async () => {
+        if (!this.options.machineFacts) throw new Error("machine facts unavailable");
+        return { home: await this.options.machineFacts.home(message.orgId, message.machineId) };
       });
       return;
     }

@@ -3,13 +3,16 @@
 // member's machines), and the call runs there instead of in the sandbox.
 //
 // This module owns the three facts such a call needs: which machine the
-// member meant, the folder the call runs in (the machine's home, asked once
-// per connection), and the ExecutionEnv that carries it. A machine the
-// member does not own is not addressable: machines are private to the
-// Member who paired them.
+// member meant, the folder the call runs in (the machine's home, read once
+// and kept until the machine goes offline), and the ExecutionEnv that
+// carries it. A machine the member does not own is not addressable: machines
+// are private to the Member who paired them.
+//
+// Liveness and the home are asked of the hub, which only the server process
+// holds; a worker answers both over its IPC seam (worker/machine-facts.ts).
+// That is why they are a dependency rather than a direct hub call.
 
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { MachineRequestFn } from "../hub/index.js";
 import { MachineExecutionEnv, type MachineDispatch } from "./dispatch.js";
 import type { MachineRow } from "../platform/store/machines.js";
 
@@ -23,40 +26,43 @@ export interface MachineTarget {
 /** A call the member cannot make: the message is written for the model. */
 export class MachineTargetError extends Error {}
 
+/** The two facts about a machine that only a process holding the hub can
+ *  answer: whether its socket is live, and where its home folder is. */
+export interface MachineFacts {
+  /** The subset of `machineIds` whose socket is live right now. */
+  online(orgId: string, machineIds: readonly string[]): Promise<ReadonlySet<string>>;
+  /** The machine's home folder; throws `MachineTargetError` when the machine
+   *  cannot answer. */
+  home(orgId: string, machineId: string): Promise<string>;
+}
+
 export interface MachineTargetDeps {
   /** The member's registry rows (own machines only). */
   listForUser(orgId: string, userId: string): Promise<MachineRow[]>;
-  /** The socket presence flag (a machine is online only while it holds its
-   *  slot). */
-  machineOnline(machineId: string): boolean;
-  /** The live slot's connection id: the home cache is keyed by it, so a
-   *  reconnect re-reads the folder. */
-  machineHolder(machineId: string): { conn_id: string; org_id: string } | null;
-  machineRequest: MachineRequestFn;
-  /** The dispatch registry, built once the hub exists. */
+  facts: MachineFacts;
+  /** The dispatch registry, built once the process has one. */
   dispatch(): Pick<MachineDispatch, "dispatch"> | undefined;
   /** The per-call result timeout. */
   timeoutMs(): number;
 }
 
-/** One machine's home, as read for one connection. */
-interface HomeEntry {
-  connId: string;
-  home: string;
-}
-
 export class MachineTargets {
-  private homes = new Map<string, HomeEntry>();
+  private homes = new Map<string, string>();
 
   constructor(private readonly deps: MachineTargetDeps) {}
 
   /** The member's machines, most recently connected first. */
   async list(orgId: string, userId: string): Promise<MachineTarget[]> {
     const rows = await this.deps.listForUser(orgId, userId);
+    const live = await this.deps.facts.online(
+      orgId,
+      rows.map((row) => row.machine_id),
+    );
+    for (const row of rows) if (!live.has(row.machine_id)) this.homes.delete(row.machine_id);
     return rows.map((row) => ({
       machine_id: row.machine_id,
       label: row.label,
-      online: this.deps.machineOnline(row.machine_id),
+      online: live.has(row.machine_id),
     }));
   }
 
@@ -82,23 +88,12 @@ export class MachineTargets {
   }
 
   /** The folder a call on this machine runs in when it names none: the
-   *  machine's home. Read once per connection. */
+   *  machine's home. Read once, and dropped when the machine goes offline. */
   async home(orgId: string, machineId: string): Promise<string> {
-    const holder = this.deps.machineHolder(machineId);
-    if (holder === null || holder.org_id !== orgId) throw new MachineTargetError("machine offline");
     const cached = this.homes.get(machineId);
-    if (cached !== undefined && cached.connId === holder.conn_id) return cached.home;
-    const result = await this.deps.machineRequest(machineId, orgId, "fs_home", null, 10_000);
-    if (!result.ok) {
-      if (result.error.kind === "offline") throw new MachineTargetError("machine offline");
-      throw new MachineTargetError(
-        `the machine did not report its home folder: ${result.error.message ?? result.error.kind}`,
-      );
-    }
-    const value = result.value as { home?: unknown } | null;
-    const home = typeof value?.home === "string" ? value.home : "";
-    if (home === "") throw new MachineTargetError("the machine reported no home folder");
-    this.homes.set(machineId, { connId: holder.conn_id, home });
+    if (cached !== undefined) return cached;
+    const home = await this.deps.facts.home(orgId, machineId);
+    this.homes.set(machineId, home);
     return home;
   }
 

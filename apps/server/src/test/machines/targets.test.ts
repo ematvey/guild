@@ -23,22 +23,22 @@ function row(machine_id: string, label: string | null): MachineRow {
   };
 }
 
-/** A registry of one member's machines plus the live slots, and a hub that
- *  answers `fs_home` with a per-connection folder. */
-function rig(options: { rows?: MachineRow[]; online?: string[]; conn?: string } = {}) {
+/** A registry of one member's machines, the live slots, and the two facts a
+ *  hub (or a worker's IPC seam) answers: liveness and the home folder. */
+function rig(options: { rows?: MachineRow[]; online?: string[] } = {}) {
   const rows = options.rows ?? [row("m-1", "MacBook"), row("m-2", "Build box")];
   const online = new Set(options.online ?? ["m-1", "m-2"]);
-  const state = { conn: options.conn ?? "conn-1", homes: 0 };
+  const state = { homes: 0 };
   const dispatched: { machineId: string; workdir: string | null }[] = [];
   const targets = new MachineTargets({
     listForUser: async () => rows,
-    machineOnline: (machineId) => online.has(machineId),
-    machineHolder: (machineId) => (online.has(machineId) ? { conn_id: state.conn, org_id: "org-1" } : null),
-    machineRequest: async (machineId, _orgId, op) => {
-      if (!online.has(machineId)) return { ok: false, error: { kind: "offline" } };
-      if (op !== "fs_home") return { ok: false, error: { kind: "rejected", message: "unknown op" } };
-      state.homes += 1;
-      return { ok: true, value: { home: `/home/${machineId}` } };
+    facts: {
+      online: async (_orgId, machineIds) => new Set(machineIds.filter((id) => online.has(id))),
+      home: async (_orgId, machineId) => {
+        if (!online.has(machineId)) throw new MachineTargetError("machine offline");
+        state.homes += 1;
+        return `/home/${machineId}`;
+      },
     },
     dispatch: () => ({
       dispatch: async (call) => {
@@ -79,13 +79,20 @@ describe("MachineTargets.resolve", () => {
 });
 
 describe("MachineTargets.home", () => {
-  it("asks once per connection", async () => {
+  it("asks once and keeps the answer", async () => {
     const { targets, state } = rig();
     expect(await targets.home("org-1", "m-1")).toBe("/home/m-1");
     expect(await targets.home("org-1", "m-1")).toBe("/home/m-1");
     expect(state.homes).toBe(1);
-    state.conn = "conn-2";
-    await targets.home("org-1", "m-1");
+  });
+
+  it("asks again after the machine was seen offline", async () => {
+    const { targets, state, online } = rig();
+    expect(await targets.home("org-1", "m-1")).toBe("/home/m-1");
+    online.delete("m-1");
+    await targets.list("org-1", "user-1");
+    online.add("m-1");
+    expect(await targets.home("org-1", "m-1")).toBe("/home/m-1");
     expect(state.homes).toBe(2);
   });
 
