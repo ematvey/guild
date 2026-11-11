@@ -146,6 +146,15 @@ function route(
   if (p === "/gapi/thing") {
     return { status: 200, body: JSON.stringify({ done: true }) };
   }
+  // Google refuses an endpoint outside the granted scopes.
+  if (p === "/gapi/no-scope") {
+    return {
+      status: 403,
+      body: JSON.stringify({
+        error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" },
+      }),
+    };
+  }
   // Jira search.
   if (p === "/rest/api/3/search/jql") {
     return {
@@ -262,12 +271,38 @@ function route(
   }
   // Firecrawl.
   if (p === "/v1/scrape") {
+    if (body.includes("blocked.test")) {
+      return {
+        status: 500,
+        body: JSON.stringify({ success: false, code: "SCRAPE_ALL_ENGINES_FAILED", error: "all engines failed" }),
+      };
+    }
     return {
       status: 200,
       body: JSON.stringify({
         success: true,
         data: { markdown: "# page", metadata: { sourceURL: "https://x.test", statusCode: 200, title: "X" } },
       }),
+    };
+  }
+  // The curl-fetch fallback transport.
+  if (p === "/fetch") {
+    const url = (JSON.parse(body) as { url: string }).url;
+    if (url.includes("binary.test")) {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          url,
+          status: 200,
+          content_type: "application/pdf",
+          bytes: 4096,
+          binary: true,
+        }),
+      };
+    }
+    return {
+      status: 200,
+      body: JSON.stringify({ url, status: 200, content_type: "application/json", text: '{"ok":true}' }),
     };
   }
   if (p === "/v1/search") {
@@ -466,6 +501,36 @@ describe("google_workspace execute (mock backend)", () => {
     expect(out.artifact!.contentType).toBe("text/csv");
     expect(out.artifact!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
     expect(lastHit("/drive/v3/files/f-sheet/export").query.get("mimeType")).toBe("text/csv");
+  });
+
+  it("drive_get_file ignores mime_type on an uploaded file", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "google_workspace",
+      googleConfig(),
+      "drive_get_file",
+      { file_id: "f-1", mime_type: "text/markdown" },
+      GOOGLE_SECRETS,
+      "member@example.test",
+    );
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
+    expect(lastHit("/drive/v3/files/f-1").query.get("alt")).toBe("media");
+  });
+
+  it("the api tool names the granted scopes when Google refuses for a missing one", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "google_workspace",
+        googleConfig(),
+        "api",
+        { path: "/gapi/no-scope" },
+        GOOGLE_SECRETS,
+        "member@example.test",
+      ),
+    ).rejects.toThrow(/grants only https:\/\/www\.googleapis\.com\/auth\/gmail\.readonly/);
   });
 
   it("drive_get_file refuses a file the member cannot download", async () => {
@@ -802,6 +867,51 @@ describe("connector execute spot checks (mock backend)", () => {
     );
     expect(out.content).toContain("# page");
     expect(out.meta).toMatchObject({ card: "web", kind: "fetch", url: "https://x.test", status_code: 200 });
+  });
+
+  it("firecrawl web_fetch falls back to the curl-fetch transport when firecrawl fails", async () => {
+    const previous = process.env["GUILD_CURL_FETCH_URL"];
+    process.env["GUILD_CURL_FETCH_URL"] = vendorBase;
+    try {
+      const out = await executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "firecrawl",
+        { base_url: vendorBase },
+        "web_fetch",
+        { url: "https://blocked.test/spec.json" },
+        [],
+        null,
+      );
+      expect(out.content).toBe('{"ok":true}');
+      expect(out.meta).toMatchObject({ card: "web", kind: "fetch", engine: "curl", status_code: 200 });
+      expect((JSON.parse(lastHit("/fetch").body) as { url: string }).url).toBe("https://blocked.test/spec.json");
+    } finally {
+      if (previous === undefined) delete process.env["GUILD_CURL_FETCH_URL"];
+      else process.env["GUILD_CURL_FETCH_URL"] = previous;
+    }
+  });
+
+  it("firecrawl web_fetch reports a binary fallback body as an error", async () => {
+    const previous = process.env["GUILD_CURL_FETCH_URL"];
+    process.env["GUILD_CURL_FETCH_URL"] = vendorBase;
+    try {
+      await expect(
+        executeConnectorTool(
+          NO_REGISTRY,
+          "org-test",
+          "firecrawl",
+          { base_url: vendorBase },
+          "web_fetch",
+          { url: "https://blocked.test/binary.test" },
+          [],
+          null,
+        ),
+      ).rejects.toThrow(/is application\/pdf \(4096 bytes\), not text/);
+    } finally {
+      if (previous === undefined) delete process.env["GUILD_CURL_FETCH_URL"];
+      else process.env["GUILD_CURL_FETCH_URL"] = previous;
+    }
   });
 
   it("firecrawl web_search maps count onto the firecrawl limit", async () => {

@@ -23,6 +23,8 @@ const GOOGLE_SCOPES =
   "https://www.googleapis.com/auth/calendar.readonly " +
   "https://www.googleapis.com/auth/drive.readonly " +
   "https://www.googleapis.com/auth/admin.directory.user.readonly";
+/** The scopes the service account carries, for the error that names them. */
+export const GOOGLE_GRANTED_SCOPES = GOOGLE_SCOPES.split(" ");
 const GOOGLE_JWT_TTL_SECS = 3600;
 /** A cached access token refreshes this long before its own expiry. */
 const GOOGLE_EXPIRY_MARGIN_MS = 60_000;
@@ -439,9 +441,6 @@ async function driveGetFile(config: JsonObject, args: JsonObject, token: string)
     filename = `${name}.${extension}`;
     url = `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}/export?mimeType=${urlencode(chosen)}`;
   } else {
-    if (requested !== null) {
-      throw new Error(`drive_get_file: ${name} is a binary file; mime_type does not apply to it`);
-    }
     contentType = mime;
     filename = name;
     url = `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}?alt=media`;
@@ -498,7 +497,19 @@ export async function googleWorkspaceExecute(
   // refused.
   if (tool === "api") {
     const token = await googleAccessTokenFor(config, secrets, actingAs);
-    return callVendorApi(googleApiBase(config), { kind: "bearer", token }, args, API_MAX_CHARS, []);
+    try {
+      return await callVendorApi(googleApiBase(config), { kind: "bearer", token }, args, API_MAX_CHARS, []);
+    } catch (error) {
+      // The service account carries four read-only scopes; any other Google
+      // API answers 403. Name them instead of echoing the vendor text.
+      const message = (error as Error).message;
+      if (!message.includes("insufficient authentication scopes")) throw error;
+      throw new Error(
+        `google_workspace api: this connection grants only ${GOOGLE_GRANTED_SCOPES.join(", ")}. ` +
+          "The endpoint needs a scope outside that set. Use a named tool, or ask an admin to add the scope " +
+          "in the Admin console domain-wide delegation.",
+      );
+    }
   }
   switch (tool) {
     case "gmail_search": {

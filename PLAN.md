@@ -1,3 +1,24 @@
+## 0.6.94 — web_fetch reads what firecrawl refuses
+
+`web_fetch` failed on three kinds of URL that exist: JSON and plain-text
+endpoints (`…/openapi.json`), pages that redirect into a single-page app, and
+pages whose text is too thin for firecrawl's content heuristics. Firecrawl
+answers all three with `SCRAPE_ALL_ENGINES_FAILED`, so the agent got an error
+for a page that a browser opens. The new `curl-fetch` service
+(`deploy/curl-fetch`, python + curl_cffi) is the fallback transport: the
+firecrawl `web_fetch` retries a failed scrape through one browser-fingerprinted
+GET and returns the body as text, with `engine: "curl"` on the web card. A
+binary body is an error, never a cut file. `GUILD_CURL_FETCH_URL` (set by
+compose) turns the fallback on; empty leaves firecrawl alone.
+
+Two Google Workspace defects came from the same audit. `drive_get_file`
+refused a `mime_type` on an uploaded file, while its own description said the
+field is ignored — it is ignored now. And the `api` tool promised "the full
+API surface" while the service account carries four read-only scopes, so an
+agent learned the truth from a bare 403: the tool now names the granted
+scopes, counts as `read`, and turns a scope refusal into a message that says
+which scopes exist and who can add one.
+
 ## 0.6.93 — Apps are a capability an Agent uses
 
 `publish_app` was the whole App surface: an Agent could create a page and

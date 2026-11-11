@@ -35,6 +35,41 @@ async function firecrawlPost(base: string, path: string, body: JsonObject, key: 
   return parsed;
 }
 
+/** The fallback transport for a page firecrawl cannot return: the
+ *  curl-fetch service, one browser-fingerprinted GET. Empty disables it. */
+function curlFetchUrl(): string {
+  return (process.env["GUILD_CURL_FETCH_URL"] ?? "").trim().replace(/\/+$/, "");
+}
+
+/** Fetches one URL through the fallback transport. A binary body is an error:
+ *  web_fetch returns text. */
+async function curlFetch(base: string, url: string, maxChars: number): Promise<ToolOutcome> {
+  const parsed = await requestJson(
+    `${base}/fetch`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) },
+    FETCH_TIMEOUT_MS,
+    {
+      unreachable: (cause) => `curl-fetch unreachable: ${cause}`,
+      unreadable: () => "curl-fetch returned bad json",
+      status: (status, text) => `curl-fetch returned ${status}: ${excerpt(text)}`,
+      badJson: () => "curl-fetch returned bad json",
+    },
+  );
+  const finalUrl = typeof parsed["url"] === "string" ? parsed["url"] : url;
+  const statusCode = typeof parsed["status"] === "number" ? parsed["status"] : 200;
+  const contentType = typeof parsed["content_type"] === "string" ? parsed["content_type"] : "";
+  if (parsed["binary"] === true) {
+    const bytes = typeof parsed["bytes"] === "number" ? parsed["bytes"] : 0;
+    throw new Error(`curl-fetch: ${finalUrl} is ${contentType || "a binary file"} (${bytes} bytes), not text`);
+  }
+  const text = typeof parsed["text"] === "string" ? parsed["text"] : "";
+  const [content, truncated] = truncateWithMarker(text, maxChars);
+  return {
+    content,
+    meta: { card: "web", kind: "fetch", url: finalUrl, status_code: statusCode, truncated, engine: "curl" },
+  };
+}
+
 export async function firecrawlExecute(
   config: JsonObject,
   tool: string,
@@ -50,7 +85,20 @@ export async function firecrawlExecute(
       if (typeof url !== "string") throw new Error("web_fetch requires url");
       await assertPublicFetchTarget(url);
       const maxChars = clampNumber(args, "max_chars", MAX_BODY_CHARS, MAX_BODY_CHARS);
-      const resp = await firecrawlPost(base, "/v1/scrape", { url, formats: ["markdown"] }, key);
+      const fallback = curlFetchUrl();
+      let resp: JsonObject;
+      try {
+        resp = await firecrawlPost(base, "/v1/scrape", { url, formats: ["markdown"] }, key);
+      } catch (error) {
+        // firecrawl refuses JSON and plain-text endpoints, and pages whose
+        // text is too thin for its content heuristics.
+        if (fallback === "") throw error;
+        try {
+          return await curlFetch(fallback, url, maxChars);
+        } catch (fallbackError) {
+          throw new Error(`${(error as Error).message}; fallback: ${(fallbackError as Error).message}`);
+        }
+      }
       const data = (resp["data"] ?? {}) as JsonObject;
       const metadata = (data["metadata"] ?? {}) as JsonObject;
       const markdown = typeof data["markdown"] === "string" ? data["markdown"] : "";

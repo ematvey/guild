@@ -1,4 +1,4 @@
-import { googleAdminAccessToken } from "./execute.js";
+import { googleAdminAccessToken, GOOGLE_GRANTED_SCOPES } from "./execute.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "@guild/integration-sdk";
 import { googleWorkspaceExecute } from "./execute.js";
@@ -174,7 +174,7 @@ const plugin: IntegrationPlugin = {
           },
         },
       },
-      apiTool("Google API"),
+      apiTool("Google API", { scopes: GOOGLE_GRANTED_SCOPES, class: "read" }),
     ],
   },
   async testConnection(config: JsonObject, secrets) {

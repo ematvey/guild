@@ -32,4 +32,4 @@ Firecrawl provides the `web_search` and `web_fetch` traits: it can answer the sh
 - **"firecrawl unreachable".** The API URL is wrong or not reachable from the Guild server's network. From inside a container, `localhost` is the container itself; use the host or service name.
 - **"unexpected response at / (not a Firecrawl API?)".** The URL points at something else, such as a proxy page or the wrong port.
 - **401 or 403 from Firecrawl.** The instance requires an API key, or the key is wrong.
-- **"firecrawl error: …" on a fetch.** Firecrawl could not scrape that page; the message carries its reason.
+- **"firecrawl error: …" on a fetch.** Firecrawl could not scrape that page. When the deployment sets `GUILD_CURL_FETCH_URL`, `web_fetch` retries the URL through the `curl-fetch` service (a browser-fingerprinted GET), which answers JSON and plain-text endpoints and thin pages. The message carries both reasons when the fallback also fails.

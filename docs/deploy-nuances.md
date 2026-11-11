@@ -173,11 +173,17 @@ Notes:
 
 ## 4. Compose stack details
 
-- Default `up` starts `server`, `sandbox-runner`, `egress` and the
-  build-only `sandbox-image` (exits at once); postgres/clickhouse/minio are behind
-  the `fullstack` profile (`--profile fullstack` to use them). The server
-  has no compose-service deps — the host services must already be up. If
-  the server crash-loops on boot, check the host services first.
+- Default `up` starts `server`, `sandbox-runner`, `egress`, `curl-fetch` and
+  the build-only `sandbox-image` (exits at once); postgres/clickhouse/minio
+  are behind the `fullstack` profile (`--profile fullstack` to use them). The
+  server has no compose-service deps — the host services must already be up.
+  If the server crash-loops on boot, check the host services first.
+- `curl-fetch` (`deploy/curl-fetch`, python + curl_cffi) is `web_fetch`'s
+  fallback transport. The server reaches it at `GUILD_CURL_FETCH_URL`
+  (`http://curl-fetch:8080`, set by compose). It replays a Chrome TLS and
+  HTTP/2 fingerprint for URLs firecrawl cannot return — JSON and plain-text
+  endpoints, and pages whose text is too thin for firecrawl's content
+  heuristics. It is never published; it answers only on the stack network.
 - The fullstack fallback ClickHouse stays pinned to
   `clickhouse-server:24`; the host ClickHouse floats 26.5
   (`pull_policy: always`) — a host CH upgrade can change behavior.
