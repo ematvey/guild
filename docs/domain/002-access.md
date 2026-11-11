@@ -99,7 +99,7 @@ The audience is checked when someone adds an Integration to an Agent or raises a
 
 Where an Agent gives someone more of an Integration than its audience grants them, the Agent and the Integration's Access tab show a warning naming who (every member, a Team, or a Member granted the Agent by name, its owner included) and what. Nothing composes the two at call time.
 
-A script calling the integration tool API has no Agent between it and the Integration, so the caller's own audience ceiling decides. An App's data function follows the same rule for whoever is viewing the App (see 004): sharing an App never lends its author's reach.
+A script calling the integration tool API has no Agent between it and the Integration, so the caller's own audience ceiling decides. An App's data function follows the same rule for whoever calls it — a Member opening the page, or an Agent calling it for that Member (see 004): sharing an App never lends its author's reach.
 
 An Integration call acts as the Member's own mapped identity; overriding it is admin-only. An Integration that impersonates (Google Workspace) refuses a call without a Member identity. Integration secrets and MCP headers are encrypted at rest. They are decrypted only at call time and never appear in a snapshot, a prompt or a client.
 
@@ -120,6 +120,8 @@ The Approval gate then decides, in this order:
 3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member.
 
 On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks wherever an interactive gate exists. One marked `always_allow` never asks.
+
+An App data function an Agent calls with `call_app` is the exception on the sandbox Executor: a function whose tool is `write`- or `admin`-class, or curated `always_ask`, asks the Member with a card, exactly as the App's own page does. A `read`-class function runs at once.
 
 An Approval is answered once: the first answer wins under the Thread's lock. No answer within five minutes is a denial that tells the model not to retry. A stop ends a waiting Approval as aborted. An answer that arrives after its Turn ended is recorded as expired.
 

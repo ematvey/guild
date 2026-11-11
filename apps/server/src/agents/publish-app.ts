@@ -28,6 +28,8 @@ export interface PublishAppContext {
   chatId: string;
   /** The member the thread acts for: the App's owner. */
   userId: string;
+  /** The member's org role, for the row the publish returns. */
+  userRole: string;
   /** The agent workspace volume as this process sees it. */
   workspaceRoot: string;
   /** Why the member cannot call one function's tool; null when they can. */
@@ -44,7 +46,7 @@ const output = Type.Object({
   functions: Type.Array(Type.String()),
 });
 
-export const PUBLISH_APP_DESCRIPTION = `Publish an HTML file from your workspace as a Guild App: a page the member opens from Apps (and can share with the org) that reads live data from the org's Integrations. Pass app_id to publish a new version of an App you published before.
+export const PUBLISH_APP_DESCRIPTION = `Publish an HTML file from your workspace as a Guild App: a page the member opens from Apps (and can share with the org) that reads live data from the org's Integrations. Pass app_id to publish a new version of an App you may edit (yours, or one shared with you at the edit level); read_app shows the page and its functions.
 
 The page runs sandboxed with no network: fetch, XHR, WebSocket, remote images and popups are blocked. Scripts, styles and fonts may load from cdn.jsdelivr.net, cdnjs.cloudflare.com, unpkg.com and Google Fonts; inline <script> and <style> work. Data comes only through data functions, declared here and called from the page:
 
@@ -68,7 +70,12 @@ export function createPublishAppTool(context: PublishAppContext): ToolRegistrati
       description: Type.Optional(
         Type.String({ description: `What the App shows, at most ${MAX_APP_DESCRIPTION} characters` }),
       ),
-      app_id: Type.Optional(Type.String({ description: "Publish a new version of this App instead of a new App" })),
+      app_id: Type.Optional(
+        Type.String({
+          description:
+            "Publish a new version of this App instead of a new App: any App you may edit (read_app shows can_edit)",
+        }),
+      ),
       functions: Type.Optional(
         Type.Array(Type.Any(), { description: "The App's data functions (see the tool description)" }),
       ),
@@ -116,6 +123,7 @@ export function createPublishAppTool(context: PublishAppContext): ToolRegistrati
         const app = await context.apps.publish({
           orgId: context.agent.org_id,
           ownerUserId: context.userId,
+          role: context.userRole,
           agentId: context.agent.id,
           chatId: context.chatId,
           ...(args.app_id === undefined ? {} : { appId: args.app_id }),

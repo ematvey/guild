@@ -4,12 +4,7 @@
 // touches a store.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type {
-  ChatsCtx,
-  GatewayCtx,
-  IdentityCtx,
-  InfraContext,
-} from "../route-contexts.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
@@ -19,12 +14,7 @@ import { rm } from "node:fs/promises";
 import { agentWorkspaceDir } from "../../agents/workspace-config.js";
 import { AgentFiles } from "../../agents/files.js";
 import { runRoutineNow } from "../../agents/scheduler.js";
-import {
-  createRoutine,
-  deleteRoutine,
-  getRoutine,
-  updateRoutine,
-} from "../../agents/routines.js";
+import { createRoutine, deleteRoutine, getRoutine, updateRoutine } from "../../agents/routines.js";
 import { search } from "../../agents/search.js";
 import { resolveIntegrations } from "../../integrations/plugins.js";
 import { toolCurate } from "../../integrations/policy.js";
@@ -84,8 +74,7 @@ const AGENT_TOOL_CATALOG = [
     name: "bash",
     label: "Shell / list files",
     group: "Workspace",
-    description:
-      "Run shell commands in the workspace (includes listing files).",
+    description: "Run shell commands in the workspace (includes listing files).",
     safe: true,
   },
   {
@@ -99,8 +88,7 @@ const AGENT_TOOL_CATALOG = [
     name: "conversations_list",
     label: "List conversations",
     group: "Memory",
-    description:
-      "List this agent's own threads with type and archive filters, sorted and paginated.",
+    description: "List this agent's own threads with type and archive filters, sorted and paginated.",
     safe: true,
   },
   {
@@ -168,11 +156,39 @@ const AGENT_TOOL_CATALOG = [
     safe: false,
   },
   {
+    name: "list_apps",
+    label: "List apps",
+    group: "Apps",
+    description: "List the Guild Apps this member can open, with their data functions.",
+    safe: true,
+  },
+  {
+    name: "read_app",
+    label: "Read app",
+    group: "Apps",
+    description: "Read one App's manifest and functions, and write its page into the workspace.",
+    safe: true,
+  },
+  {
     name: "publish_app",
     label: "Publish app",
-    group: "Files",
+    group: "Apps",
     description:
       "Publish a workspace HTML page as an App that reads Integration data through named functions, run as each viewer.",
+    safe: false,
+  },
+  {
+    name: "set_app_access",
+    label: "Share app",
+    group: "Apps",
+    description: "Replace who may open and edit an App.",
+    safe: false,
+  },
+  {
+    name: "call_app",
+    label: "Call app function",
+    group: "Apps",
+    description: "Run one data function of an App as the member; a function that writes asks them first.",
     safe: false,
   },
 ];
@@ -213,10 +229,7 @@ async function traitToolCatalog(
   for (const turn of turns) {
     for (const info of turn.tools) {
       if (info.trait === undefined || seen.has(info.spec.name)) continue;
-      if (
-        !toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled
-      )
-        continue;
+      if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
       seen.add(info.spec.name);
       tools.push({
         name: info.spec.name,
@@ -231,12 +244,7 @@ async function traitToolCatalog(
 }
 
 const VISIBILITIES = new Set<AgentVisibility>(["private", "org"]);
-const AGENT_STATUSES = new Set<AgentStatus>([
-  "active",
-  "archived",
-  "deleting",
-  "deleted",
-]);
+const AGENT_STATUSES = new Set<AgentStatus>(["active", "archived", "deleting", "deleted"]);
 const RUN_STATUSES = new Set<AgentRunStatus>([
   "queued",
   "running",
@@ -246,60 +254,42 @@ const RUN_STATUSES = new Set<AgentRunStatus>([
   "skipped",
   "cancelled",
 ]);
-const TRIGGERS = new Set<AgentTrigger>([
-  "message",
-  "routine",
-  "manual",
-  "delegation",
-]);
+const TRIGGERS = new Set<AgentTrigger>(["message", "routine", "manual", "delegation"]);
 
 function sendJson(reply: FastifyReply, value: unknown): FastifyReply {
   return reply.type("application/json").send(JSON.stringify(sortedJson(value)));
 }
 
 function jsonBody(req: FastifyRequest): Record<string, unknown> {
-  return req.body !== null &&
-    typeof req.body === "object" &&
-    !Array.isArray(req.body)
+  return req.body !== null && typeof req.body === "object" && !Array.isArray(req.body)
     ? (req.body as Record<string, unknown>)
     : {};
 }
 
-function optionalString(
-  body: Record<string, unknown>,
-  name: string,
-): string | undefined {
+function optionalString(body: Record<string, unknown>, name: string): string | undefined {
   const value = body[name];
   if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw ApiError.badRequest(`${name} must be a string`);
+  if (typeof value !== "string") throw ApiError.badRequest(`${name} must be a string`);
   return value;
 }
 
 /** Nullable string: the forms send null for an unused field; the API treats
  *  it as absent rather than a type error. */
-function nullableString(
-  body: Record<string, unknown>,
-  name: string,
-): string | undefined {
+function nullableString(body: Record<string, unknown>, name: string): string | undefined {
   if (body[name] === null) return undefined;
   return optionalString(body, name);
 }
 
 function requiredString(body: Record<string, unknown>, name: string): string {
   const value = optionalString(body, name);
-  if (value === undefined || value.trim() === "")
-    throw ApiError.badRequest(`missing ${name}`);
+  if (value === undefined || value.trim() === "") throw ApiError.badRequest(`missing ${name}`);
   return value;
 }
 
-function visibilityField(
-  body: Record<string, unknown>,
-): AgentVisibility | undefined {
+function visibilityField(body: Record<string, unknown>): AgentVisibility | undefined {
   const value = optionalString(body, "visibility");
   if (value === undefined) return undefined;
-  if (!VISIBILITIES.has(value as AgentVisibility))
-    throw ApiError.badRequest("invalid visibility");
+  if (!VISIBILITIES.has(value as AgentVisibility)) throw ApiError.badRequest("invalid visibility");
   return value as AgentVisibility;
 }
 
@@ -308,16 +298,12 @@ function descriptionField(body: Record<string, unknown>): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   if (trimmed.length > MAX_AGENT_DESCRIPTION_CHARS) {
-    throw ApiError.badRequest(
-      `description must be at most ${MAX_AGENT_DESCRIPTION_CHARS} characters`,
-    );
+    throw ApiError.badRequest(`description must be at most ${MAX_AGENT_DESCRIPTION_CHARS} characters`);
   }
   return trimmed;
 }
 
-function toolsField(
-  body: Record<string, unknown>,
-): AgentToolName[] | undefined {
+function toolsField(body: Record<string, unknown>): AgentToolName[] | undefined {
   const value = body["tools"];
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.some((tool) => typeof tool !== "string")) {
@@ -327,53 +313,38 @@ function toolsField(
 }
 
 /** The `integrations` body field: the agent's whole Integration list. */
-function integrationsField(
-  body: Record<string, unknown>,
-): AgentIntegrationEntry[] | undefined {
+function integrationsField(body: Record<string, unknown>): AgentIntegrationEntry[] | undefined {
   const value = body["integrations"];
   if (value === undefined) return undefined;
-  if (!Array.isArray(value))
-    throw ApiError.badRequest("integrations must be an array");
+  if (!Array.isArray(value)) throw ApiError.badRequest("integrations must be an array");
   const seen = new Set<string>();
   return value.map((item: unknown) => {
     const entry = item as Record<string, unknown> | null;
-    if (
-      entry === null ||
-      typeof entry !== "object" ||
-      typeof entry["slug"] !== "string"
-    ) {
+    if (entry === null || typeof entry !== "object" || typeof entry["slug"] !== "string") {
       throw ApiError.badRequest("each integration needs a slug");
     }
-    if (!isToolClass(entry["ceiling"]))
-      throw ApiError.badRequest("ceiling must be read, write or admin");
-    if (seen.has(entry["slug"]))
-      throw ApiError.badRequest(`integration ${entry["slug"]} is listed twice`);
+    if (!isToolClass(entry["ceiling"])) throw ApiError.badRequest("ceiling must be read, write or admin");
+    if (seen.has(entry["slug"])) throw ApiError.badRequest(`integration ${entry["slug"]} is listed twice`);
     seen.add(entry["slug"]);
     return { slug: entry["slug"], ceiling: entry["ceiling"] };
   });
 }
 
-function toolsModeField(
-  body: Record<string, unknown>,
-): "selected" | "all" | undefined {
+function toolsModeField(body: Record<string, unknown>): "selected" | "all" | undefined {
   const value = body["tools_mode"];
   if (value === undefined) return undefined;
-  if (value !== "selected" && value !== "all")
-    throw ApiError.badRequest("invalid tools_mode");
+  if (value !== "selected" && value !== "all") throw ApiError.badRequest("invalid tools_mode");
   return value;
 }
 
 function generativeUiField(body: Record<string, unknown>): boolean | undefined {
   const value = body["generative_ui"];
   if (value === undefined) return undefined;
-  if (typeof value !== "boolean")
-    throw ApiError.badRequest("invalid generative_ui");
+  if (typeof value !== "boolean") throw ApiError.badRequest("invalid generative_ui");
   return value;
 }
 
-function resourcesField(
-  body: Record<string, unknown>,
-): Record<string, unknown> | undefined {
+function resourcesField(body: Record<string, unknown>): Record<string, unknown> | undefined {
   const value = body["resources"];
   if (value === undefined) return undefined;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -385,16 +356,14 @@ function resourcesField(
 function statusFilter(req: FastifyRequest): AgentRunStatus | undefined {
   const value = queryParam(req, "status");
   if (value === undefined || value === "") return undefined;
-  if (!RUN_STATUSES.has(value as AgentRunStatus))
-    throw ApiError.badRequest("invalid status");
+  if (!RUN_STATUSES.has(value as AgentRunStatus)) throw ApiError.badRequest("invalid status");
   return value as AgentRunStatus;
 }
 
 function triggerFilter(req: FastifyRequest): AgentTrigger | undefined {
   const value = queryParam(req, "trigger");
   if (value === undefined || value === "") return undefined;
-  if (!TRIGGERS.has(value as AgentTrigger))
-    throw ApiError.badRequest("invalid trigger");
+  if (!TRIGGERS.has(value as AgentTrigger)) throw ApiError.badRequest("invalid trigger");
   return value as AgentTrigger;
 }
 
@@ -402,8 +371,7 @@ function limitParam(req: FastifyRequest): number | undefined {
   const value = queryParam(req, "limit");
   if (value === undefined || value === "") return undefined;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1)
-    throw ApiError.badRequest("invalid limit");
+  if (!Number.isInteger(parsed) || parsed < 1) throw ApiError.badRequest("invalid limit");
   return parsed;
 }
 
@@ -412,40 +380,29 @@ function showHidden(req: FastifyRequest): boolean {
   return value === "1" || value === "true";
 }
 
-function booleanField(
-  body: Record<string, unknown>,
-  name: string,
-): boolean | undefined {
+function booleanField(body: Record<string, unknown>, name: string): boolean | undefined {
   const value = body[name];
   if (value === undefined) return undefined;
-  if (typeof value !== "boolean")
-    throw ApiError.badRequest(`${name} must be a boolean`);
+  if (typeof value !== "boolean") throw ApiError.badRequest(`${name} must be a boolean`);
   return value;
 }
 
-function routineKindField(
-  body: Record<string, unknown>,
-): AgentRoutineKind | undefined {
+function routineKindField(body: Record<string, unknown>): AgentRoutineKind | undefined {
   const value = optionalString(body, "kind");
   if (value === undefined) return undefined;
-  if (value !== "cron" && value !== "once")
-    throw ApiError.badRequest("kind must be cron or once");
+  if (value !== "cron" && value !== "once") throw ApiError.badRequest("kind must be cron or once");
   return value;
 }
 
-function routineDeliveryField(
-  body: Record<string, unknown>,
-): AgentRoutineDelivery | undefined {
+function routineDeliveryField(body: Record<string, unknown>): AgentRoutineDelivery | undefined {
   const value = optionalString(body, "delivery");
   if (value === undefined) return undefined;
-  if (value !== "thread" && value !== "new_chat")
-    throw ApiError.badRequest("delivery must be thread or new_chat");
+  if (value !== "thread" && value !== "new_chat") throw ApiError.badRequest("delivery must be thread or new_chat");
   return value;
 }
 
 function requireActiveAgent(agent: Agent): void {
-  if (agent.status !== "active")
-    throw ApiError.conflict("agent_not_active", "agent is not active");
+  if (agent.status !== "active") throw ApiError.conflict("agent_not_active", "agent is not active");
 }
 
 export function registerAgentRoutes(
@@ -467,10 +424,7 @@ export function registerAgentRoutes(
   };
   /** One agent as the caller sees it, `can_manage` included: the REST
    *  response and the `agent_list` frame agree on it. */
-  const wireOne = async (
-    agent: Agent,
-    viewer: Awaited<ReturnType<typeof requireUser>>,
-  ): Promise<WireAgent> => {
+  const wireOne = async (agent: Agent, viewer: Awaited<ReturnType<typeof requireUser>>): Promise<WireAgent> => {
     const row = (await wire(agent.org_id, [agent]))[0]!;
     return {
       ...row,
@@ -485,16 +439,11 @@ export function registerAgentRoutes(
     entries: AgentIntegrationEntry[],
   ): Promise<Agent> => {
     const self = await integrationAccess.member(user.org_id, user.id);
-    await integrationAccess.setAgentIntegrations(
-      agent.org_id,
-      agent.id,
-      entries,
-      {
-        id: user.id,
-        role: user.role,
-        team_ids: self?.team_ids ?? new Set(),
-      },
-    );
+    await integrationAccess.setAgentIntegrations(agent.org_id, agent.id, entries, {
+      id: user.id,
+      role: user.role,
+      team_ids: self?.team_ids ?? new Set(),
+    });
     return store.fetchAgent(agent.id);
   };
 
@@ -504,10 +453,7 @@ export function registerAgentRoutes(
   app.get("/api/v1/agents/tools", async (req, reply) => {
     const user = await requireUser(auth, req);
     return sendJson(reply, {
-      tools: [
-        ...AGENT_TOOL_CATALOG,
-        ...(await traitToolCatalog(gateway, user.org_id)),
-      ],
+      tools: [...AGENT_TOOL_CATALOG, ...(await traitToolCatalog(gateway, user.org_id))],
     });
   });
 
@@ -519,13 +465,9 @@ export function registerAgentRoutes(
     if (user.role !== "admin") throw ApiError.adminRequired();
     const body = jsonBody(req);
     const requested = optionalString(body, "model");
-    if (requested !== undefined && requested.trim() === "")
-      throw ApiError.badRequest("model must not be empty");
-    const model =
-      requested ??
-      (await gateway.gatewayStore.listModels(user.org_id))[0]?.model;
-    if (model === undefined)
-      throw ApiError.badRequest("no enabled model for this org");
+    if (requested !== undefined && requested.trim() === "") throw ApiError.badRequest("model must not be empty");
+    const model = requested ?? (await gateway.gatewayStore.listModels(user.org_id))[0]?.model;
+    if (model === undefined) throw ApiError.badRequest("no enabled model for this org");
     const result = await installSpecialists(
       {
         store,
@@ -550,8 +492,7 @@ export function registerAgentRoutes(
     const rawAttachments = body["attachment_ids"];
     if (
       rawAttachments !== undefined &&
-      (!Array.isArray(rawAttachments) ||
-        rawAttachments.some((value) => typeof value !== "string"))
+      (!Array.isArray(rawAttachments) || rawAttachments.some((value) => typeof value !== "string"))
     ) {
       throw ApiError.badRequest("attachment_ids must be an array of strings");
     }
@@ -559,11 +500,7 @@ export function registerAgentRoutes(
     // The agent's model must resolve to an enabled gateway route; a missing
     // route fails before the turn is submitted. The run row opens with the
     // pi-durable run that takes the message.
-    await gateway.gatewayStore.resolveRoute(
-      agent.org_id,
-      agent.model,
-      gateway.masterKey(),
-    );
+    await gateway.gatewayStore.resolveRoute(agent.org_id, agent.model, gateway.masterKey());
     const chat = await chats.chats.getChatInOrg(agent.org_id, thread.chat_id);
     const ack = await submitTurn(
       chats,
@@ -575,12 +512,8 @@ export function registerAgentRoutes(
         model: agent.model,
         messages: [{ role: "user", content: message }],
         attachment_ids: attachmentIds,
-        ...(typeof body["user_message_id"] === "string"
-          ? { user_message_id: body["user_message_id"] }
-          : {}),
-        ...(body["send_mode"] === "steer" || body["send_mode"] === "queue"
-          ? { send_mode: body["send_mode"] }
-          : {}),
+        ...(typeof body["user_message_id"] === "string" ? { user_message_id: body["user_message_id"] } : {}),
+        ...(body["send_mode"] === "steer" || body["send_mode"] === "queue" ? { send_mode: body["send_mode"] } : {}),
       },
       thread.chat_id,
       chat,
@@ -604,12 +537,8 @@ export function registerAgentRoutes(
       resources: resourcesField(body),
     });
     // An `all`-tools Agent derives its Integrations; a submitted list is ignored.
-    const entries =
-      agent.tools_mode === "all" ? undefined : integrationsField(body);
-    const created =
-      entries === undefined || entries.length === 0
-        ? agent
-        : await setIntegrations(user, agent, entries);
+    const entries = agent.tools_mode === "all" ? undefined : integrationsField(body);
+    const created = entries === undefined || entries.length === 0 ? agent : await setIntegrations(user, agent, entries);
     return sendJson(reply, {
       agent: await wireOne(created, user),
       access: await store.access(user, created),
@@ -619,21 +548,14 @@ export function registerAgentRoutes(
   app.get("/api/v1/agents", async (req, reply) => {
     const user = await requireUser(auth, req);
     const status = queryParam(req, "status");
-    if (
-      status !== undefined &&
-      status !== "" &&
-      !AGENT_STATUSES.has(status as AgentStatus)
-    ) {
+    if (status !== undefined && status !== "" && !AGENT_STATUSES.has(status as AgentStatus)) {
       throw ApiError.badRequest("invalid status");
     }
     // The personal agent exists from the first visit.
     await store.ensurePersonalAgent(user);
     const agents = await store.list(user, {
       includeArchived: queryParam(req, "include_archived") === "1",
-      status:
-        status === undefined || status === ""
-          ? undefined
-          : (status as AgentStatus),
+      status: status === undefined || status === "" ? undefined : (status as AgentStatus),
     });
     return sendJson(reply, { agents: await wire(user.org_id, agents) });
   });
@@ -655,16 +577,14 @@ export function registerAgentRoutes(
     const patch: UpdateAgentInput = {};
     const name = optionalString(body, "name");
     if (name !== undefined) {
-      if (name.trim() === "")
-        throw ApiError.badRequest("name must not be empty");
+      if (name.trim() === "") throw ApiError.badRequest("name must not be empty");
       patch.name = name;
     }
     const description = descriptionField(body);
     if (description !== undefined) patch.description = description;
     const model = optionalString(body, "model");
     if (model !== undefined) {
-      if (model.trim() === "")
-        throw ApiError.badRequest("model must not be empty");
+      if (model.trim() === "") throw ApiError.badRequest("model must not be empty");
       patch.model = model;
     }
     const tools = toolsField(body);
@@ -680,8 +600,7 @@ export function registerAgentRoutes(
     const entries = integrationsField(body);
     let agent = await store.update(user, agentId, patch);
     // An `all`-tools Agent derives its Integrations; a submitted list is ignored.
-    if (entries !== undefined && agent.tools_mode !== "all")
-      agent = await setIntegrations(user, agent, entries);
+    if (entries !== undefined && agent.tools_mode !== "all") agent = await setIntegrations(user, agent, entries);
     return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
@@ -698,29 +617,20 @@ export function registerAgentRoutes(
 
   app.post("/api/v1/agents/:id/archive", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.lifecycle.archive(
-      user,
-      parseUuidParam(req, "id"),
-    );
+    const agent = await store.lifecycle.archive(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
     return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   app.post("/api/v1/agents/:id/restore", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.lifecycle.restore(
-      user,
-      parseUuidParam(req, "id"),
-    );
+    const agent = await store.lifecycle.restore(user, parseUuidParam(req, "id"));
     return sendJson(reply, { agent: await wireOne(agent, user) });
   });
 
   app.delete("/api/v1/agents/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const agent = await store.lifecycle.markDeleted(
-      user,
-      parseUuidParam(req, "id"),
-    );
+    const agent = await store.lifecycle.markDeleted(user, parseUuidParam(req, "id"));
     await stopAgentWork(agent.id);
     return sendJson(reply, { agent: await wireOne(agent, user) });
   });
@@ -741,22 +651,13 @@ export function registerAgentRoutes(
       throw ApiError.badRequest("agent is not in the deletion grace period");
     }
     const force = queryParam(req, "force") === "1" && user.role === "admin";
-    const due =
-      agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
-    if (!due && !force)
-      throw ApiError.badRequest("the deletion grace period has not elapsed");
+    const due = agent.purge_after === null || Date.parse(agent.purge_after) <= Date.now();
+    if (!due && !force) throw ApiError.badRequest("the deletion grace period has not elapsed");
     await store.lifecycle.purge(user, agentId);
-    await rm(
-      agentWorkspaceDir(
-        infra.config.agentWorkspaceWriteRoot,
-        agent.org_id,
-        agentId,
-      ),
-      {
-        recursive: true,
-        force: true,
-      },
-    ).catch((error: unknown) => {
+    await rm(agentWorkspaceDir(infra.config.agentWorkspaceWriteRoot, agent.org_id, agentId), {
+      recursive: true,
+      force: true,
+    }).catch((error: unknown) => {
       app.log.warn({ err: error, agentId }, "agent workspace removal failed");
     });
     return sendJson(reply, { purged: true });
@@ -799,12 +700,7 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "use");
     const title = requiredString(jsonBody(req), "title");
     return sendJson(reply, {
-      thread: await store.threads.renameThread(
-        agentId,
-        user.id,
-        threadId,
-        title,
-      ),
+      thread: await store.threads.renameThread(agentId, user.id, threadId, title),
     });
   });
 
@@ -832,8 +728,7 @@ export function registerAgentRoutes(
     refuseDeletingAgent(agent);
     requiredString(jsonBody(req), "message");
     const thread =
-      (await store.threads.mainThread(agentId, user.id)) ??
-      (await store.threads.createThread(agentId, user.id, ""));
+      (await store.threads.mainThread(agentId, user.id)) ?? (await store.threads.createThread(agentId, user.id, ""));
     return agentTurn(req, reply, user, agent, thread);
   });
 
@@ -866,43 +761,41 @@ export function registerAgentRoutes(
    *  are writes: only the chat's owner passes the gate, as for every other
    *  chat write. A chat with no thread row has nothing to act on. `close`
    *  marks the subtree closed, which also drops late results. */
-  const threadAction =
-    (action: "cancel" | "close") =>
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const user = await requireUser(auth, req);
-      const chatId = parseUuidParam(req, "id");
-      await chats.chats.getOwnChat(user.org_id, chatId, user);
-      const thread = await store.threads.threadByChatId(chatId);
-      if (thread === null) throw ApiError.notFound("no such thread");
-      // Closing is a child-only act: the root thread is the conversation the
-      // caller is having, and stopping its turn is `cancel`.
-      if (action === "close" && thread.parent_thread_id === null) {
-        throw ApiError.badRequest("the root thread cannot be closed");
+  const threadAction = (action: "cancel" | "close") => async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
+    const thread = await store.threads.threadByChatId(chatId);
+    if (thread === null) throw ApiError.notFound("no such thread");
+    // Closing is a child-only act: the root thread is the conversation the
+    // caller is having, and stopping its turn is `cancel`.
+    if (action === "close" && thread.parent_thread_id === null) {
+      throw ApiError.badRequest("the root thread cannot be closed");
+    }
+    const context = { store, runtime: chats.runtime, pool: infra.pool };
+    if (action === "cancel") {
+      return sendJson(reply, await cancelThread(context, thread.id));
+    }
+    const result = await closeThread(context, thread.id);
+    // A close is a notice in the parent's conversation: the parent agent
+    // learns the child takes no more sends, and the parent chat's closed
+    // row (kept across a reload) is projected from it. A repeat close
+    // writes nothing.
+    if (result.closed > 0 && thread.parent_thread_id !== null) {
+      const parent = await store.threads.threadById(thread.parent_thread_id);
+      if (parent !== null) {
+        const title = thread.title?.trim() || thread.id;
+        await chats.runtime.writeEntry(
+          parent.chat_id,
+          noticeEntry(
+            `The user closed child thread ${thread.id} ("${title}"): its turns are cancelled and it takes no more sends.`,
+            { type: "child_closed", thread_id: thread.id },
+          ),
+        );
       }
-      const context = { store, runtime: chats.runtime, pool: infra.pool };
-      if (action === "cancel") {
-        return sendJson(reply, await cancelThread(context, thread.id));
-      }
-      const result = await closeThread(context, thread.id);
-      // A close is a notice in the parent's conversation: the parent agent
-      // learns the child takes no more sends, and the parent chat's closed
-      // row (kept across a reload) is projected from it. A repeat close
-      // writes nothing.
-      if (result.closed > 0 && thread.parent_thread_id !== null) {
-        const parent = await store.threads.threadById(thread.parent_thread_id);
-        if (parent !== null) {
-          const title = thread.title?.trim() || thread.id;
-          await chats.runtime.writeEntry(
-            parent.chat_id,
-            noticeEntry(
-              `The user closed child thread ${thread.id} ("${title}"): its turns are cancelled and it takes no more sends.`,
-              { type: "child_closed", thread_id: thread.id },
-            ),
-          );
-        }
-      }
-      return sendJson(reply, result);
-    };
+    }
+    return sendJson(reply, result);
+  };
   app.post("/api/v1/threads/:id/cancel", threadAction("cancel"));
   app.post("/api/v1/threads/:id/close", threadAction("close"));
 
@@ -910,12 +803,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "use");
-    const listing = await files.listDir(
-      agent.org_id,
-      agentId,
-      queryParam(req, "path"),
-      showHidden(req),
-    );
+    const listing = await files.listDir(agent.org_id, agentId, queryParam(req, "path"), showHidden(req));
     return sendJson(reply, listing);
   });
 
@@ -923,11 +811,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "use");
-    const file = await files.readText(
-      agent.org_id,
-      agentId,
-      queryParam(req, "path"),
-    );
+    const file = await files.readText(agent.org_id, agentId, queryParam(req, "path"));
     return sendJson(reply, file);
   });
 
@@ -935,11 +819,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "use");
-    const download = await files.streamDownload(
-      agent.org_id,
-      agentId,
-      queryParam(req, "path"),
-    );
+    const download = await files.streamDownload(agent.org_id, agentId, queryParam(req, "path"));
     const safeName = download.name.replace(/["\\\r\n]/g, "_");
     reply
       .type("application/octet-stream")
@@ -982,11 +862,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
     return sendJson(reply, {
-      routine: await getRoutine(
-        infra.pool,
-        agentId,
-        parseUuidParam(req, "rid"),
-      ),
+      routine: await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid")),
     });
   });
 
@@ -995,21 +871,16 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "manage");
     const body = jsonBody(req);
-    const routine = await updateRoutine(
-      infra.pool,
-      agentId,
-      parseUuidParam(req, "rid"),
-      {
-        name: optionalString(body, "name"),
-        kind: routineKindField(body),
-        schedule: optionalString(body, "schedule"),
-        timezone: optionalString(body, "timezone"),
-        run_at: nullableString(body, "run_at"),
-        prompt: optionalString(body, "prompt"),
-        delivery: routineDeliveryField(body),
-        enabled: booleanField(body, "enabled"),
-      },
-    );
+    const routine = await updateRoutine(infra.pool, agentId, parseUuidParam(req, "rid"), {
+      name: optionalString(body, "name"),
+      kind: routineKindField(body),
+      schedule: optionalString(body, "schedule"),
+      timezone: optionalString(body, "timezone"),
+      run_at: nullableString(body, "run_at"),
+      prompt: optionalString(body, "prompt"),
+      delivery: routineDeliveryField(body),
+      enabled: booleanField(body, "enabled"),
+    });
     return sendJson(reply, { routine });
   });
 
@@ -1026,11 +897,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     const { agent } = await store.requireAccess(user, agentId, "manage");
     requireActiveAgent(agent);
-    const routine = await getRoutine(
-      infra.pool,
-      agentId,
-      parseUuidParam(req, "rid"),
-    );
+    const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
     const run = await runRoutineNow(
       {
         pool: infra.pool,
@@ -1078,9 +945,7 @@ export function registerAgentRoutes(
     const run = await store.runs.getRun(parseUuidParam(req, "id"));
     await store.requireAccess(user, run.agent_id, "use");
     const steps = await store.runs.runSteps(run);
-    const files = steps.flatMap((step) =>
-      step.type === "file" ? (step.paths ?? []) : [],
-    );
+    const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
     const mapped = steps.map((step) => ({
       kind:
         step.type === "user_message"
@@ -1092,20 +957,13 @@ export function registerAgentRoutes(
               : "file",
       name: step.name ?? null,
       status: step.is_error === true ? "error" : "ok",
-      detail:
-        step.text ??
-        (step.type === "file" ? (step.paths ?? []).join("\n") : null),
+      detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
       at: step.ts,
       call_id: step.call_id ?? null,
       is_error: step.is_error ?? null,
     }));
     const thread =
-      run.thread_id === null
-        ? null
-        : await infra.conversationHistory.threadOfRun(
-            user.org_id,
-            run.thread_id,
-          );
+      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id);
     return sendJson(reply, {
       run: { ...run, steps: mapped, files },
       steps,
@@ -1132,8 +990,7 @@ export function registerAgentRoutes(
     const offset = queryParam(req, "offset");
     if (offset !== undefined && offset !== "") {
       const parsed = Number(offset);
-      if (!Number.isInteger(parsed) || parsed < 0)
-        throw ApiError.badRequest("invalid offset");
+      if (!Number.isInteger(parsed) || parsed < 0) throw ApiError.badRequest("invalid offset");
       filters.offset = parsed;
     }
     if (filters.agent_id !== undefined && filters.agent_id !== "") {
@@ -1153,19 +1010,13 @@ export function registerAgentRoutes(
 
   app.post("/api/v1/inbox/:id/read", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const notice = await store.notices.markNoticeRead(
-      user.id,
-      parseUuidParam(req, "id"),
-    );
+    const notice = await store.notices.markNoticeRead(user.id, parseUuidParam(req, "id"));
     return sendJson(reply, { notice });
   });
 
   app.post("/api/v1/inbox/:id/unread", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const notice = await store.notices.markNoticeUnread(
-      user.id,
-      parseUuidParam(req, "id"),
-    );
+    const notice = await store.notices.markNoticeUnread(user.id, parseUuidParam(req, "id"));
     return sendJson(reply, { notice });
   });
 

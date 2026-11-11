@@ -1,3 +1,23 @@
+## 0.6.93 — Apps are a capability an Agent uses
+
+`publish_app` was the whole App surface: an Agent could create a page and
+nothing else. It could not list the Apps that exist, so a thread that asked
+about "the gearbox app" guessed at GitLab and Confluence. It could not read
+an App, edit one it did not own, share one, or call one's data.
+
+Apps now have four verbs. `list_apps` and the prompt's `apps` section show the
+Apps the member can open, with their functions and whether the Agent may edit
+each, so discovery costs no call. `read_app` returns the manifest and writes
+the page into the workspace, ready to edit. `publish_app` takes the id of any
+App the member may edit, not only their own. `set_app_access` replaces the
+Access list (`edit` needed, no version bump: access is not page code).
+`call_app` runs one data function for the member through the same reach,
+curation and `via: "app"` audit as the page's call route; a `write`- or
+`admin`-class function, or one curated `always_ask`, asks the member with the
+Approval card even on the sandbox executor, and never inherits a viewer's
+standing grant. The four new tools sit in a new `apps` code-mode namespace
+with `publish_app`. Spec: `docs/specs/2026-11-11-apps-for-agents.md`.
+
 ## 0.6.92 — One sidebar, on every page
 
 Five lists called themselves a sidebar and behaved differently: the chat,

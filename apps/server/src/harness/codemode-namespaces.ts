@@ -67,8 +67,15 @@ export const BUILTIN_TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: "files",
-    description: "Files: message attachments, files you send to the user, and Apps you publish.",
-    tools: ["download_attachment", "send_file", "publish_app"],
+    description: "Files: message attachments and files you send to the user.",
+    tools: ["download_attachment", "send_file"],
+  },
+  {
+    name: "apps",
+    description:
+      "Guild Apps: discover the ones this member can open, read one with its page, run its data functions, " +
+      "publish a version, and share it.",
+    tools: ["list_apps", "read_app", "call_app", "publish_app", "set_app_access"],
   },
 ];
 

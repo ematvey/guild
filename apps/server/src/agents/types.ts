@@ -12,22 +12,14 @@ export type AgentVisibility = "private" | "org";
 export type AgentRole = "owner" | "editor" | "user";
 export type AgentStatus = "active" | "archived" | "deleting" | "deleted";
 
-export type AgentRunStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "silent"
-  | "skipped"
-  | "cancelled";
+export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "silent" | "skipped" | "cancelled";
 export type AgentTrigger = "message" | "routine" | "manual" | "delegation";
 export type AgentRoutineKind = "cron" | "once";
 export type AgentRoutineContext = "isolated";
 /** Where a routine run's send_message lands: appended to the routine's one
  *  conversation with the user, or a new conversation per message. */
 export type AgentRoutineDelivery = "thread" | "new_chat";
-export type AgentRoutineOccurrenceStatus =
-  "pending" | "claimed" | "done" | "failed" | "skipped";
+export type AgentRoutineOccurrenceStatus = "pending" | "claimed" | "done" | "failed" | "skipped";
 
 /** Built-in agent tools. Integration/MCP tool names are added by the runtime
  *  on top of this union. */
@@ -51,7 +43,11 @@ export type AgentToolName =
   | "delete_routine"
   | "subagents"
   | "send_file"
-  | "publish_app";
+  | "publish_app"
+  | "list_apps"
+  | "read_app"
+  | "call_app"
+  | "set_app_access";
 
 /** One entry of an agent's tool allowlist: a built-in tool or a Trait tool
  *  (`web_fetch`). Integration tools are not listed here. */
@@ -81,6 +77,10 @@ export const ALL_AGENT_TOOLS: AgentToolName[] = [
   "subagents",
   "send_file",
   "publish_app",
+  "list_apps",
+  "read_app",
+  "call_app",
+  "set_app_access",
 ];
 
 /** How an agent's tool allowlist is resolved. */

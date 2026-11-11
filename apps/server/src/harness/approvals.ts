@@ -65,6 +65,12 @@ export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
 import { AGENT_TOOL_NAMES } from "./agent-tools.js";
 
+/** The App call classifier: "ask" when the call targets a write- or
+ *  admin-class data function, or one the Org curates to always ask. */
+export interface AppCallGate {
+  decision(conversationId: number, call: ToolCall): Promise<"ask" | undefined>;
+}
+
 export interface ApprovalGateDeps {
   pool: PlatformPool;
   threads: ThreadStore;
@@ -86,6 +92,9 @@ export interface ApprovalGateDeps {
   /** Where this conversation's tools execute (drives the shell allowlist +
    *  the batch contract). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
+  /** The App call classifier: `call_app` on a write-class data function asks
+   *  the member, every call, as the App page's own dialog does. */
+  appCallGate?: AppCallGate;
   /** The integrations chat runtime: the integration tool envelope —
    *  read-class tools and always_allow-curated tools flow; an `always_ask`
    *  curation forces the card, any other class follows the chat's approval
@@ -483,6 +492,14 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         if (decision === "skip") return undefined;
         if (decision === "ask") return undefined;
         // "policy" and undefined fall through to the chat approval mode.
+      }
+
+      // 1c. App data functions: a write-class or always-ask function asks the
+      //     member, whoever runs the turn — an App's page asks the same
+      //     question in its own dialog.
+      if (deps.appCallGate !== undefined) {
+        const decision = await deps.appCallGate.decision(Number(runtime.conversationId), call);
+        if (decision === "ask") return waitForApproval(deps, runtime, chatId, call, context);
       }
 
       // 2. The batch contract: server-side workspace sessions are
