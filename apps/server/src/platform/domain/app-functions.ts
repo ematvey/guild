@@ -5,6 +5,8 @@
 // tool or the shape of its arguments, so a reader of the manifest knows
 // every call the App can make.
 
+import { classRank, isToolClass, type ToolClass } from "./tool-class.js";
+
 /** A JSON object of tool arguments. */
 export type JsonObject = { [key: string]: unknown };
 
@@ -38,6 +40,10 @@ export interface AppFunction {
   /** The tool's arguments; `{"$param": "<name>"}` marks a parameter's place. */
   args: JsonObject;
   params: Record<string, AppParam>;
+  /** What this call can do, when the tool's class cannot say it: a raw
+   *  `<slug>_api` tool is class `write` because the whole API is, and one
+   *  fixed request inside it may only read. Absent means the tool's class. */
+  class?: ToolClass;
 }
 
 export const MAX_APP_FUNCTIONS = 32;
@@ -139,9 +145,46 @@ export function parseAppFunctions(raw: unknown): AppFunction[] {
     for (const used of referencedParams(args, new Set())) {
       if (params[used] === undefined) throw new AppFunctionError(`${name}: args use undeclared parameter "${used}"`);
     }
+    const declared = item["class"];
+    if (declared !== undefined && !isToolClass(declared)) {
+      throw new AppFunctionError(`${name}: class must be read, write or admin`);
+    }
     const description = typeof item["description"] === "string" ? item["description"].slice(0, 500) : "";
-    return { name, description, integration, tool, args: args as JsonObject, params };
+    return {
+      name,
+      description,
+      integration,
+      tool,
+      args: args as JsonObject,
+      params,
+      ...(declared === undefined ? {} : { class: declared }),
+    };
   });
+}
+
+/** The class of one App function. A declaration is a refinement of the tool's
+ *  class, so it may not be weaker than it; the raw `api` tool is the one tool
+ *  whose class bounds the whole API rather than the one call, so there a
+ *  declaration may lower it. Without a declaration the tool's class stands. */
+export function appFunctionClass(
+  fn: Pick<AppFunction, "class">,
+  tool: { class: string; raw: string },
+): ToolClass {
+  const toolClass: ToolClass = isToolClass(tool.class) ? tool.class : "write";
+  const declared = fn.class;
+  if (declared === undefined) return toolClass;
+  if (tool.raw === "api") return declared;
+  return classRank(declared) >= classRank(toolClass) ? declared : toolClass;
+}
+
+/** Whether a declaration is refused: weaker than the tool's class, and not
+ *  the raw `api` tool. */
+export function weakerDeclaration(
+  fn: Pick<AppFunction, "class">,
+  tool: { class: string; raw: string },
+): boolean {
+  if (fn.class === undefined || tool.raw === "api") return false;
+  return classRank(fn.class) < classRank(tool.class);
 }
 
 /** Checks one value against its parameter; returns the value to bind. */

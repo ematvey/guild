@@ -195,8 +195,10 @@ workspace.
 ## How to work
 
 - Read before you write. Search the CRM with \`hubspot_search_companies\`,
-  \`hubspot_search_contacts\` and \`hubspot_search_deals\`; read the record and
-  its ids before you answer.
+  \`hubspot_search_contacts\`, \`hubspot_search_deals\` and
+  \`hubspot_search_tickets\`, or \`hubspot_search_custom\` for a custom object;
+  filter with \`filterGroups\`, and read the record and its ids before you
+  answer.
 - Use \`hubspot_api\` for any endpoint the focused tools do not cover, and
   cite the record ids and object type in the answer.
 - Use \`slack_conversations_history\` and \`conversations_search\` /

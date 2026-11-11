@@ -1,16 +1,30 @@
-## 0.6.103 — Full access means the App functions too
+## 0.6.103 — an App function declares what its call can do
 
 A Thread on `full_access` still asked for every `call_app`: a codemode script
-that ran five data functions produced five Approval cards. The App call gate
-classified a write-class function as a card of its own, ahead of the Thread's
-approval mode, so the member's own choice never applied. An App function built
-on a vendor's raw API tool (`hubspot_api` and its like, class `write`) is
-`write`-class by default, which made the cards constant.
+that ran five data functions produced five Approval cards. The App's
+functions all read through the HubSpot connector's raw `api` tool, which is
+class `write` because the whole API is, and the function inherited that bound.
+The gate also put its card ahead of the Thread's approval mode, so the
+member's own choice never applied.
 
-The gate now has the same three answers the Integration envelope has: a
-read-class function flows, a function curated `always_ask` asks the member
-whatever the mode, and a write- or admin-class function is `policy` — the
-Thread's approval mode decides, so `full_access` runs it and `ask` asks.
+An App function is one fixed request, not the whole API. It now declares its
+own class (`read`, `write`, `admin`); the tool's class is the default. The
+declaration refines a bound that describes every endpoint, so only the raw
+`<slug>_api` tool takes a lower class — a named tool keeps its own, and
+`publish_app` refuses a weaker claim. `publish_app` tells the author to
+declare `read` when a fixed request only reads.
+
+The HubSpot connector grew the read tools that make the declaration rare: the
+four searches (contacts, companies, deals, tickets) take HubSpot's own
+`filterGroups`, `sorts`, `properties`, `limit` and `after` instead of one free
+text box, and `search_custom` does the same for any custom object type. None
+of them is tied to this org's nouns; `sales_open` stays an App function, not a
+tool. The raw `api` tool keeps the endpoints the named tools do not cover.
+
+The App page and the Agent's `call_app` gate both read that class. The gate
+then answers like the Integration envelope: a `read` function runs at once, an
+`always_ask` curation asks whatever the mode, and a `write`/`admin` function
+takes the Thread's approval mode, so `full_access` runs it.
 
 ## 0.6.102 — Windows draws its own caption bar
 

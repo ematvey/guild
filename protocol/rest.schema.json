@@ -1138,7 +1138,11 @@
         "integration": { "type": "string" },
         "tool": { "type": "string" },
         "args": { "type": "object" },
-        "params": { "type": "object", "additionalProperties": { "$ref": "#/$defs/AppParam" } }
+        "params": { "type": "object", "additionalProperties": { "$ref": "#/$defs/AppParam" } },
+        "class": {
+          "enum": ["read", "write", "admin"],
+          "description": "What this call can do, when the tool's class cannot say it: a raw `<slug>_api` tool is class write because the whole API is, and one fixed request inside it may only read. Absent means the tool's class."
+        }
       }
     },
     "AccessEntry": {

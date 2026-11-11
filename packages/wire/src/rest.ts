@@ -367,6 +367,10 @@ export interface AppFunction {
   tool: string;
   args: { [key: string]: Json };
   params: { [name: string]: AppParam };
+  /// What this call can do, when the tool's class cannot say it: a raw
+  /// `<slug>_api` tool is class write because the whole API is, and one fixed
+  /// request inside it may only read. Absent means the tool's class.
+  class?: "read" | "write" | "admin";
 }
 
 /** Who one entry of an item's access list names, and at which level. */

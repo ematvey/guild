@@ -262,6 +262,24 @@ function route(
       }),
     };
   }
+  if (p === "/crm/v3/objects/deals/search") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        total: 42,
+        results: [{ id: "900", properties: { dealname: "North", amount: "5000", dealstage: "closedwon" } }],
+        paging: { next: { after: "900" } },
+      }),
+    };
+  }
+  if (p === "/crm/v3/objects/p148247336_subscriptions/search") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [{ id: "7", properties: { end_date: "2026-12-01", is_active: "true" } }],
+      }),
+    };
+  }
   // Langfuse.
   if (p === "/api/public/traces") {
     return {
@@ -831,6 +849,78 @@ describe("connector execute spot checks (mock backend)", () => {
     expect(lastHit("/crm/v3/objects/contacts/search").headers["authorization"]).toBe("Bearer hs-1");
     expect(out.content).toContain("id=101");
     expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "contacts", count: 1 });
+  });
+
+  it("hubspot search_deals passes filters, sorts, properties and the page cursor", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "search_deals",
+      {
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: "dealstage", operator: "EQ", value: "closedwon" },
+              { propertyName: "closedate", operator: "BETWEEN", value: "2026-10-01", highValue: "2026-11-01" },
+            ],
+          },
+        ],
+        sorts: [{ propertyName: "closedate", direction: "DESCENDING" }],
+        properties: ["dealname", "amount"],
+        limit: 25,
+        after: "900",
+      },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/deals/search").body) as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      limit: 25,
+      properties: ["dealname", "amount"],
+      sorts: [{ propertyName: "closedate", direction: "DESCENDING" }],
+      after: "900",
+    });
+    expect(sent["query"]).toBeUndefined();
+    expect(out.content).toContain("id=900 dealname=North amount=5000");
+    expect(out.content).toContain('after="900"');
+    expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "deals", total: 42, after: "900" });
+  });
+
+  it("hubspot search_custom searches the object type the call names", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "search_custom",
+      { object_type: "p148247336_subscriptions", properties: ["end_date", "is_active"], limit: 5 },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/p148247336_subscriptions/search").body) as Record<
+      string,
+      unknown
+    >;
+    expect(sent["properties"]).toEqual(["end_date", "is_active"]);
+    expect(out.content).toContain("id=7 end_date=2026-12-01 is_active=true");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "p148247336_subscriptions", count: 1 });
+  });
+
+  it("hubspot search_custom refuses a call with no object type", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        "search_custom",
+        {},
+        [["token", "hs-1"]],
+        null,
+      ),
+    ).rejects.toThrow(/requires object_type/);
   });
 
   it("langfuse list_traces uses the basic auth pair", async () => {

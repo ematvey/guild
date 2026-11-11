@@ -17,6 +17,7 @@ import { parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
 import type { AppRow, AppStore } from "../store/apps.js";
 import {
   AppFunctionError,
+  appFunctionClass,
   bindAppFunction,
   type AppFunction,
 } from "../domain/app-functions.js";
@@ -190,10 +191,11 @@ export interface ViewerFunction {
   integration: string;
   tool: string;
   params: AppFunction["params"];
-  /** The tool's class; null when the viewer cannot reach the tool. */
+  /** The function's class; null when the viewer cannot reach the tool. */
   class: string | null;
   available: boolean;
-  /** A write- or admin-class tool, or one the Org curates to always ask. */
+  /** A write- or admin-class function, or one the Org curates to always
+   *  ask. */
   confirm: boolean;
   /** The viewer said "always allow" to this function of this version, so
    *  its calls run without asking. */
@@ -268,11 +270,12 @@ export function registerAppRoutes(
             fn.integration,
             fn.tool,
           );
+          const cls = appFunctionClass(fn, tool);
           return {
             ...base,
-            class: tool.class,
+            class: cls,
             available: true,
-            confirm: tool.class !== "read" || tool.alwaysAsk,
+            confirm: cls !== "read" || tool.alwaysAsk,
             reason: null,
           };
         } catch (error) {
@@ -381,7 +384,7 @@ export function registerAppRoutes(
       fn.integration,
       fn.tool,
     );
-    if (tool.class !== "read" || tool.alwaysAsk) {
+    if (appFunctionClass(fn, tool) !== "read" || tool.alwaysAsk) {
       const confirmed = body["confirmed"] === true;
       if (confirmed && body["remember"] === true) {
         await apps.grant(row.id, user.id, row.version, fn.name);
