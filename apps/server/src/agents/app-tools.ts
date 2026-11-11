@@ -383,9 +383,10 @@ export function appFunctionCall(
   };
 }
 
-/** The approval gate's classifier for `call_app`: a function whose tool is
- *  write- or admin-class, or curated to always ask, needs the member's yes. A
- *  read-class function flows, and a function the member cannot call flows too:
+/** The approval gate's classifier for `call_app`: a function curated to always
+ *  ask needs the member's yes, whatever the Thread's mode. A read-class
+ *  function flows, a write- or admin-class function goes to the Thread's
+ *  approval mode ("policy"), and a function the member cannot call flows too:
  *  the tool answers the refusal itself. */
 export function createAppCallGate(deps: {
   apps: Pick<AppStore, "getVisible">;
@@ -411,7 +412,8 @@ export function createAppCallGate(deps: {
       if (fn === undefined) return undefined;
       const gate = await deps.functionGate(owner.org_id, owner.user_id, fn);
       if (!gate.ok) return undefined;
-      return gate.class !== "read" || gate.alwaysAsk ? "ask" : undefined;
+      if (gate.alwaysAsk) return "ask";
+      return gate.class !== "read" ? "policy" : undefined;
     },
   };
 }

@@ -1,3 +1,17 @@
+## 0.6.103 — Full access means the App functions too
+
+A Thread on `full_access` still asked for every `call_app`: a codemode script
+that ran five data functions produced five Approval cards. The App call gate
+classified a write-class function as a card of its own, ahead of the Thread's
+approval mode, so the member's own choice never applied. An App function built
+on a vendor's raw API tool (`hubspot_api` and its like, class `write`) is
+`write`-class by default, which made the cards constant.
+
+The gate now has the same three answers the Integration envelope has: a
+read-class function flows, a function curated `always_ask` asks the member
+whatever the mode, and a write- or admin-class function is `policy` — the
+Thread's approval mode decides, so `full_access` runs it and `ask` asks.
+
 ## 0.6.102 — Windows draws its own caption bar
 
 Windows had the native frame above a dark app — the same mismatch macOS had.

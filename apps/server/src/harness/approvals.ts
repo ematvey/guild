@@ -65,10 +65,11 @@ export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
 import { AGENT_TOOL_NAMES } from "./agent-tools.js";
 
-/** The App call classifier: "ask" when the call targets a write- or
- *  admin-class data function, or one the Org curates to always ask. */
+/** The App call classifier: "ask" when the Org curates the function to always
+ *  ask, "policy" when it targets a write- or admin-class data function (the
+ *  Thread's approval mode decides), undefined when the call flows. */
 export interface AppCallGate {
-  decision(conversationId: number, call: ToolCall): Promise<"ask" | undefined>;
+  decision(conversationId: number, call: ToolCall): Promise<"ask" | "policy" | undefined>;
 }
 
 export interface ApprovalGateDeps {
@@ -92,8 +93,9 @@ export interface ApprovalGateDeps {
   /** Where this conversation's tools execute (drives the shell allowlist +
    *  the batch contract). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
-  /** The App call classifier: `call_app` on a write-class data function asks
-   *  the member, every call, as the App page's own dialog does. */
+  /** The App call classifier: `call_app` on a write-class data function is
+   *  classified as `policy`, so the Thread's approval mode decides; an
+   *  `always_ask` curation asks the member every time. */
   appCallGate?: AppCallGate;
   /** The integrations chat runtime: the integration tool envelope —
    *  read-class tools and always_allow-curated tools flow; an `always_ask`
@@ -497,18 +499,22 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         // "policy" and undefined fall through to the chat approval mode.
       }
 
-      // 1c. App data functions: a write-class or always-ask function asks the
-      //     member, whoever runs the turn — an App's page asks the same
-      //     question in its own dialog.
-      if (deps.appCallGate !== undefined) {
-        const decision = await deps.appCallGate.decision(Number(runtime.conversationId), call);
-        if (decision === "ask") return waitForApproval(deps, runtime, chatId, call, context);
-      }
+      // 1c. App data functions: an `always_ask` curation asks the member,
+      //     whoever runs the turn; a write- or admin-class function goes to
+      //     the Thread's approval mode, so `full_access` runs it. A read-class
+      //     function never reaches here.
+      const appCall =
+        deps.appCallGate === undefined
+          ? undefined
+          : await deps.appCallGate.decision(Number(runtime.conversationId), call);
+      if (appCall === "ask") return waitForApproval(deps, runtime, chatId, call, context);
 
       // 2. The batch contract: server-side workspace sessions are
       //    pre-approved — no interactive gate (the exec policy above still
-      //    ran). Everything else gates by policy.
-      if (toolExecutor === "server" && !isCommandTool) {
+      //    ran). Everything else gates by policy. A write-class App function
+      //    is the exception the member chose to keep: it always takes the
+      //    approval mode, the unattended executor included.
+      if (toolExecutor === "server" && !isCommandTool && appCall !== "policy") {
         // Non-shell server tools (read/write/edit) run under the same batch
         // contract.
         return undefined;
