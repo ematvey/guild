@@ -1,18 +1,8 @@
-// The open thread's header: the drawer / sidebar toggle, the title (or a
-// child thread's back link), the working badge, and the chat menu with its
-// rename and delete dialogs.
+// The open thread's header: the mobile drawer button, the title (or a child
+// thread's back link), the working badge, and the chat menu with its rename
+// and delete dialogs.
 import { useState } from "react";
-import {
-  Archive,
-  ArchiveRestore,
-  EllipsisVertical,
-  Link2,
-  Loader2,
-  Menu,
-  PanelLeftOpen,
-  Pencil,
-  Trash2,
-} from "lucide-react";
+import { Archive, ArchiveRestore, EllipsisVertical, Link2, Loader2, Menu, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
@@ -33,7 +23,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
 import { shareableUrl } from "../../lib/session";
@@ -41,9 +30,7 @@ import { ThreadTitle } from "./blocks";
 
 export function ThreadHeader({
   isMobile,
-  collapsed,
   onOpenDrawer,
-  onExpandSidebar,
   chatId,
   title,
   titleLoading,
@@ -60,9 +47,7 @@ export function ThreadHeader({
   onDelete,
 }: {
   isMobile: boolean;
-  collapsed: boolean;
   onOpenDrawer: () => void;
-  onExpandSidebar: () => void;
   chatId: string | null;
   title: string;
   titleLoading: boolean;
@@ -95,7 +80,7 @@ export function ThreadHeader({
 
   return (
     <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
-      {isMobile ? (
+      {isMobile && (
         <Button
           variant="ghost"
           size="icon"
@@ -105,22 +90,6 @@ export function ThreadHeader({
         >
           <Menu />
         </Button>
-      ) : (
-        // Expanded: the collapse button lives in the sidebar's own header
-        // (right side); only the reopen button stays here.
-        collapsed && (
-          <DesktopTooltip label="Toggle sidebar" hotkey="mod+B">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="-ml-1.5 size-9 pointer-coarse:size-10 text-muted-foreground"
-              onClick={onExpandSidebar}
-              aria-label="Toggle sidebar"
-            >
-              <PanelLeftOpen />
-            </Button>
-          </DesktopTooltip>
-        )
       )}
       {isSubagent && childTree?.parent ? (
         <ChildThreadHeader tree={childTree} onBack={onOpenChat} />

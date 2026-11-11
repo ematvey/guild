@@ -33,8 +33,9 @@ export function FadeTitle({ text }: { text: string }) {
   );
 }
 
-/** Collapse button shared by every panel header (desktop only). The
- *  tooltip carries the toggle hotkey like the rail's tooltips do. */
+/** Collapse button shared by every sidebar header (desktop only): the chat,
+ *  project, settings, apps and integrations lists all offer it. The tooltip
+ *  carries the toggle hotkey like the rail's tooltips do. */
 export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
   return onCollapse ? (
     <DesktopTooltip label="Toggle sidebar" hotkey="mod+B">
