@@ -516,6 +516,115 @@ describe("worker-per-chat (fork supervisor)", () => {
     ws.close();
   }, 120_000);
 
+  it("a call that names a machine reaches it from a worker, home and all", async () => {
+    const platformOf = (): import("../composition.js").PlatformContext =>
+      (stack.env.app as unknown as { platform: import("../composition.js").PlatformContext }).platform;
+    const ticket = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(ticket.statusCode).toBe(200);
+    const machineId = "worker-target-machine";
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/api/v1/ws?ticket=${(JSON.parse(ticket.body) as { ticket: string }).ticket}` +
+        `&machine_id=${machineId}&instance_id=${crypto.randomUUID()}`,
+    );
+    const openPromise = new Promise<void>((resolve, reject) => {
+      ws.on("open", resolve);
+      ws.on("error", reject);
+    });
+    // The fake daemon answers both questions the worker asks over IPC: the
+    // home folder (a control-plane request) and the call itself.
+    const dispatches: Record<string, unknown>[] = [];
+    const homes: string[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
+      if (msg["type"] === "machine_request" && msg["op"] === "fs_home") {
+        homes.push(String(msg["request_id"]));
+        ws.send(
+          JSON.stringify({
+            type: "machine_response",
+            request_id: msg["request_id"],
+            ok: true,
+            payload: { home: "/home/worker" },
+          }),
+        );
+        return;
+      }
+      if (msg["type"] === "tool_dispatch") {
+        dispatches.push(msg);
+        ws.send(
+          JSON.stringify({
+            type: "tool_result",
+            chat_id: msg["chat_id"],
+            call_id: msg["call_id"],
+            content: "Linux workstation 6.1.0",
+            is_error: false,
+            meta: null,
+          }),
+        );
+      }
+    });
+    await openPromise;
+    await waitFor(async () => {
+      const owner = await platformOf().machines.ownerOf(machineId);
+      return owner !== null && owner[0] === stack.memberId;
+    });
+
+    // A plain chat: no project, no machine binding. The call names the
+    // machine itself.
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(stack.memberToken),
+      payload: { title: "worker target chat" },
+    });
+    expect(created.statusCode).toBe(200);
+    const chatId = (JSON.parse(created.body) as { id: string }).id;
+    stack.mock.setResponses([
+      {
+        body:
+          'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wt","type":"function","function":{"name":"bash","arguments":' +
+          JSON.stringify(JSON.stringify({ command: "uname -r", machine: machineId })) +
+          "}}]}}]}\n\n" +
+          'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+          'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
+          "data: [DONE]\n\n",
+      },
+      { body: finalSse("kernel answer") },
+    ]);
+    const sent = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/turns`,
+      headers: auth(stack.memberToken),
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "what kernel is on my box" }] },
+    });
+    expect(sent.statusCode).toBe(200);
+
+    // The prompt the worker built said the machine is online: liveness crossed
+    // the IPC seam instead of reading a hub the worker does not have.
+    const mine = async (): Promise<Record<string, unknown> | undefined> =>
+      stack.mock.requests.find((request) =>
+        JSON.stringify(request.body["messages"] ?? "").includes("what kernel is on my box"),
+      )?.body;
+    await waitFor(async () => (await mine()) !== undefined, 30_000);
+    const system = ((await mine())!["messages"] as { role: string; content: unknown }[])
+      .filter((message) => message.role === "system")
+      .map((message) => String(message.content))
+      .join("\n");
+    expect(system).toContain(machineId);
+    expect(system).not.toContain(`${machineId} · offline`);
+
+    await waitFor(async () => dispatches.length > 0, 30_000);
+    expect(dispatches[0]!["type"]).toBe("tool_dispatch");
+    expect(dispatches[0]!["name"]).toBe("execute");
+    // The home came from the machine over IPC, so the command ran there.
+    expect(dispatches[0]!["workdir"]).toBe("/home/worker");
+    expect(homes.length).toBeGreaterThan(0);
+    ws.close();
+  }, 120_000);
+
   it("stopping a machine tool crosses worker IPC and cancels the accepting executor", async () => {
     const ticket = await stack.env.app.inject({
       method: "POST",

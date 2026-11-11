@@ -322,7 +322,6 @@ export async function integrationTools(
         integrationRow.name,
         toolClassOf(connector, spec.name),
         spec.description,
-        false,
         rowConfig,
       ),
     );
@@ -367,7 +366,6 @@ export async function integrationTools(
       integrationRow.name,
       mcpToolClass(rowConfig, manifest, t),
       t.description,
-      true,
       rowConfig,
     ),
   );
@@ -690,20 +688,20 @@ export async function testIntegration(
 }
 
 /** One declared/served tool with its stored per-tool curation, as the admin
- *  Tools table renders it. */
+ *  Tools table renders it. The class is the admin's when curated, else the
+ *  declaration. */
 function curatedToolJson(
   rawName: string,
   slug: string,
-  cls: string,
+  declaredClass: string,
   description: string,
-  mcp: boolean,
   rowConfig: Record<string, unknown>,
 ): Record<string, unknown> {
-  const curate = toolCurate(rowConfig, mcp, rawName);
+  const curate = toolCurate(rowConfig, rawName);
   return {
     name: rawName,
     tool: namespacedTool(slug, rawName),
-    class: cls,
+    class: curate.cls ?? declaredClass,
     description,
     enabled: curate.enabled,
     approval: curate.alwaysAsk ? "always_ask" : curate.alwaysAllow ? "always_allow" : "default",

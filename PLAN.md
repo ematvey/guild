@@ -1,3 +1,59 @@
+## 0.6.99 — the machine facts a worker cannot read itself
+
+0.6.98 read machine liveness and the machine's home folder from the hub, and
+the hub lives in the server process. Every chat runs in its own forked worker,
+which holds no hub, so every machine read as offline: the prompt listed three
+online machines as offline, and a call naming one failed with `machine
+offline` before it reached anything.
+
+The two facts are now a dependency (`MachineFacts`) with two answers: the
+server reads the hub, and a worker asks the server over the same IPC channel
+its machine dispatch already uses (`machine-online`, `machine-home`). The
+worker's dispatch comes from its turn placement, not from a hub it does not
+have. `worker-mode.test.ts` covers the path a plain chat takes: a call that
+names a machine crosses IPC, the home comes back from the machine, and the
+prompt does not call a live machine offline.
+
+## 0.6.99 — a tool's class is the admin's call, not only an MCP one
+
+The class of an integration tool decides two things: who may use it (the reach
+ceilings of 002) and whether a call asks first. A compiled-in tool's class came
+from its code declaration only, so an Integration whose credential cannot write
+still classed its raw API tool `write`: every App function built on it asked,
+every call, in every chat, and a `read` ceiling hid the tool entirely.
+
+The Tools tab of an Integration now sets the class of any tool, MCP or not, and
+the server takes it: `toolCurate` reads a curated class on every row,
+`connectorToolClass` puts it ahead of the declaration, and the curation route no
+longer refuses a built-in. The class states what the key behind the tool can
+do — a read-only HubSpot token marks `hubspot_api` `read` — so an App reading
+through it stops asking, and a `read`-ceilinged agent reaches it again.
+
+## 0.6.98 — a tool call runs on any machine the member paired
+
+Working on a machine needed a Project: the Project named the folder, and only a
+Thread bound to one ran tools there. The four coding tools now take a `machine`
+argument — a machine id, or a label unique among the caller's machines — and
+that one call runs on that machine. `cwd` names the folder it runs in; without
+it the call runs in the machine's home directory, read once per connection. No
+folder carries from one call to the next, so a command writes `cd <folder> &&
+…`, and the prompt says so.
+
+A machine stays private to the Member who paired it: another member's id
+resolves to `no such machine`, and the error names the machines that member does
+own. Without `machine` a call keeps its Thread's own environment, so a
+project-bound chat still runs on its project machine, in the project folder.
+
+The `machines` prompt section lists label, id and live flag in every chat (and
+says `none paired` when there are none), and `machine_list` reads the same list
+again mid-turn. The tool card shows the machine label beside the tool name. A
+write on a machine is journaled as `<machine>:<path>`, so two hosts never
+collide on one path. The approval gate follows the target: a call that names a
+machine counts as a machine call for the shell allowlist.
+
+The codemode inline budget goes from 3500 to 4500 tokens: the coding tools carry
+two more arguments, and the longest declarations are the first the budget drops.
+
 ## 0.6.96 — develop and master merged, one version
 
 The two branches carried their own version bumps (0.6.94 on `develop`,

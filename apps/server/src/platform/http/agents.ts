@@ -229,7 +229,7 @@ async function traitToolCatalog(
   for (const turn of turns) {
     for (const info of turn.tools) {
       if (info.trait === undefined || seen.has(info.spec.name)) continue;
-      if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
+      if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
       seen.add(info.spec.name);
       tools.push({
         name: info.spec.name,

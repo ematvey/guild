@@ -44,6 +44,8 @@ import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import { MachineTargetError, MachineTargets, type MachineFacts } from "../machines/targets.js";
+import { hubMachineFacts } from "../machines/hub-facts.js";
 import type { SandboxTarget } from "../sandbox/client.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
@@ -137,6 +139,9 @@ export interface RuntimeDeps {
   readonly objects?: ObjectStore;
   /** The machine/member socket registry (the server only). */
   readonly hub?: MachineDispatchHost;
+  /** A worker's answers to the machine facts the hub would give the server:
+   *  which machines are live, and where one's home folder is. */
+  readonly machineFacts?: MachineFacts;
   readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">;
   /** The LLM trace sink: the approval judge self-reports through it. */
   readonly trace?: TraceStore;
@@ -218,6 +223,10 @@ export class GuildRuntime {
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
+  /** The member's paired machines: the per-call target a coding tool call
+   *  resolves through `machine`, and the list the prompt and `machine_list`
+   *  render. */
+  private readonly machineTargets: MachineTargets;
   private readonly hub?: MachineDispatchHost;
 
   constructor(deps: RuntimeDeps) {
@@ -412,6 +421,22 @@ export class GuildRuntime {
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (built-in coding tools enabled) + codemode.
+    // The hub holds every machine socket; a worker holds none and answers
+    // liveness and the home folder over its IPC seam instead.
+    const facts = deps.machineFacts ?? (this.hub === undefined ? undefined : hubMachineFacts(this.hub));
+    this.machineTargets = new MachineTargets({
+      listForUser: (orgId, userId) => stores.machines.listForUser(orgId, userId),
+      facts: facts ?? {
+        online: async () => new Set<string>(),
+        home: async () => {
+          throw new MachineTargetError("no machine link is available in this process");
+        },
+      },
+      // The same dispatch the executors use: the worker's IPC proxy in
+      // worker mode, the hub's registry in the server.
+      dispatch: () => this.turns.machineDispatch ?? this.dispatch(),
+      timeoutMs: () => config.clientToolTimeoutMs,
+    });
     this.guildExtension = createGuildExtension({
       orgProfile: async (orgId) => {
         const [org, prompt] = await Promise.all([
@@ -461,6 +486,19 @@ export class GuildRuntime {
         return renderAppsIndex(rows);
       },
       skillRuntime: this.skillsRuntime,
+      machines: {
+        list: (orgId, userId) => this.machineTargets.list(orgId, userId),
+        orgOfConversation: async (conversationId) => {
+          const chatId = await this.chatOfConversation(conversationId);
+          return chatId === null ? null : stores.chats.orgOf(chatId);
+        },
+        userOfConversation: async (conversationId) => {
+          const chatId = await this.chatOfConversation(conversationId);
+          if (chatId === null) return null;
+          const owner = await stores.chats.ownerOf(chatId);
+          return owner === null ? null : { id: owner.user_id };
+        },
+      },
       toolHooks: [
         createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
         createConflictHook(this.conflicts, chatOfConversation),
@@ -486,10 +524,11 @@ export class GuildRuntime {
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
     // The default 3000-token inline budget drops the tail of the callable
-    // list once the agent tool set grows, so the section gets 500 more;
-    // namespaces keep every group represented within it.
+    // list once the agent tool set grows, so the section gets 1500 more: the
+    // coding tools carry a `machine` and a `cwd` argument, and the longest
+    // declarations are the first the budget would drop.
     this.codemodeExtension = createNamespacedCodemodeExtension(
-      { sandbox: this.codemodeSandbox, models: false, inlineBudget: 3500 },
+      { sandbox: this.codemodeSandbox, models: false, inlineBudget: 4500 },
       async (conversationId) => [
         ...BUILTIN_TOOL_GROUPS,
         ...(await this.integrationsRuntime.toolGroups(conversationId)),
@@ -516,6 +555,7 @@ export class GuildRuntime {
       integrations: this.integrationsRuntime,
       userMcp: this.userMcpRuntime,
       executors: this.executors,
+      machines: { envFor: (request) => this.machineTargets.envFor(request) },
       apps: {
         apps: stores.apps,
         access: stores.access,

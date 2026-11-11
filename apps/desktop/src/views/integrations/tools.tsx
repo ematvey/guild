@@ -72,7 +72,7 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
             {isMcp
               ? "Asked live from the MCP server. A tool it starts serving later arrives switched off."
-              : "What agents can call. Turn a tool off to hide it from every chat; the approval rule decides when a person is asked first."}
+              : "What agents can call. Turn a tool off to hide it from every chat; the class is what the key behind it can do; the approval rule decides when a person is asked first."}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -137,24 +137,18 @@ export function ToolsTab({ id, isMcp }: { id: string; isMcp: boolean }) {
                       )}
                     </td>
                     <td className="py-2.5 pr-4">
-                      {isMcp ? (
-                        <select
-                          aria-label={`Class of ${t.name}`}
-                          title={CLASS_HINT[t.class]}
-                          className={SELECT}
-                          disabled={busy}
-                          value={t.class}
-                          onChange={(e) => update(t, { class: e.target.value })}
-                        >
-                          <option value="read">Read</option>
-                          <option value="write">Write</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      ) : (
-                        <span title={CLASS_HINT[t.class]} className="text-xs capitalize">
-                          {t.class}
-                        </span>
-                      )}
+                      <select
+                        aria-label={`Class of ${t.name}`}
+                        title={CLASS_HINT[t.class]}
+                        className={SELECT}
+                        disabled={busy}
+                        value={t.class}
+                        onChange={(e) => update(t, { class: e.target.value })}
+                      >
+                        <option value="read">Read</option>
+                        <option value="write">Write</option>
+                        <option value="admin">Admin</option>
+                      </select>
                     </td>
                     <td className="py-2.5">
                       <select

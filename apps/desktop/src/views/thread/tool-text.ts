@@ -83,6 +83,13 @@ export function argOf(t: ToolBlock, keys: string[]): string | undefined {
   return undefined;
 }
 
+/// The machine a call names, if any: the frame says where the call ran. The
+/// argument is a machine id or a label, and the frame resolves it against the
+/// registry, so an id never reaches the reader.
+export function machineTargetOf(t: ToolBlock): string | undefined {
+  return argOf(t, ["machine"]);
+}
+
 /// Request text shown on the frame header line (same line as the tool
 /// name): search → query, fetch → URL, execute → command, read/edit → path.
 export function toolPreview(t: ToolBlock): string | undefined {

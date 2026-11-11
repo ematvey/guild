@@ -460,7 +460,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         return isCommandTool ? { block: "denied: this conversation has no approval mapping" } : undefined;
       }
       const executor = await deps.executorKind(Number(runtime.conversationId));
-      const toolExecutor = isAgentTool ? "server" : executor;
+      // A call that names a machine runs there, whatever the chat's own
+      // executor is: the shell allowlist and the approval class follow the
+      // target, not the chat.
+      const toolExecutor = isAgentTool ? "server" : call.arguments?.["machine"] !== undefined ? "machine" : executor;
 
       // 1. Static exec policy (the machine `execute` path's rules, applied
       //    to the harness's bash tool — same rules, same matcher).

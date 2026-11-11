@@ -1,5 +1,5 @@
 // The worked-for row: one collapsible group per contiguous thinking/tool
-// run, with the live or settled label and the step count on the header.
+// run, with the live or settled label on the header.
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -19,24 +19,24 @@ const run = [
 ];
 
 describe("WorkedForBlock", () => {
-  it("shows the settled label and step count, collapsed by default", () => {
+  it("shows the settled label, collapsed by default", () => {
     const html = renderToStaticMarkup(
       <WorkedForBlock run={run} active={false} stopping={false}>
         <span>detail</span>
       </WorkedForBlock>,
     );
-    expect(html).toContain("Agent worked for 7 seconds");
-    expect(html).toContain("(2 steps)");
+    expect(html).toContain("Agent worked for 7s");
+    expect(html).not.toContain("step");
     expect(html).not.toContain("detail");
   });
 
-  it("uses the singular for one step and keeps the live label", () => {
+  it("keeps the live label without a step count", () => {
     const html = renderToStaticMarkup(
       <WorkedForBlock run={[run[0]!]} active stopping={false}>
         <span>detail</span>
       </WorkedForBlock>,
     );
     expect(html).toContain("Agent is working");
-    expect(html).toContain("(1 step)");
+    expect(html).not.toContain("step");
   });
 });

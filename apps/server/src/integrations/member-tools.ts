@@ -83,7 +83,7 @@ export async function memberTool(
     turn,
     raw,
     class: info.class,
-    alwaysAsk: toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk,
+    alwaysAsk: toolCurate(turn.rowConfig, raw).alwaysAsk,
   };
 }
 
