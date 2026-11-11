@@ -1,3 +1,14 @@
+## 0.6.102 — Windows draws its own caption bar
+
+Windows had the native frame above a dark app — the same mismatch macOS had.
+`tauri.windows.conf.json` (the platform config Tauri merges over the base one)
+now sets `decorations: false` for the Windows build only, and the app draws
+the 32 px caption bar: the name, the drag region and the three buttons, above
+the columns and above dialogs, as the native caption is. An undecorated window
+loses its resize edges, so the bar also carries eight edge and corner strips
+that hand the drag to `startResizeDragging`. macOS keeps its floating traffic
+lights; Linux keeps its native frame.
+
 ## 0.6.99 — the macOS window is content
 
 The desktop window on macOS had the native title bar: a white strip above a

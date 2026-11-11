@@ -4,21 +4,30 @@
 // below the band the lights occupy, and that band drags the window (a double
 // click zooms it, as the native bar would).
 //
-// Windows and Linux keep their native decorations: the inset and the drag
-// regions are off there, and the web build never gets them.
+// The Windows window is undecorated instead (tauri.windows.conf.json) and
+// draws its own caption bar: the same band holds the app name and the three
+// buttons, so the columns inset by the same amount.
+//
+// Linux keeps its native decorations: the inset and the drag regions are off
+// there, and the web build never gets them.
 
 import { HAS_SHELL } from "./session";
 
-/** The window draws its own title bar: macOS inside the desktop client. */
-export const OVERLAY_TITLE_BAR = HAS_SHELL && /Mac/.test(navigator.platform ?? "");
+const PLATFORM = navigator.platform ?? "";
 
-/** Top padding of a column: the band the traffic lights sit in. It is the
- *  height of the native macOS title bar, so the lights keep the placement
- *  the system gives them in a decorated window. */
-export const TITLE_BAR_INSET = OVERLAY_TITLE_BAR ? "pt-7" : "";
+/** macOS: the window draws its own title bar; the traffic lights float over
+ *  the sidebar. */
+export const OVERLAY_TITLE_BAR = HAS_SHELL && /Mac/.test(PLATFORM);
+
+/** Windows: the window has no frame and the app draws the caption bar. */
+export const CUSTOM_TITLE_BAR = HAS_SHELL && /Win/.test(PLATFORM);
+
+/** Top padding of a column: the band the title bar occupies. On macOS it is
+ *  the height of the native title bar, so the lights keep the placement the
+ *  system gives them; on Windows it matches the drawn bar. */
+export const TITLE_BAR_INSET = OVERLAY_TITLE_BAR ? "pt-7" : CUSTOM_TITLE_BAR ? "pt-8" : "";
 
 /** Spread onto a column or a full-page surface so its top band moves the
  *  window. Children keep their own clicks. */
-export const titleBarDrag: Record<string, string> = OVERLAY_TITLE_BAR
-  ? { "data-tauri-drag-region": "" }
-  : {};
+export const titleBarDrag: Record<string, string> =
+  OVERLAY_TITLE_BAR || CUSTOM_TITLE_BAR ? { "data-tauri-drag-region": "" } : {};
