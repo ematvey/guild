@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 import { createDownloadAttachmentTool } from "./attachment-tools.js";
+import { createMachineListTool, renderMachinesSection, type MachineListDeps } from "./machines.js";
 import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
@@ -111,6 +112,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The Apps index for one member: the Apps they can open, one line each.
    *  Absent in tests without an App store. */
   appsIndex?(orgId: string, userId: string): Promise<string | null>;
+  /** The member's paired machines: the prompt section and `machine_list`
+   *  read the same list. Absent in tests without a machine registry. */
+  machines?: MachineListDeps;
   /** Extra task hooks: the run rows' opener, the workspace conflict
    *  journal, tool tracing. */
   toolHooks?: readonly HookRegistration[];
@@ -168,6 +172,18 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       return (await runtime(orgId, user.id)) ?? undefined;
     },
   };
+  const machinesSection: PromptSection<ToolRegistration> = {
+    key: "machines",
+    async render(input) {
+      const runtime = deps.machines;
+      if (runtime === undefined) return undefined;
+      const orgId = await deps.orgOfConversation(input.conversationId);
+      if (orgId === null) return undefined;
+      const user = await deps.userOfConversation(input.conversationId);
+      if (user === null) return undefined;
+      return renderMachinesSection(await runtime.list(orgId, user.id));
+    },
+  };
   const codemodeNotes: PromptSection<ToolRegistration> = {
     key: "codemode-notes",
     async render() {
@@ -181,6 +197,7 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
     tools: [
       ...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()),
       ...(deps.threadTools ?? []).map(toolsOnlyCaller),
+      ...(deps.machines === undefined ? [] : [createMachineListTool(deps.machines)]),
       ...(deps.attachments === undefined || deps.objects === undefined
         ? []
         : [
@@ -192,7 +209,7 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
             }),
           ]),
     ],
-    sections: [section, skillsSection, appsSection, codemodeNotes],
+    sections: [section, skillsSection, appsSection, machinesSection, codemodeNotes],
     hooks: [createApprovalGate(deps), ...(deps.toolHooks ?? [])],
   });
 }

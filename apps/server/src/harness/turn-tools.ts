@@ -41,7 +41,8 @@ import { createGuildTools, guildToolsAllowed } from "../agents/guild-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
 import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
-import { createAgentWorkspaceTools, createMachineTools, directBaseTools } from "./agent-tools.js";
+import type { MachineTargets } from "../machines/targets.js";
+import { createAgentWorkspaceTools, createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
 import { composeAgentInstructions } from "./instructions.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
 
@@ -68,6 +69,9 @@ export interface TurnToolDeps {
   readonly integrations: Pick<IntegrationsRuntime, "prepareTurn">;
   readonly userMcp: Pick<UserMcpRuntime, "prepareTurn">;
   readonly executors: Pick<ConversationExecutors, "executorKind" | "envFor">;
+  /** The member's paired machines: the per-call environment a coding tool
+   *  resolves when the call names one. */
+  readonly machines: Pick<MachineTargets, "envFor">;
   /** The App and Access stores, the reach check `publish_app` runs on each
    *  data function, and the member call the App tools run; absent in
    *  processes that store no Apps. */
@@ -115,16 +119,24 @@ export class TurnTools {
     // The agent's allowlist narrows the direct coding and skill tools the
     // same way it narrows integrations. Codemode itself is always present:
     // it is the only path to the script-only tools.
-    const baseTools = directBaseTools(
-      machineBound
-        ? base.tools.filter((tool) => !(CODING_TOOL_NAMES as readonly string[]).includes(tool.name))
-        : base.tools,
-      agent,
-    );
+    const allowed = directBaseTools(base.tools, agent);
+    const coding = (tool: ToolRegistration): boolean => (CODING_TOOL_NAMES as readonly string[]).includes(tool.name);
+    // A project-bound chat keeps every coding tool, as before; a sandbox
+    // chat keeps the ones the allowlist lets through.
+    const codingSource = machineBound ? base.tools : allowed;
+    const baseTools = allowed.filter((tool) => !coding(tool));
     const agentTools = await this.agentTools(chatId);
-    // The plain names keep their behavior; only their descriptions change,
-    // so the model sees which environment each set acts on.
-    const machineTools = machineBound ? createMachineTools() : [];
+    // The plain names carry a per-call `machine` target; without it they act
+    // on the conversation's own environment.
+    const owner = await deps.chats.ownerOf(chatId);
+    const routedTools = createRoutedCodingTools({
+      chatId,
+      orgId,
+      userId: owner?.user_id ?? "",
+      envFor: (request) => deps.machines.envFor(request),
+    });
+    const codingAllowed = new Set(codingSource.filter(coding).map((tool) => tool.name));
+    const machineTools = routedTools.filter((tool) => codingAllowed.has(tool.name));
     // A project-bound chat runs the plain coding tools on the user's
     // machine, so the agent gets a second set bound to its own sandbox.
     // They are outside the allowlist: the workspace is the agent's memory,

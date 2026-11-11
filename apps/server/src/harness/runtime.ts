@@ -86,6 +86,7 @@ import { SkillRuntime } from "./skills.js";
 import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
 import { ConversationExecutors } from "./executors.js";
+import { MachineTargets } from "../machines/targets.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
 import { appFunctionCheck } from "../agents/publish-app.js";
 import { appFunctionCall, appFunctionGate, createAppCallGate, renderAppsIndex } from "../agents/app-tools.js";
@@ -218,6 +219,10 @@ export class GuildRuntime {
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
+  /** The member's paired machines: the per-call target a coding tool call
+   *  resolves through `machine`, and the list the prompt and `machine_list`
+   *  render. */
+  private readonly machineTargets: MachineTargets;
   private readonly hub?: MachineDispatchHost;
 
   constructor(deps: RuntimeDeps) {
@@ -412,6 +417,18 @@ export class GuildRuntime {
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (built-in coding tools enabled) + codemode.
+    this.machineTargets = new MachineTargets({
+      listForUser: (orgId, userId) => stores.machines.listForUser(orgId, userId),
+      machineOnline: (machineId) => this.hub?.machineOnline(machineId) ?? false,
+      machineHolder: (machineId) => this.hub?.machineHolder(machineId) ?? null,
+      machineRequest: async (machineId, orgId, op, payload, timeoutMs) =>
+        (await this.hub?.machineRequest(machineId, orgId, op, payload, timeoutMs)) ?? {
+          ok: false,
+          error: { kind: "offline" as const },
+        },
+      dispatch: () => this.dispatch(),
+      timeoutMs: () => config.clientToolTimeoutMs,
+    });
     this.guildExtension = createGuildExtension({
       orgProfile: async (orgId) => {
         const [org, prompt] = await Promise.all([
@@ -461,6 +478,19 @@ export class GuildRuntime {
         return renderAppsIndex(rows);
       },
       skillRuntime: this.skillsRuntime,
+      machines: {
+        list: (orgId, userId) => this.machineTargets.list(orgId, userId),
+        orgOfConversation: async (conversationId) => {
+          const chatId = await this.chatOfConversation(conversationId);
+          return chatId === null ? null : stores.chats.orgOf(chatId);
+        },
+        userOfConversation: async (conversationId) => {
+          const chatId = await this.chatOfConversation(conversationId);
+          if (chatId === null) return null;
+          const owner = await stores.chats.ownerOf(chatId);
+          return owner === null ? null : { id: owner.user_id };
+        },
+      },
       toolHooks: [
         createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
         createConflictHook(this.conflicts, chatOfConversation),
@@ -486,10 +516,11 @@ export class GuildRuntime {
     // scripts' `models.classify`/`generateImages` surface would be a dead
     // end and its description dead prompt weight.
     // The default 3000-token inline budget drops the tail of the callable
-    // list once the agent tool set grows, so the section gets 500 more;
-    // namespaces keep every group represented within it.
+    // list once the agent tool set grows, so the section gets 1500 more: the
+    // coding tools carry a `machine` and a `cwd` argument, and the longest
+    // declarations are the first the budget would drop.
     this.codemodeExtension = createNamespacedCodemodeExtension(
-      { sandbox: this.codemodeSandbox, models: false, inlineBudget: 3500 },
+      { sandbox: this.codemodeSandbox, models: false, inlineBudget: 4500 },
       async (conversationId) => [
         ...BUILTIN_TOOL_GROUPS,
         ...(await this.integrationsRuntime.toolGroups(conversationId)),
@@ -516,6 +547,7 @@ export class GuildRuntime {
       integrations: this.integrationsRuntime,
       userMcp: this.userMcpRuntime,
       executors: this.executors,
+      machines: { envFor: (request) => this.machineTargets.envFor(request) },
       apps: {
         apps: stores.apps,
         access: stores.access,

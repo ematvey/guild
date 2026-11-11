@@ -72,6 +72,13 @@ dbDescribe("agent workspace conflict journal", () => {
       "logs/run.log",
     ]);
     expect(writtenPaths("bash", { command: "cat /etc/passwd" })).toEqual([]);
+    // A call that names a machine keys its paths by that machine, so two hosts
+    // never collide on one path.
+    expect(writtenPaths("write", { path: "/srv/app/a.ts", machine: "MacBook" })).toEqual(["MacBook:/srv/app/a.ts"]);
+    expect(writtenPaths("write", { path: "/srv/app/a.ts", machine: "Build box" })).toEqual([
+      "Build box:/srv/app/a.ts",
+    ]);
+    expect(writtenPaths("bash", { command: "ls > /tmp/x", machine: "MacBook" })).toEqual(["MacBook:/tmp/x"]);
   });
 
   it("notifies the other running turn and finishes the journal row", async () => {

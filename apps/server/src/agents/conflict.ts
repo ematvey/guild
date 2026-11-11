@@ -109,9 +109,17 @@ export function writtenPaths(toolName: string, args: Record<string, unknown>): s
         : toolName === "bash" && typeof args["command"] === "string"
           ? shellPaths(args["command"])
           : [];
+  // A call that names a machine wrote on that machine, not in the shared
+  // workspace: its paths are keyed by the machine, so two hosts never collide
+  // on one path, and they are not resolved against the workspace root.
+  const machine = typeof args["machine"] === "string" && args["machine"] !== "" ? args["machine"] : null;
   const normalized: string[] = [];
   for (const candidate of raw) {
     if (candidate === "" || candidate === "/dev/null" || candidate.includes("$")) continue;
+    if (machine !== null) {
+      normalized.push(`${machine}:${candidate}`);
+      continue;
+    }
     try {
       const rel = normalizeRelativePath(candidate);
       if (rel !== "") normalized.push(rel);

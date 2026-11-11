@@ -1,3 +1,28 @@
+## 0.6.98 — a tool call runs on any machine the member paired
+
+Working on a machine needed a Project: the Project named the folder, and only a
+Thread bound to one ran tools there. The four coding tools now take a `machine`
+argument — a machine id, or a label unique among the caller's machines — and
+that one call runs on that machine. `cwd` names the folder it runs in; without
+it the call runs in the machine's home directory, read once per connection. No
+folder carries from one call to the next, so a command writes `cd <folder> &&
+…`, and the prompt says so.
+
+A machine stays private to the Member who paired it: another member's id
+resolves to `no such machine`, and the error names the machines that member does
+own. Without `machine` a call keeps its Thread's own environment, so a
+project-bound chat still runs on its project machine, in the project folder.
+
+The `machines` prompt section lists label, id and live flag in every chat (and
+says `none paired` when there are none), and `machine_list` reads the same list
+again mid-turn. The tool card shows the machine label beside the tool name. A
+write on a machine is journaled as `<machine>:<path>`, so two hosts never
+collide on one path. The approval gate follows the target: a call that names a
+machine counts as a machine call for the shell allowlist.
+
+The codemode inline budget goes from 3500 to 4500 tokens: the coding tools carry
+two more arguments, and the longest declarations are the first the budget drops.
+
 ## 0.6.96 — develop and master merged, one version
 
 The two branches carried their own version bumps (0.6.94 on `develop`,

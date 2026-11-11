@@ -23,7 +23,17 @@ import { toolArtifactBlobUrl } from "../../lib/api/chats";
 import { usePreview } from "./preview/PreviewContext";
 import { artifactCardOf, type ArtifactCard, type CodemodeCallRow, type ToolBlock } from "../../lib/thread-reducer";
 import { formatBytes } from "../../lib/format";
-import { argOf, codemodeDuration, parseSearchResults, safeUrl, toolKind, toolLabel, toolPreview } from "./tool-text";
+import {
+  argOf,
+  codemodeDuration,
+  machineTargetOf,
+  parseSearchResults,
+  safeUrl,
+  toolKind,
+  toolLabel,
+  toolPreview,
+} from "./tool-text";
+import { useMachines } from "../../lib/machines-store";
 
 /// Status pill on tool frames and page cards.
 export function StatusPill({ status }: { status: "running" | "done" | "error" }) {
@@ -115,7 +125,9 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
         type="button"
         title={`Open ${card.filename}`}
         className="ml-auto flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs hover:bg-accent"
-        onClick={() => openPreview({ kind: "artifact", id: card.id }, { filename: card.filename, contentType: card.content_type })}
+        onClick={() =>
+          openPreview({ kind: "artifact", id: card.id }, { filename: card.filename, contentType: card.content_type })
+        }
       >
         <Eye className="size-3" />
         Open
@@ -430,12 +442,22 @@ export function ToolFrame({ t }: { t: ToolBlock }) {
   const preview = toolPreview(t);
   const running = t.status === "running";
   const pulse = running ? "animate-pulse" : "";
+  // A call that names a machine ran there, not in the chat's own environment.
+  const machines = useMachines();
+  const target = machineTargetOf(t);
+  const machineName =
+    target === undefined ? undefined : (machines?.find((m) => m.machine_id === target)?.name ?? target);
   return (
     <Frame
       icon={<ToolKindIcon kind={toolKind(t)} />}
       title={
         <>
           <span className={`mr-3 font-medium text-foreground/80 ${pulse}`}>{toolLabel(t)}</span>
+          {machineName !== undefined && (
+            <span className={`mr-3 shrink-0 rounded-full border px-1.5 py-px text-xs ${pulse}`} title={target}>
+              on {machineName}
+            </span>
+          )}
           {preview && (
             <span className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${pulse}`} title={preview}>
               {preview}
