@@ -205,7 +205,7 @@ export class SandboxManager {
       if (stat.isSymbolicLink()) throw new Error(`${dir} is a symbolic link`);
       if (stat.uid !== SANDBOX_UID) {
         this.log.info({ dir }, "handing data dir to the sandbox uid");
-        await this.chownTree(dir, true, false);
+        await this.chownTree(dir, true);
       }
     }
   }
@@ -221,13 +221,12 @@ export class SandboxManager {
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new RunnerError(409, "workspace path is not a directory");
     const resolved = await realpath(dir);
     if (resolved !== dir) throw new RunnerError(409, "workspace path resolves elsewhere");
-    await mkdir(path.join(dir, ".sandbox-home"), { recursive: true });
-    await this.chownTree(dir, stat.uid !== SANDBOX_UID, true);
+    await this.chownTree(dir, stat.uid !== SANDBOX_UID);
   }
 
-  /** Hands the workspace to the sandbox uid: the root dir and sandbox home
-   *  always, the whole tree when the root was owned by someone else. */
-  private async chownTree(dir: string, recursive: boolean, sandboxHome: boolean): Promise<void> {
+  /** Hands the workspace to the sandbox uid: the root dir always, the whole
+   *  tree when the root was owned by someone else. */
+  private async chownTree(dir: string, recursive: boolean): Promise<void> {
     const own = async (p: string) => {
       try {
         await chown(p, SANDBOX_UID, SANDBOX_UID);
@@ -236,7 +235,6 @@ export class SandboxManager {
       }
     };
     await own(dir);
-    if (sandboxHome) await own(path.join(dir, ".sandbox-home"));
     if (!recursive) return;
     const walk = async (p: string): Promise<void> => {
       for (const entry of await readdir(p, { withFileTypes: true })) {

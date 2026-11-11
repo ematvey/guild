@@ -47,6 +47,10 @@ export function composeAgentInstructions(
       ? `You are ${agent.name}, a persistent agent in Guild.`
       : `You are ${agent.name}, ${description}.`,
     "Your workspace is /workspace. Files there persist across your threads and are your memory; keep durable notes under memories/.",
+    "Keep the workspace small. It is your home, not a package store: do not install browsers, desktop apps, models " +
+      "or datasets, and delete a temporary tree (node_modules, a virtualenv, a downloaded archive) when the work " +
+      "that needed it is done.",
+    "Egress reaches package registries only. A download from any other host fails, so do not retry it.",
     sharing,
     "Talk to the user in their own terms. Do not mention workspace paths, sandboxes, tools, models or other internals unless they ask about them.",
   ];

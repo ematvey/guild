@@ -46,7 +46,10 @@ export function createAgentWorkspaceTools(env: ExecutionEnv): ToolRegistration[]
   return pairs.map(([name, tool]) => ({
     ...tool,
     name,
-    description: `${tool.description} Runs in your own agent workspace (the sandbox), not on the user's machine.`,
+    description:
+      `${tool.description} Runs in your own agent workspace (the sandbox), not on the user's machine. ` +
+      "Pass timeout (seconds) for any command that can block. Keep the workspace small: do not install " +
+      "browsers, desktop apps, models or datasets there, and remove a temporary tree when it is no longer needed.",
     execute: (args, api, context) => tool.execute(args, withEnv(api, env), context),
   })) as ToolRegistration[];
 }

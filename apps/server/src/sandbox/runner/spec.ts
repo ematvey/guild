@@ -30,6 +30,7 @@ export interface RunnerConfig {
   nanoCpus: number;
   pidsLimit: number;
   tmpSize: string;
+  homeSize: string;
   idleStopMs: number;
   idleRemoveMs: number;
   maxRunning: number;
@@ -39,7 +40,9 @@ export interface RunnerConfig {
 
 export const SANDBOX_UID = 1000;
 export const WORKSPACE = "/workspace";
-export const SANDBOX_HOME = `${WORKSPACE}/.sandbox-home`;
+/** A tmpfs, not a workspace dir: package installs and caches are bounded and
+ *  die with the container, so the workspace holds only the agent's files. */
+export const SANDBOX_HOME = "/home/sandbox";
 export const AGENT_PATH = "/opt/guild/agent.js";
 export const LABEL = "guild.sandbox";
 
@@ -68,7 +71,7 @@ export function containerName(config: Pick<RunnerConfig, "project">, key: string
 }
 
 /** The environment every sandbox process sees: package managers write
- *  into the persistent sandbox home; nothing from the runner leaks in. */
+ *  into the tmpfs home, so no cache or user install reaches the workspace. */
 export function sandboxEnv(config: Pick<RunnerConfig, "network" | "proxyUrl">): string[] {
   const env = [
     `HOME=${SANDBOX_HOME}`,
@@ -116,7 +119,10 @@ export function containerSpec(config: RunnerConfig, key: string, subpath: string
       Runtime: config.runtime,
       NetworkMode: config.network,
       ReadonlyRootfs: true,
-      Tmpfs: { "/tmp": `rw,nosuid,nodev,size=${config.tmpSize},mode=1777` },
+      Tmpfs: {
+        "/tmp": `rw,nosuid,nodev,size=${config.tmpSize},mode=1777`,
+        [SANDBOX_HOME]: `rw,nosuid,nodev,size=${config.homeSize},mode=0755,uid=${SANDBOX_UID},gid=${SANDBOX_UID}`,
+      },
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges"],
       PidsLimit: config.pidsLimit,
@@ -200,6 +206,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv, discovered: { project: 
     nanoCpus: Math.round(envInt(env, "GUILD_SANDBOX_CPUS", 2) * 1e9),
     pidsLimit: envInt(env, "GUILD_SANDBOX_PIDS", 512),
     tmpSize: env.GUILD_SANDBOX_TMP_SIZE ?? "1g",
+    homeSize: env.GUILD_SANDBOX_HOME_SIZE ?? "512m",
     idleStopMs: envInt(env, "GUILD_SANDBOX_IDLE_STOP_SECONDS", 15 * 60) * 1000,
     idleRemoveMs: envInt(env, "GUILD_SANDBOX_IDLE_REMOVE_SECONDS", 24 * 3600) * 1000,
     maxRunning: envInt(env, "GUILD_SANDBOX_MAX_RUNNING", 32),

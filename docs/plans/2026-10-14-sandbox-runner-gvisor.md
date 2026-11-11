@@ -142,11 +142,13 @@ connection after 5 minutes unused, so the runner can count it idle.
 
 - Project-local installs (`node_modules`, `.venv`, `target/`) live in
   `/workspace`.
-- User-level installs persist in `/workspace/.sandbox-home` (`HOME`,
-  `npm_config_prefix`, `PYTHONUSERBASE`, `CARGO_HOME`, caches; their bin
-  dirs on `PATH`; `PIP_BREAK_SYSTEM_PACKAGES=1` since system site-packages
-  are read-only anyway). `npm i -g` and `pip install --user` work and
-  survive container removal (integration-tested).
+- The home is a tmpfs at `/home/sandbox` (`GUILD_SANDBOX_HOME_SIZE`, default
+  `512m`), not a workspace dir: `HOME`, `npm_config_prefix`, `PYTHONUSERBASE`,
+  `CARGO_HOME` and the caches point there, their bin dirs are on `PATH`, and
+  `PIP_BREAK_SYSTEM_PACKAGES=1` since system site-packages are read-only
+  anyway. `npm i -g` and `pip install --user` work inside one container and
+  are dropped when it is removed, so no package store accumulates on the
+  workspace volume.
 - System packages are baked into the image; `apt-get` does not work
   (non-root, read-only rootfs) by design.
 
