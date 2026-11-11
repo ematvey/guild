@@ -1,3 +1,18 @@
+## 0.6.99 — a tool's class is the admin's call, not only an MCP one
+
+The class of an integration tool decides two things: who may use it (the reach
+ceilings of 002) and whether a call asks first. A compiled-in tool's class came
+from its code declaration only, so an Integration whose credential cannot write
+still classed its raw API tool `write`: every App function built on it asked,
+every call, in every chat, and a `read` ceiling hid the tool entirely.
+
+The Tools tab of an Integration now sets the class of any tool, MCP or not, and
+the server takes it: `toolCurate` reads a curated class on every row,
+`connectorToolClass` puts it ahead of the declaration, and the curation route no
+longer refuses a built-in. The class states what the key behind the tool can
+do — a read-only HubSpot token marks `hubspot_api` `read` — so an App reading
+through it stops asking, and a `read`-ceilinged agent reaches it again.
+
 ## 0.6.98 — a tool call runs on any machine the member paired
 
 Working on a machine needed a Project: the Project named the folder, and only a

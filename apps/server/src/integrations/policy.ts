@@ -4,7 +4,7 @@
 import type { IntegrationToolInfo, IntegrationTurn } from "./plugins.js";
 import type { McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
-import { classRank, isToolClass, type ToolClass } from "../platform/domain/tool-class.js";
+import { classRank, isToolClass, toolClassOf, type ToolClass } from "../platform/domain/tool-class.js";
 
 /** Per-tool approval value forcing a durable approval prompt on every call. */
 export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
@@ -17,13 +17,13 @@ export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
 /** One tool's admin curation as stored on the integration row's config:
  *  `config.tools[<raw tool name>] = { enabled, approval, class? }`. A tool
  *  absent from the stored config is enabled, a connector's declared tool and
- *  an MCP server's discovered tool alike; its class (the declared one, or for
- *  MCP the admin's, the manifest's or the suggested one) and the reach
- *  ceilings decide who gets it. Only MCP tools carry a curated class.
- *  Unknown approval values read as the default. */
+ *  an MCP server's discovered tool alike; its class (the admin's when set,
+ *  else the declared one, or for MCP the manifest's or the suggested one)
+ *  and the reach ceilings decide who gets it. The admin's class is how a
+ *  credential's real reach is stated: a key that cannot write marks its raw
+ *  API tool `read`. Unknown approval values read as the default. */
 export function toolCurate(
   rowConfig: JsonObject,
-  mcp: boolean,
   rawTool: string,
 ): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean; cls: ToolClass | null } {
   const tools = rowConfig["tools"];
@@ -35,7 +35,7 @@ export function toolCurate(
       enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : true,
       alwaysAsk: c["approval"] === TOOL_APPROVAL_ALWAYS_ASK,
       alwaysAllow: c["approval"] === TOOL_APPROVAL_ALWAYS_ALLOW,
-      cls: mcp && isToolClass(c["class"]) ? c["class"] : null,
+      cls: isToolClass(c["class"]) ? c["class"] : null,
     };
   }
   return { enabled: true, alwaysAsk: false, alwaysAllow: false, cls: null };
@@ -65,17 +65,27 @@ function declaredMcpClass(manifest: JsonObject | null, rawTool: string): ToolCla
   return isToolClass(declared) ? declared : null;
 }
 
+/** The class a compiled-in tool runs under: the admin's curated class when
+ *  set, else the connector's declaration. */
+export function connectorToolClass(
+  rowConfig: JsonObject,
+  connector: { classes: Record<string, string> },
+  rawTool: string,
+): ToolClass {
+  return toolCurate(rowConfig, rawTool).cls ?? (toolClassOf(connector, rawTool) as ToolClass);
+}
+
 /** The class an MCP tool runs under: the admin's curated class when set,
  *  else the registry manifest's declaration, else the class suggested from
  *  the live tool's hints and name. A compiled-in tool's class is its code
- *  declaration only. */
+ *  declaration, unless the admin curates one. */
 export function mcpToolClass(
   rowConfig: JsonObject,
   manifest: JsonObject | null,
   tool: Pick<McpTool, "name" | "annotations">,
 ): ToolClass {
   return (
-    toolCurate(rowConfig, true, tool.name).cls ?? declaredMcpClass(manifest, tool.name) ?? suggestedToolClass(tool)
+    toolCurate(rowConfig, tool.name).cls ?? declaredMcpClass(manifest, tool.name) ?? suggestedToolClass(tool)
   );
 }
 
@@ -112,7 +122,7 @@ export function toolOffered(
   ceiling: ToolClass | null,
   role: string,
 ): boolean {
-  if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) return false;
+  if (!toolCurate(turn.rowConfig, info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin") return false;
   return ceiling !== null && classRank(info.class) <= classRank(ceiling);
 }

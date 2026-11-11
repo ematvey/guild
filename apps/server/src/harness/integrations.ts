@@ -269,7 +269,7 @@ export class IntegrationsRuntime {
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
       for (const info of turn.tools) {
-        if (!toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw).enabled) continue;
+        if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
         tools.push(this.integrationTool(info));
         this.knownToolNames.add(info.spec.name);
       }
@@ -462,7 +462,7 @@ export class IntegrationsRuntime {
     const target = integrationTarget(snapshot.turns, callName);
     if (target === undefined) return undefined;
     const { turn, info } = target;
-    const curation = toolCurate(turn.rowConfig, turn.executor === "mcp", info.raw);
+    const curation = toolCurate(turn.rowConfig, info.raw);
     if (curation.alwaysAsk) return "ask";
     if (curation.alwaysAllow) return "skip";
     return info.class === "read" ? "skip" : "policy";

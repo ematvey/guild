@@ -261,17 +261,13 @@ export function registerAdminIntegrationRoutes(
     if (approval !== "default" && approval !== "always_ask" && approval !== "always_allow") {
       throw ApiError.badRequest("approval must be default, always_ask or always_allow");
     }
-    // An MCP tool's class is the admin's call (a compiled-in tool's class
-    // is its code declaration).
+    // The class is the admin's call: a compiled-in tool's declaration is a
+    // guess about the credential, and the admin knows what the key can do.
     let cls: string | null = null;
     if (record["class"] !== undefined) {
       if (!isToolClass(record["class"])) throw ApiError.badRequest("class must be read, write or admin");
       const row = await gateway.integrations.get(admin.org_id, id);
       if (row === null) throw ApiError.notFound("unknown integration");
-      const mcp = (row.config as Record<string, unknown> | null)?.["mcp"];
-      if (mcp === null || typeof mcp !== "object") {
-        throw ApiError.badRequest("only an MCP integration's tool classes can be changed");
-      }
       cls = record["class"];
     }
     const name = await gateway.integrations.curateTool(admin.org_id, id, tool, enabled, approval, cls);

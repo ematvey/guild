@@ -1339,7 +1339,7 @@ describe("org MCP servers added from the admin UI", () => {
     expect(kept.tools.find((t) => t.name === "echo")!.class).toBe("write");
   });
 
-  it("refuses a taken slug, a built-in slug, and a class change on a built-in row", async () => {
+  it("refuses a taken slug and a built-in slug, and curates a built-in row's class", async () => {
     const dup = await call(
       "POST",
       "/api/v1/admin/integrations/mcp",
@@ -1365,7 +1365,7 @@ describe("org MCP servers added from the admin UI", () => {
     const id = await seedIntegration(
       "searxng",
       { base_url: "http://searx.test" },
-      false,
+      true,
     );
     const cls = await call(
       "PUT",
@@ -1373,10 +1373,21 @@ describe("org MCP servers added from the admin UI", () => {
       e.adminToken,
       {
         enabled: true,
-        class: "admin",
+        class: "write",
       },
     );
-    expect(cls.statusCode).toBe(400);
+    expect(cls.statusCode).toBe(200);
+    const listed = await call(
+      "GET",
+      `/api/v1/admin/integrations/${id}/tools`,
+      e.adminToken,
+    );
+    const listedTools = (
+      JSON.parse(listed.body as string) as {
+        tools: { name: string; class: string }[];
+      }
+    ).tools;
+    expect(listedTools.find((t) => t.name === "web_search")!.class).toBe("write");
   });
 });
 

@@ -1,9 +1,10 @@
-// The class an MCP tool runs under: the admin's curated class, else the
-// manifest's declaration, else the class suggested from the live tool. A
-// catalog stub declares no tools, so its tools are classed from discovery.
+// The class a tool runs under: the admin's curated class first, else an MCP
+// manifest's declaration or the class suggested from the live tool, else a
+// compiled-in tool's own declaration. A catalog stub declares no tools, so
+// its tools are classed from discovery.
 
 import { describe, expect, it } from "vitest";
-import { mcpToolClass, suggestedToolClass } from "../integrations/policy.js";
+import { connectorToolClass, mcpToolClass, suggestedToolClass } from "../integrations/policy.js";
 
 describe("suggestedToolClass", () => {
   it("follows the server's hints before the name", () => {
@@ -36,5 +37,23 @@ describe("mcpToolClass", () => {
   it("prefers the admin's curated class over everything", () => {
     const row = { tools: { send_money: { enabled: true, class: "read" } } };
     expect(mcpToolClass(row, { tools: { classes: { send_money: "admin" } } }, tool)).toBe("read");
+  });
+});
+
+describe("connectorToolClass", () => {
+  const hubspot = { classes: { search_deals: "read", api: "write" } };
+
+  it("uses the declaration when the admin curated nothing", () => {
+    expect(connectorToolClass({}, hubspot, "api")).toBe("write");
+    expect(connectorToolClass({}, hubspot, "search_deals")).toBe("read");
+  });
+
+  it("takes the admin's class over the declaration: a read-only key marks its api tool read", () => {
+    const row = { tools: { api: { enabled: true, class: "read" } } };
+    expect(connectorToolClass(row, hubspot, "api")).toBe("read");
+  });
+
+  it("ignores a class that is not one of the three", () => {
+    expect(connectorToolClass({ tools: { api: { class: "rw" } } }, hubspot, "api")).toBe("write");
   });
 });

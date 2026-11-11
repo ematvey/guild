@@ -9,9 +9,8 @@ import { builtinMcpByName, type IntegrationToolSpec, type Connector } from "./lo
 import { traitSpec } from "@guild/integration-sdk";
 import { connectorFor, readTraitBindings, type ConnectorSource, type TraitBindings } from "./connectors.js";
 import type { OrgKvStore } from "../platform/store/org-kv.js";
-import { toolClassOf } from "../platform/domain/tool-class.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
-import { mcpToolClass } from "./policy.js";
+import { connectorToolClass, mcpToolClass } from "./policy.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
 
@@ -233,7 +232,7 @@ export async function resolveIntegrations(
           const trait = traitOfTool(resolved, spec.name);
           return {
             spec: { ...spec, name: namespacedTool(row.name, spec.name) },
-            class: toolClassOf(resolved, spec.name),
+            class: connectorToolClass(config, resolved, spec.name),
             raw: spec.name,
             ...(trait !== undefined ? { trait } : {}),
           };
