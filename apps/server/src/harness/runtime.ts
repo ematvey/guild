@@ -88,6 +88,7 @@ import { OrgModels } from "./org-models.js";
 import { ConversationExecutors } from "./executors.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
 import { appFunctionCheck } from "../agents/publish-app.js";
+import { appFunctionCall, appFunctionGate, createAppCallGate, renderAppsIndex } from "../agents/app-tools.js";
 import type { IntegrationGateway } from "../integrations/plugins.js";
 import { IntegrationAccessStore } from "../platform/store/integration-access.js";
 import { mediaSpillingRegistry } from "./media-registry.js";
@@ -108,6 +109,7 @@ export interface RuntimeDeps {
     PlatformStores,
     | "chats"
     | "apps"
+    | "access"
     | "identity"
     | "threads"
     | "turnCommands"
@@ -342,6 +344,16 @@ export class GuildRuntime {
       orgKv: stores.orgKv,
       masterKey: () => deps.masterKey(),
     };
+    // The App tools and the gate's App classifier share one Integration
+    // reach: a function runs for the member, and asks them when it writes.
+    const integrationAccess = new IntegrationAccessStore(pool);
+    const appGate = appFunctionGate(integrationGateway, integrationAccess, stores.identity);
+    const appCallGate = createAppCallGate({
+      apps: stores.apps,
+      chats: stores.chats,
+      chatOfConversation,
+      functionGate: appGate,
+    });
     this.integrationsRuntime = new IntegrationsRuntime(
       {
         gateway: integrationGateway,
@@ -443,6 +455,11 @@ export class GuildRuntime {
           return this.integrationsRuntime.gateDecision(conversationId, callName);
         },
       },
+      appCallGate,
+      appsIndex: async (orgId, userId) => {
+        const rows = (await stores.apps.listVisible(orgId, [userId])).get(userId) ?? [];
+        return renderAppsIndex(rows);
+      },
       skillRuntime: this.skillsRuntime,
       toolHooks: [
         createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
@@ -501,7 +518,10 @@ export class GuildRuntime {
       executors: this.executors,
       apps: {
         apps: stores.apps,
-        checkFunction: appFunctionCheck(integrationGateway, new IntegrationAccessStore(pool), stores.identity),
+        access: stores.access,
+        checkFunction: appFunctionCheck(integrationGateway, integrationAccess, stores.identity),
+        functionGate: appGate,
+        callFunction: appFunctionCall(integrationGateway, integrationAccess, stores.events),
       },
       turns: {
         submitTurn: (chatId, orgId, input) => this.submitTurn(chatId, orgId, input),

@@ -40,6 +40,8 @@ export interface AppPublish {
   agentId: string | null;
   chatId: string | null;
   appId?: string;
+  /** The member's org role: an admin reads an App they do not own. */
+  role?: string;
   name: string;
   description: string;
   html: string;
@@ -89,13 +91,8 @@ export class AppStore {
 
   /** The Apps each member sees, keyed by user id: one read for the org's
    *  members, with each row's `can_edit` for that member. */
-  async listVisible(
-    orgId: string,
-    userIds: readonly string[],
-  ): Promise<Map<string, AppRow[]>> {
-    const out = new Map<string, AppRow[]>(
-      userIds.map((userId) => [userId, []]),
-    );
+  async listVisible(orgId: string, userIds: readonly string[]): Promise<Map<string, AppRow[]>> {
+    const out = new Map<string, AppRow[]>(userIds.map((userId) => [userId, []]));
     if (userIds.length === 0) return out;
     const res = await this.pool.query(
       `SELECT ${COLUMNS}, vw.id AS viewer_id, (${editPredicate("app", "a", userViewer("vw"))}) AS can_edit
@@ -113,11 +110,7 @@ export class AppStore {
   }
 
   /** One App of the org; 404 when it is missing or the member cannot see it. */
-  async getVisible(
-    orgId: string,
-    id: string,
-    user: Pick<UserRow, "id" | "role">,
-  ): Promise<AppRow> {
+  async getVisible(orgId: string, id: string, user: Pick<UserRow, "id" | "role">): Promise<AppRow> {
     const res = await this.pool.query(
       `SELECT ${COLUMNS}, (${editPredicate("app", "a")}) AS can_edit
          ${FROM}
@@ -130,14 +123,11 @@ export class AppStore {
   }
 
   /** The page of one version. */
-  async page(
-    appId: string,
-    version: number,
-  ): Promise<{ html: string; sha256: string }> {
-    const res = await this.pool.query(
-      "SELECT html, sha256 FROM app_versions WHERE app_id = $1 AND version = $2",
-      [appId, version],
-    );
+  async page(appId: string, version: number): Promise<{ html: string; sha256: string }> {
+    const res = await this.pool.query("SELECT html, sha256 FROM app_versions WHERE app_id = $1 AND version = $2", [
+      appId,
+      version,
+    ]);
     const row = res.rows[0];
     if (row === undefined) throw ApiError.notFound("no such app version");
     return { html: row.html as string, sha256: row.sha256 as string };
@@ -153,25 +143,11 @@ export class AppStore {
         await client.query(
           "INSERT INTO apps (id, org_id, owner_user_id, agent_id, chat_id, name, description) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-          [
-            appId,
-            input.orgId,
-            input.ownerUserId,
-            input.agentId,
-            input.chatId,
-            input.name,
-            input.description,
-          ],
+          [appId, input.orgId, input.ownerUserId, input.agentId, input.chatId, input.name, input.description],
         );
         await client.query(
           "INSERT INTO app_versions (app_id, version, html, functions, sha256, created_by) VALUES ($1, 1, $2, $3, $4, $5)",
-          [
-            appId,
-            input.html,
-            JSON.stringify(input.functions),
-            sha256,
-            input.ownerUserId,
-          ],
+          [appId, input.html, JSON.stringify(input.functions), sha256, input.ownerUserId],
         );
         return appId;
       }
@@ -182,70 +158,37 @@ export class AppStore {
       const row = res.rows[0];
       if (row === undefined) throw ApiError.notFound("no such app");
       if (row.owner_user_id !== input.ownerUserId) {
-        const role = await client.query(
-          "SELECT role FROM users WHERE id = $1",
-          [input.ownerUserId],
-        );
+        const role = await client.query("SELECT role FROM users WHERE id = $1", [input.ownerUserId]);
         const allowed = await client.query(
-          `SELECT 1 FROM apps a WHERE a.id = $1 AND ${editPredicate(
-            "app",
-            "a",
-            {
-              org: "$2",
-              admin: "$3::boolean",
-              user: "$4",
-            },
-          )}`,
-          [
-            input.appId,
-            input.orgId,
-            role.rows[0]?.role === "admin",
-            input.ownerUserId,
-          ],
+          `SELECT 1 FROM apps a WHERE a.id = $1 AND ${editPredicate("app", "a", {
+            org: "$2",
+            admin: "$3::boolean",
+            user: "$4",
+          })}`,
+          [input.appId, input.orgId, role.rows[0]?.role === "admin", input.ownerUserId],
         );
-        if (allowed.rowCount === 0)
-          throw ApiError.forbidden(
-            "only the app's owner or an editor can publish it",
-          );
+        if (allowed.rowCount === 0) throw ApiError.forbidden("only the app's owner or an editor can publish it");
       }
       const version = Number(row.version) + 1;
       await client.query(
         "INSERT INTO app_versions (app_id, version, html, functions, sha256, created_by) VALUES ($1, $2, $3, $4, $5, $6)",
-        [
-          input.appId,
-          version,
-          input.html,
-          JSON.stringify(input.functions),
-          sha256,
-          input.ownerUserId,
-        ],
+        [input.appId, version, input.html, JSON.stringify(input.functions), sha256, input.ownerUserId],
       );
       await client.query(
         "UPDATE apps SET version = $2, name = $3, description = $4, agent_id = COALESCE($5, agent_id), " +
           "chat_id = COALESCE($6, chat_id), updated_at = now() WHERE id = $1",
-        [
-          input.appId,
-          version,
-          input.name,
-          input.description,
-          input.agentId,
-          input.chatId,
-        ],
+        [input.appId, version, input.name, input.description, input.agentId, input.chatId],
       );
       return input.appId;
     });
     return this.getVisible(input.orgId, id, {
       id: input.ownerUserId,
-      role: "member",
+      role: input.role ?? "member",
     });
   }
 
   /** The functions one viewer granted for one App version. */
-  async grants(
-    appId: string,
-    userId: string,
-    version: number,
-  ): Promise<Set<string>> {
+  async grants(appId: string, userId: string, version: number): Promise<Set<string>> {
     const res = await this.pool.query(
       "SELECT function FROM app_grants WHERE app_id = $1 AND user_id = $2 AND version = $3",
       [appId, userId, version],
@@ -254,12 +197,7 @@ export class AppStore {
   }
 
   /** Records a viewer's standing yes to one function of one App version. */
-  async grant(
-    appId: string,
-    userId: string,
-    version: number,
-    fn: string,
-  ): Promise<void> {
+  async grant(appId: string, userId: string, version: number, fn: string): Promise<void> {
     await this.pool.query(
       "INSERT INTO app_grants (app_id, user_id, version, function) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
       [appId, userId, version, fn],
@@ -268,23 +206,18 @@ export class AppStore {
 
   /** Drops every grant one viewer gave one App. */
   async clearGrants(appId: string, userId: string): Promise<void> {
-    await this.pool.query(
-      "DELETE FROM app_grants WHERE app_id = $1 AND user_id = $2",
-      [appId, userId],
-    );
+    await this.pool.query("DELETE FROM app_grants WHERE app_id = $1 AND user_id = $2", [appId, userId]);
   }
 
   /** Deletes an App, its versions and its access entries: its owner, or an
    *  admin. */
-  async delete(
-    orgId: string,
-    id: string,
-    user: { id: string; role: string },
-  ): Promise<void> {
-    const res = await this.pool.query(
-      "DELETE FROM apps WHERE org_id = $1 AND id = $2 AND (owner_user_id = $3 OR $4)",
-      [orgId, id, user.id, user.role === "admin"],
-    );
+  async delete(orgId: string, id: string, user: { id: string; role: string }): Promise<void> {
+    const res = await this.pool.query("DELETE FROM apps WHERE org_id = $1 AND id = $2 AND (owner_user_id = $3 OR $4)", [
+      orgId,
+      id,
+      user.id,
+      user.role === "admin",
+    ]);
     if (res.rowCount === 0) throw ApiError.notFound("no such app");
   }
 }

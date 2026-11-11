@@ -108,6 +108,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The skills runtime (read_skill/search_skills/push_skill + the
    *  prompt index section); absent in tests without one. */
   skillRuntime?: SkillRuntime;
+  /** The Apps index for one member: the Apps they can open, one line each.
+   *  Absent in tests without an App store. */
+  appsIndex?(orgId: string, userId: string): Promise<string | null>;
   /** Extra task hooks: the run rows' opener, the workspace conflict
    *  journal, tool tracing. */
   toolHooks?: readonly HookRegistration[];
@@ -151,6 +154,20 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       return rendered ?? undefined;
     },
   };
+  const appsSection: PromptSection<ToolRegistration> = {
+    key: "apps",
+    async render(input) {
+      const runtime = deps.appsIndex;
+      if (runtime === undefined) return undefined;
+      // Only a conversation whose agent has the App tools gets the index.
+      if (!input.agent.callable.some((tool) => tool.name === "list_apps")) return undefined;
+      const orgId = await deps.orgOfConversation(input.conversationId);
+      if (orgId === null) return undefined;
+      const user = await deps.userOfConversation(input.conversationId);
+      if (user === null) return undefined;
+      return (await runtime(orgId, user.id)) ?? undefined;
+    },
+  };
   const codemodeNotes: PromptSection<ToolRegistration> = {
     key: "codemode-notes",
     async render() {
@@ -175,7 +192,7 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
             }),
           ]),
     ],
-    sections: [section, skillsSection, codemodeNotes],
+    sections: [section, skillsSection, appsSection, codemodeNotes],
     hooks: [createApprovalGate(deps), ...(deps.toolHooks ?? [])],
   });
 }

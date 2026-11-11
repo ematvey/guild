@@ -39,11 +39,14 @@ export interface AgentToolDeps {
   sendFile?: SendFileContext;
   /** Present when the process can store Apps. */
   publishApp?: PublishAppContext;
+  /** Present when the process can read, share and call Apps. */
+  appTools?: AppToolsContext;
 }
 
 export { createSubagentTools } from "./subagents.js";
 export { createSendFileTool } from "./send-file.js";
 import { createPublishAppTool, type PublishAppContext } from "./publish-app.js";
+import { createAppTools, type AppToolsContext } from "./app-tools.js";
 
 export interface AgentMessageResult {
   thread_id: string;
@@ -576,6 +579,12 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
 
   if (allowed.has("publish_app") && deps.publishApp !== undefined) {
     tools.push(createPublishAppTool(deps.publishApp));
+  }
+
+  if (deps.appTools !== undefined) {
+    tools.push(
+      ...createAppTools(deps.appTools).filter((tool) => allowed.has(tool.name as (typeof ALL_AGENT_TOOLS)[number])),
+    );
   }
 
   if (allowed.has("conversation_read")) {

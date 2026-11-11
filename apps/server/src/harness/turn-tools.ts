@@ -34,6 +34,9 @@ import type { EntryDraft } from "@earendil-works/pi-durable";
 import { subagentsContextForChat } from "../agents/subagents.js";
 import { createAgentTools } from "../agents/tools.js";
 import type { PublishAppContext } from "../agents/publish-app.js";
+import type { AppToolsContext } from "../agents/app-tools.js";
+import type { AppStore } from "../platform/store/apps.js";
+import type { AccessStore } from "../platform/store/access.js";
 import { createGuildTools, guildToolsAllowed } from "../agents/guild-tools.js";
 import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
 import type { UserMcpRuntime } from "./user-mcp.js";
@@ -65,9 +68,16 @@ export interface TurnToolDeps {
   readonly integrations: Pick<IntegrationsRuntime, "prepareTurn">;
   readonly userMcp: Pick<UserMcpRuntime, "prepareTurn">;
   readonly executors: Pick<ConversationExecutors, "executorKind" | "envFor">;
-  /** The App store and the reach check `publish_app` runs on each data
-   *  function; absent in processes that publish no Apps. */
-  readonly apps?: Pick<PublishAppContext, "apps" | "checkFunction">;
+  /** The App and Access stores, the reach check `publish_app` runs on each
+   *  data function, and the member call the App tools run; absent in
+   *  processes that store no Apps. */
+  readonly apps?: {
+    apps: Pick<AppStore, "publish" | "page" | "listVisible" | "getVisible">;
+    access: Pick<AccessStore, "entries" | "replace">;
+    checkFunction: PublishAppContext["checkFunction"];
+    functionGate: AppToolsContext["functionGate"];
+    callFunction: AppToolsContext["callFunction"];
+  };
   /** The turn controls the subagent tools drive on child chats. */
   readonly turns: {
     submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number>;
@@ -227,6 +237,7 @@ export class TurnTools {
             chatId,
             workspaceRoot: deps.config.agentWorkspaceWriteRoot,
           };
+    const member = deps.apps === undefined ? null : await deps.identity.getUser(ref.user_id);
     const tools = createAgentTools({
       pool: deps.pool,
       store: deps.agents,
@@ -238,14 +249,28 @@ export class TurnTools {
         deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),
       ...(subagents === null ? {} : { subagents }),
       ...(sendFile === undefined ? {} : { sendFile }),
-      ...(deps.apps === undefined
+      ...(deps.apps === undefined || member === null
         ? {}
         : {
             publishApp: {
-              ...deps.apps,
+              apps: deps.apps.apps,
+              checkFunction: deps.apps.checkFunction,
               agent,
               chatId,
               userId: ref.user_id,
+              userRole: member.role,
+              workspaceRoot: deps.config.agentWorkspaceWriteRoot,
+            },
+            appTools: {
+              apps: deps.apps.apps,
+              access: deps.apps.access,
+              functionGate: deps.apps.functionGate,
+              callFunction: deps.apps.callFunction,
+              agent,
+              chatId,
+              userId: ref.user_id,
+              userRole: member.role,
+              userEmail: member.email,
               workspaceRoot: deps.config.agentWorkspaceWriteRoot,
             },
           }),
