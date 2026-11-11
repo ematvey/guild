@@ -8,6 +8,7 @@ import { Download, ExternalLink, FileText, Maximize2, Minimize2, X } from "lucid
 import { Button } from "@guild/ui/components/button";
 import { openExternal } from "../../../lib/open-external";
 import { HAS_SHELL } from "../../../lib/session";
+import { TITLE_BAR_INSET, titleBarDrag } from "../../../lib/titlebar";
 import type { PreviewRef } from "../route";
 import { previewViewOf, usePreviewSource, type PreviewMeta } from "./use-preview-source";
 
@@ -232,7 +233,11 @@ export function PreviewPane(props: PreviewPaneProps) {
   );
 
   if (full) {
-    return <div className="fixed inset-0 z-50 bg-background">{body}</div>;
+    return (
+      <div {...titleBarDrag} className={`fixed inset-0 z-50 bg-background ${TITLE_BAR_INSET}`}>
+        {body}
+      </div>
+    );
   }
   if (isMobile) {
     return (

@@ -17,6 +17,7 @@ import {
 import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
+import { TITLE_BAR_INSET, titleBarDrag } from "../lib/titlebar";
 import { ServerMenuItems } from "./server-menu";
 import type { ChatRoute } from "./thread/route";
 
@@ -153,7 +154,10 @@ export function SidebarRail({
     (tab) => !(isMobile && tab.id === "skills"),
   );
   return (
-    <nav className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 text-sidebar-foreground">
+    <nav
+      {...titleBarDrag}
+      className={`flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar pb-2 text-sidebar-foreground ${TITLE_BAR_INSET || "pt-2"}`}
+    >
       <div className="flex flex-col items-center gap-1">
         <SidebarToggle collapsed={collapsed} onToggle={onToggleCollapse} />
         {tabs.map(({ id, label, icon: Icon }) => (

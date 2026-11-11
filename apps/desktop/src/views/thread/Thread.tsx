@@ -18,6 +18,7 @@ import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
 import { SidebarRail, type RailTab } from "../sidebar-rail";
+import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
   agentDeleting,
@@ -811,7 +812,8 @@ function ThreadView(props: ThreadProps) {
 
       {/* main column */}
       <div
-        className="relative flex min-w-0 flex-1 flex-col"
+        {...titleBarDrag}
+        className={`relative flex min-w-0 flex-1 flex-col ${TITLE_BAR_INSET}`}
         onDragOver={(e) => {
           if (![...e.dataTransfer.types].includes("Files")) return;
           e.preventDefault();

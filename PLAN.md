@@ -1,3 +1,13 @@
+## 0.6.99 — the macOS window is content
+
+The desktop window on macOS had the native title bar: a white strip above a
+dark app. The window now uses `titleBarStyle: Overlay` with a hidden title, so
+the page fills the window and the traffic lights float over it. The lights sit
+inside the sidebar panel (x 64), clear of the rail's border. Every column
+starts below a 36 px band, and that band drags the window and zooms it on a
+double click. The inset and the drag regions are off on Windows and Linux,
+which keep their native decorations.
+
 ## 0.6.99 — the machine facts a worker cannot read itself
 
 0.6.98 read machine liveness and the machine's home folder from the hub, and

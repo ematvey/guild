@@ -17,6 +17,7 @@ import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { ThemeProvider } from "./theme";
 import { resetSessionState } from "./lib/session-reset";
+import { TITLE_BAR_INSET, titleBarDrag } from "./lib/titlebar";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
 const BAKED_URL: string = (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
@@ -393,7 +394,10 @@ function DesktopApp() {
     );
   }
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+    <div
+      {...titleBarDrag}
+      className="flex min-h-screen items-center justify-center bg-background text-foreground"
+    >
       <UpdateToast />
       <Card className="w-full max-w-sm">
         <CardHeader>
@@ -485,7 +489,7 @@ function DesktopApp() {
 /// Plain full-screen background for the interval before auth/session state is
 /// known: no indicator and no default (logged-out) UI may render first.
 function BootBackground() {
-  return <div className="min-h-screen bg-background" />;
+  return <div {...titleBarDrag} className={`min-h-screen bg-background ${TITLE_BAR_INSET}`} />;
 }
 
 function AppInner() {
