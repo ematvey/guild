@@ -1467,11 +1467,20 @@ describe("workRunLabel (worked-for entry)", () => {
   it("a completed run without stamps still gets a label; longer runs spell the duration", () => {
     expect(workRunLabel(run(undefined, undefined), false, false, 0)).toBe("Agent worked");
     expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:07.000Z"), false, false, 0)).toBe(
-      "Agent worked for 7 seconds",
+      "Agent worked for 7s",
     );
     expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:01:23.000Z"), false, false, 0)).toBe(
       "Agent worked for 1m 23s",
     );
+  });
+
+  it("spells the live clock in minutes and hours, not raw seconds", () => {
+    expect(
+      workRunLabel(run("2026-10-15T12:00:00.000Z", undefined), true, false, Date.parse("2026-10-15T12:01:15.000Z")),
+    ).toBe("Agent is working 1m 15s");
+    expect(
+      workRunLabel(run("2026-10-15T12:00:00.000Z", undefined), true, false, Date.parse("2026-10-15T13:02:05.000Z")),
+    ).toBe("Agent is working 1h 2m 5s");
   });
 
   it("live states always render, even before any stamp exists", () => {
@@ -1504,7 +1513,7 @@ describe("workRunLabel (worked-for entry)", () => {
         0,
         "2026-10-15T12:00:00.000Z",
       ),
-    ).toBe("Agent worked for 3 seconds");
+    ).toBe("Agent worked for 3s");
   });
 });
 

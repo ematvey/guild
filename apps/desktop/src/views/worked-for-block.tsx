@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { formatDuration } from "../lib/format";
 import { Frame } from "./frame";
 import type { RenderBlock } from "../lib/thread-reducer";
 
@@ -74,12 +75,11 @@ export function workRunLabel(
     return Math.max(0, Math.floor((to - Date.parse(start)) / 1000));
   })();
   if (stopping) return "Agent is stopping";
-  if (active) return secs !== null ? `Agent is working ${secs}s` : "Agent is working";
+  if (active) return secs !== null ? `Agent is working ${formatDuration(secs)}` : "Agent is working";
   // A settled run always gets a label: its details stay reachable behind the
   // same row even when the duration is unknown or under a second.
   if (secs === null || secs < 1) return "Agent worked";
-  if (secs < 60) return `Agent worked for ${secs} ${secs === 1 ? "second" : "seconds"}`;
-  return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
+  return `Agent worked for ${formatDuration(secs)}`;
 }
 
 export const WorkedForBlock = memo(function WorkedForBlock({
@@ -103,8 +103,6 @@ export const WorkedForBlock = memo(function WorkedForBlock({
     return () => window.clearInterval(timer);
   }, [active, stopping]);
   const label = workRunLabel(run, active, stopping, nowMs, turnStart);
-  const steps = run.length;
-  const stepText = `${steps} ${steps === 1 ? "step" : "steps"}`;
   // The top padding — not a margin — clears the hover-stamp band under the
   // preceding message: the band hangs 4..16px below it, and sibling margins
   // collapse into the list's own 20px rhythm, so only padding moves the
@@ -112,12 +110,7 @@ export const WorkedForBlock = memo(function WorkedForBlock({
   return (
     <Frame
       className="mt-0! mb-2.5! pt-2! pb-0"
-      title={
-        <>
-          <span className={active ? "animate-pulse" : ""}>{label}</span>
-          <span className="ml-2 text-muted-foreground/70">({stepText})</span>
-        </>
-      }
+      title={<span className={active ? "animate-pulse" : ""}>{label}</span>}
     >
       <div className="flex flex-col">{children}</div>
     </Frame>
