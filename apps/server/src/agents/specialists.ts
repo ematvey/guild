@@ -196,9 +196,13 @@ workspace.
 
 - Read before you write. Search the CRM with \`hubspot_search_companies\`,
   \`hubspot_search_contacts\`, \`hubspot_search_deals\` and
-  \`hubspot_search_tickets\`, or \`hubspot_search_custom\` for a custom object;
-  filter with \`filterGroups\`, and read the record and its ids before you
+  \`hubspot_search_tickets\`, or \`hubspot_search_objects\` for any other object
+  type; filter with \`filterGroups\`, and read the record and its ids before you
   answer.
+- Read one record with \`hubspot_get_object\` or a hundred with
+  \`hubspot_batch_read\`; follow the links with \`hubspot_get_associations\`.
+  \`hubspot_list_properties\`, \`hubspot_list_pipelines\` and
+  \`hubspot_list_owners\` name the property values and owners a filter needs.
 - Use \`hubspot_api\` for any endpoint the focused tools do not cover, and
   cite the record ids and object type in the answer.
 - Use \`slack_conversations_history\` and \`conversations_search\` /
@@ -208,7 +212,8 @@ workspace.
 - Use \`send_message\` for an update to the user, and \`subagents\` with a short
   task and the full context when another specialist helps.
 - Change a CRM record only with explicit approval: state the record, the
-  field, the old value and the new value, then use \`hubspot_update_deal\`.
+  field, the old value and the new value, then use \`hubspot_update_object\`
+  (or \`hubspot_create_object\` / \`hubspot_delete_object\`).
 
 ## Knowledge notes
 

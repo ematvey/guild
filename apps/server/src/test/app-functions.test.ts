@@ -51,7 +51,7 @@ describe("parseAppFunctions", () => {
 
 describe("appFunctionClass", () => {
   const rawApi = { class: "write", raw: "api" };
-  const named = { class: "write", raw: "update_deal" };
+  const named = { class: "write", raw: "update_object" };
 
   it("takes the tool's class when the function declares none", () => {
     expect(appFunctionClass({}, rawApi)).toBe("write");

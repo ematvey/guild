@@ -99,12 +99,16 @@ declaration refines a bound that describes every endpoint, so only the raw
 `publish_app` refuses a weaker claim. `publish_app` tells the author to
 declare `read` when a fixed request only reads.
 
-The HubSpot connector grew the read tools that make the declaration rare: the
-four searches (contacts, companies, deals, tickets) take HubSpot's own
-`filterGroups`, `sorts`, `properties`, `limit` and `after` instead of one free
-text box, and `search_custom` does the same for any custom object type. None
-of them is tied to this org's nouns; `sales_open` stays an App function, not a
-tool. The raw `api` tool keeps the endpoints the named tools do not cover.
+The HubSpot connector now covers the API surface the raw tool covered, split
+by class. Read: `search_contacts`, `search_companies`, `search_deals`,
+`search_tickets` and `search_objects` (any other object type), each taking
+HubSpot's own `filterGroups`, `sorts`, `properties`, `limit` and `after`;
+`get_object`, `batch_read`, `get_associations`, `list_owners`,
+`list_properties` and `list_pipelines`. Write: `create_object`,
+`update_object` (it replaces `update_deal`, one way to change a record) and
+`delete_object`. None of them is tied to this org's nouns: `sales_open` stays
+an App function, not a tool. The raw `api` tool keeps the endpoints these do
+not cover — batch writes, association writes, imports.
 
 The App page and the Agent's `call_app` gate both read that class. The gate
 then answers like the Integration envelope: a `read` function runs at once, an

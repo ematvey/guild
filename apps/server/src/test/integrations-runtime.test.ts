@@ -272,6 +272,61 @@ function route(
       }),
     };
   }
+  if (p === "/crm/v3/objects/deals/900" && req.method === "GET") {
+    return {
+      status: 200,
+      body: JSON.stringify({ id: "900", properties: { dealname: "North", amount: "5000", dealstage: "closedwon" } }),
+    };
+  }
+  if (p === "/crm/v3/objects/deals/900" && req.method === "DELETE") {
+    return { status: 204, body: "" };
+  }
+  if (p === "/crm/v3/objects/deals/batch/read") {
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ id: "900", properties: { dealname: "North", amount: "5000" } }] }),
+    };
+  }
+  if (p === "/crm/v3/objects/companies/501/associations/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ toObjectId: "900" }, { toObjectId: "901" }] }),
+    };
+  }
+  if (p === "/crm/v3/pipelines/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [
+          {
+            id: "default",
+            label: "Sales",
+            stages: [
+              { id: "open", label: "Open" },
+              { id: "closedwon", label: "Closed won" },
+            ],
+          },
+        ],
+      }),
+    };
+  }
+  if (p === "/crm/v3/properties/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [
+          {
+            name: "dealstage",
+            label: "Deal stage",
+            type: "enumeration",
+            fieldType: "select",
+            options: [{ value: "open" }, { value: "closedwon" }],
+          },
+          { name: "amount", label: "Amount", type: "number", fieldType: "number" },
+        ],
+      }),
+    };
+  }
   if (p === "/crm/v3/objects/p148247336_subscriptions/search") {
     return {
       status: 200,
@@ -892,7 +947,7 @@ describe("connector execute spot checks (mock backend)", () => {
       "org-test",
       "hubspot",
       { base_url: vendorBase },
-      "search_custom",
+      "search_objects",
       { object_type: "p148247336_subscriptions", properties: ["end_date", "is_active"], limit: 5 },
       [["token", "hs-1"]],
       null,
@@ -910,12 +965,103 @@ describe("connector execute spot checks (mock backend)", () => {
         "org-test",
         "hubspot",
         { base_url: vendorBase },
-        "search_custom",
+        "search_objects",
         {},
         [["token", "hs-1"]],
         null,
       ),
     ).rejects.toThrow(/requires object_type/);
+  });
+
+  it("hubspot get_object reads one record with the properties it names", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_object",
+      { object_type: "deals", id: "900", properties: ["dealname", "amount"] },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(lastHit("/crm/v3/objects/deals/900").query.get("properties")).toBe("dealname,amount");
+    expect(out.content).toContain("deals id=900 dealname=North amount=5000");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "record", object: "deals", id: "900" });
+  });
+
+  it("hubspot batch_read asks for every id in one call", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "batch_read",
+      { object_type: "deals", ids: ["900", "901"], properties: ["dealname"] },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/deals/batch/read").body) as Record<string, unknown>;
+    expect(sent["inputs"]).toEqual([{ id: "900" }, { id: "901" }]);
+    expect(out.content).toContain("id=900 dealname=North");
+    expect(out.content).toContain("Not found: 901.");
+  });
+
+  it("hubspot get_associations lists the related ids", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_associations",
+      { object_type: "companies", id: "501", to_object_type: "deals" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("deals: 900, 901");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "associations", ids: ["900", "901"] });
+  });
+
+  it("hubspot list_pipelines names the stages a filter needs", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_pipelines",
+      { object_type: "deals" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("Sales (default): Open=open, Closed won=closedwon");
+  });
+
+  it("hubspot list_properties filters by name", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_properties",
+      { object_type: "deals", query: "stage" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("dealstage (Deal stage) enumeration/select [open | closedwon]");
+    expect(out.content).not.toContain("amount");
+  });
+
+  it("hubspot delete_object tolerates the empty 204 answer", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "delete_object",
+      { object_type: "deals", id: "900" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("deals 900 deleted.");
   });
 
   it("langfuse list_traces uses the basic auth pair", async () => {
