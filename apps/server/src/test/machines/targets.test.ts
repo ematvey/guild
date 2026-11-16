@@ -2,18 +2,18 @@
 // folder a call runs in, and the environment it gets.
 
 import { describe, expect, it } from "vitest";
-import { MachineTargetError, MachineTargets, renderMachineLines } from "../../machines/targets.js";
+import { MachineTargetError, MachineTargets, renderMachineLines, shellOf } from "../../machines/targets.js";
 import type { MachineRow } from "../../platform/store/machines.js";
 
-function row(machine_id: string, label: string | null): MachineRow {
+function row(machine_id: string, label: string | null, os: string | null = "macos"): MachineRow {
   return {
     machine_id,
     org_id: "org-1",
     user_id: "user-1",
     label,
     hardware_fingerprint: null,
-    os: null,
-    os_version: null,
+    os,
+    os_version: os === null ? null : "26.1",
     app_version: null,
     last_ip: null,
     first_connected_at: "2026-01-01T00:00:00Z",
@@ -140,12 +140,37 @@ describe("renderMachineLines", () => {
     expect(renderMachineLines([])).toBe("none paired");
   });
 
-  it("names the label, the id and the live flag", () => {
+  it("names the label, the id, the live flag, the OS and the shell", () => {
     expect(
       renderMachineLines([
-        { machine_id: "m-1", label: "MacBook", online: true },
-        { machine_id: "m-2", label: null, online: false },
+        { machine_id: "m-1", label: "MacBook", online: true, os: "macos", os_version: "26.1" },
+        { machine_id: "m-2", label: null, online: false, os: "windows", os_version: "26H2" },
       ]),
-    ).toBe("- MacBook · m-1 · online\n- (unlabelled) · m-2 · offline");
+    ).toBe(
+      "- MacBook · m-1 · online · macos 26.1 · shell: sh -c\n" +
+        "- (unlabelled) · m-2 · offline · windows 26H2 · shell: cmd.exe",
+    );
+  });
+
+  it("claims no shell for a machine whose OS is unknown", () => {
+    expect(renderMachineLines([{ machine_id: "m-1", label: "Box", online: true, os: null, os_version: null }])).toBe(
+      "- Box · m-1 · online",
+    );
+  });
+
+  it("omits an unknown version but keeps the OS", () => {
+    expect(renderMachineLines([{ machine_id: "m-1", label: "Box", online: true, os: "linux", os_version: null }])).toBe(
+      "- Box · m-1 · online · linux · shell: sh -c",
+    );
+  });
+});
+
+describe("shellOf", () => {
+  it("is cmd.exe on Windows and sh -c elsewhere", () => {
+    expect(shellOf("windows")).toBe("cmd.exe");
+    expect(shellOf("Windows")).toBe("cmd.exe");
+    expect(shellOf("linux")).toBe("sh -c");
+    expect(shellOf("macos")).toBe("sh -c");
+    expect(shellOf(null)).toBeNull();
   });
 });

@@ -1,3 +1,21 @@
+## 0.6.104 — a machine line names its shell
+
+A call on a Windows machine was handed bash. WORKSTATION-A's executor answered every
+call, but `bash` there is `cmd.exe` for a native folder, so the model's
+`2>/dev/null`, `$HOME`, `ls` and `find` produced "The system cannot find the
+path specified" and exit 255 — and nothing told the model the dialect. The
+machine section listed label, id and online only.
+
+A machine line now ends with the OS and the shell a call's `command` runs in
+(`cmd.exe` on Windows, `sh -c` elsewhere), and the section says to write the
+command in that shell's language, with the concrete difference: `dir`, `type`,
+`where`, `%USERPROFILE%`, `2>nul`. The `\\wsl.localhost\<distro>\…` folder
+exception stays named, because the workdir, not the OS alone, picks the shell.
+A machine whose OS is unknown claims no shell: the line keeps its old shape.
+
+`machine_list` renders the same lines, so a machine paired mid-turn carries the
+same fact.
+
 ## 0.6.103 — an App function declares what its call can do
 
 A Thread on `full_access` still asked for every `call_app`: a codemode script
