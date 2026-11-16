@@ -117,7 +117,7 @@ The Approval gate then decides, in this order:
 
 1. **The Thread's approval mode,** if set: `ask` always asks, `full_access` never asks, and `approve_for_me` asks the Org's judge.
 2. **Otherwise the Member's own policy** for that tool class.
-3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member.
+3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member, and the card shows the judge's reason.
 
 On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks wherever an interactive gate exists. One marked `always_allow` never asks.
 

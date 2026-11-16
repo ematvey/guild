@@ -132,16 +132,6 @@ describe("download", () => {
     expect(await readFile(path.join(sandbox, "docs", "signed.pdf"), "utf8").catch(() => null)).toBeNull();
   });
 
-  it("lists the chat's files, attachments and artifacts alike", async () => {
-    const { call } = harness([statement, other], [spilled], new FakeObjects(), new NodeExecutionEnv({ cwd: sandbox }));
-    const result = await call({});
-    expect(result.isError).toBeUndefined();
-    const text = JSON.stringify(result.output);
-    expect(text).toContain(statement.id);
-    expect(text).toContain(other.filename);
-    expect(text).toContain(spilled.id);
-  });
-
   it("refuses a download without a destination", async () => {
     const objects = new FakeObjects();
     objects.seedAttachment(statement, "pdf-bytes\n");

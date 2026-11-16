@@ -123,16 +123,12 @@ export function createDownloadTool(deps: DownloadDeps): ToolRegistration {
     name: "download",
     description:
       "Download one file of this chat into the working folder. A file is an attachment the user sent, or a large " +
-      "tool result the server saved. Pass `file` (an id, or a filename) and `path` (where to put it); call it with " +
-      "neither to list the files this chat has. The file lands in the environment the call runs in: the chat's " +
-      "sandbox, or the project folder when the chat runs on a machine.",
+      "tool result the server saved. `file` names it by id or by filename, and `path` is where it goes. The file " +
+      "lands in the environment the call runs in: the chat's sandbox, or the project folder when the chat runs on " +
+      "a machine.",
     parameters: Type.Object({
-      file: Type.Optional(
-        Type.String({ description: "File id, or filename (exact, or a unique part of it). Omit to list." }),
-      ),
-      path: Type.Optional(
-        Type.String({ description: "Destination path relative to the working folder. Required with `file`." }),
-      ),
+      file: Type.String({ description: "File id, or filename (exact, or a unique part of it)." }),
+      path: Type.String({ description: "Destination path relative to the working folder." }),
       overwrite: Type.Optional(
         Type.Boolean({ description: "Replace the destination when it already exists. Default: false." }),
       ),
@@ -146,18 +142,6 @@ export function createDownloadTool(deps: DownloadDeps): ToolRegistration {
         const orgId = await deps.orgOfConversation(api.conversationId);
         if (orgId === null) return fail("this conversation has no org");
         const files = await chatFiles(deps, orgId, chatId);
-        if (args.file === undefined) {
-          if (args.path !== undefined) return fail("pass file with path: a path alone names no file to download");
-          return {
-            output: [
-              {
-                type: "text",
-                text:
-                  files.length === 0 ? "this chat has no files" : `Files this chat can download:\n${describe(files)}`,
-              },
-            ],
-          };
-        }
         const picked = pick(files, args.file);
         if (typeof picked === "string") return fail(picked);
         const env = api.env;

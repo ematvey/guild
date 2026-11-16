@@ -126,6 +126,11 @@ export function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string |
             </pre>
           )
         )}
+        {a.judge?.reason && (
+          <p className="rounded-md border border-border bg-muted/60 px-2.5 py-2 text-muted-foreground">
+            <span className="font-medium text-foreground/70">Approval judge:</span> {a.judge.reason}
+          </p>
+        )}
         {settled ? (
           status === "expired" ? (
             <p className="text-muted-foreground">expired — the turn was no longer waiting for this approval</p>

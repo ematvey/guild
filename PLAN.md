@@ -20,6 +20,16 @@ One rule for a destination lives in `platform/domain/paths.ts` and one writer
 in `harness/chat-files.ts`; both the tool and the integration sink come
 through them.
 
+`download` has no listing mode: `file` and `path` are both required. A call
+with no arguments wrote nothing, yet it took an Approval card in a
+project-bound chat, where the unattended batch contract does not apply, and
+the judge flagged it as ambiguous. The file list already reaches the model
+from a pointer, a child result, or the message itself.
+
+The Approval card now shows the judge's reason. The verdict rode the
+`approval_request` event and the client dropped it, so a member saw a card
+with no word about why.
+
 ## 0.6.104 — a machine line names its shell
 
 A call on a Windows machine was handed bash. WORKSTATION-A's executor answered every
