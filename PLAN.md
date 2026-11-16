@@ -1,3 +1,14 @@
+## 0.6.112 — the Windows window draws no title bar
+
+The Windows client drew a 32 px strip: the app name at the left, the three
+buttons at the right, and a bottom border. That strip read as a native caption
+bar above the page, so the window never looked like one surface.
+
+The strip is gone. The three buttons stay, and they float over the top band of
+the columns. The columns' own backgrounds reach the window edge, as they do on
+macOS under the traffic lights. `TITLE_BAR_INSET` still reserves the band, and
+the band still drags the window; a click on a button is not a drag.
+
 ## 0.6.111 — `download` and `send_file` take the machine target
 
 The decision of 0.6.105 gave `download` a required `path` but no way to name

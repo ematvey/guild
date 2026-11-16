@@ -1,7 +1,9 @@
-// The Windows caption bar and the resize edges of the undecorated window
-// (tauri.windows.conf.json sets decorations false). The bar carries the app
-// name, the drag region and the three caption buttons; the edges restore what
-// a native frame gives for free — dragging any side or corner to resize.
+// The Windows caption buttons and the resize edges of the undecorated window
+// (tauri.windows.conf.json sets decorations false). Nothing is painted: the
+// columns run to the window edge with their own backgrounds, and the three
+// buttons float over the empty top band that TITLE_BAR_INSET reserves. The
+// band is the drag region. The edges restore what a native frame gives for
+// free — dragging any side or corner to resize.
 
 import { useEffect, useState } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
@@ -53,32 +55,26 @@ export function WindowsTitleBar() {
   const win = getCurrentWindow();
   return (
     <>
-      <div
-        data-tauri-drag-region
-        className="absolute inset-x-0 top-0 z-[60] flex h-8 items-center justify-between border-b border-border bg-sidebar pl-3 text-xs text-muted-foreground"
-      >
-        <span data-tauri-drag-region className="pointer-events-none select-none">
-          Guild
-        </span>
-        <span className="flex">
-          <button aria-label="Minimize" className={BUTTON} onClick={() => void win.minimize()}>
-            <Minus className="size-3.5" />
-          </button>
-          <button
-            aria-label={maximized ? "Restore" : "Maximize"}
-            className={BUTTON}
-            onClick={() => void win.toggleMaximize()}
-          >
-            {maximized ? <Copy className="size-3" /> : <Square className="size-3" />}
-          </button>
-          <button
-            aria-label="Close"
-            className={`${BUTTON} hover:bg-[#c42b1c] hover:text-white`}
-            onClick={() => void win.close()}
-          >
-            <X className="size-4" />
-          </button>
-        </span>
+      {/* No background and no label: the band is the top of the columns, so
+          the window chrome and the page read as one surface. */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[60] flex h-8 justify-end">
+        <button aria-label="Minimize" className={BUTTON} onClick={() => void win.minimize()}>
+          <Minus className="size-3.5" />
+        </button>
+        <button
+          aria-label={maximized ? "Restore" : "Maximize"}
+          className={BUTTON}
+          onClick={() => void win.toggleMaximize()}
+        >
+          {maximized ? <Copy className="size-3" /> : <Square className="size-3" />}
+        </button>
+        <button
+          aria-label="Close"
+          className={`${BUTTON} hover:bg-[#c42b1c] hover:text-white`}
+          onClick={() => void win.close()}
+        >
+          <X className="size-4" />
+        </button>
       </div>
       {/* A maximized window has no edges to drag. */}
       {!maximized && (

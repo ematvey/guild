@@ -5,8 +5,9 @@
 // click zooms it, as the native bar would).
 //
 // The Windows window is undecorated instead (tauri.windows.conf.json) and
-// draws its own caption bar: the same band holds the app name and the three
-// buttons, so the columns inset by the same amount.
+// draws only the three caption buttons, which float over the same band at the
+// right edge: no bar, no label, no divider, so the columns' own backgrounds
+// reach the window edge there too.
 //
 // Linux keeps its native decorations: the inset and the drag regions are off
 // there, and the web build never gets them.
@@ -19,12 +20,13 @@ const PLATFORM = navigator.platform ?? "";
  *  the sidebar. */
 export const OVERLAY_TITLE_BAR = HAS_SHELL && /Mac/.test(PLATFORM);
 
-/** Windows: the window has no frame and the app draws the caption bar. */
+/** Windows: the window has no frame and the app draws the caption buttons. */
 export const CUSTOM_TITLE_BAR = HAS_SHELL && /Win/.test(PLATFORM);
 
-/** Top padding of a column: the band the title bar occupies. On macOS it is
- *  the height of the native title bar, so the lights keep the placement the
- *  system gives them; on Windows it matches the drawn bar. */
+/** Top padding of a column: the band the caption controls float over. On
+ *  macOS it is the height of the native title bar, so the lights keep the
+ *  placement the system gives them; on Windows it is the height of the drawn
+ *  buttons. */
 export const TITLE_BAR_INSET = OVERLAY_TITLE_BAR ? "pt-7" : CUSTOM_TITLE_BAR ? "pt-8" : "";
 
 /** Spread onto a column or a full-page surface so its top band moves the
