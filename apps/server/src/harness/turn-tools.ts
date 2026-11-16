@@ -196,6 +196,7 @@ export class TurnTools {
             ? binding.os
             : `${binding.os} ${binding.os_version}`,
       shell: shellOf(binding.os),
+      projectFolder: binding.project_folder,
     };
   }
 

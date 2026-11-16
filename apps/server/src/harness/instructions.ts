@@ -37,6 +37,8 @@ export interface MachineContext {
   os: string | null;
   /** The shell a `command` runs in ("cmd.exe"), or null when unknown. */
   shell: string | null;
+  /** The folder the tools act in; null when the chat has no project. */
+  projectFolder: string | null;
 }
 
 export function composeAgentInstructions(
@@ -152,10 +154,11 @@ export function composeAgentInstructions(
   }
   if (machine !== null) {
     const where = machine.os === null ? machine.name : `${machine.name} (${machine.os})`;
-    const shell = machine.shell === null ? "" : `, and \`command\` runs in \`${machine.shell}\``;
+    const folder = machine.projectFolder === null ? "" : ", in the project folder,";
+    const shell = machine.shell === null ? "" : `, and their \`command\` runs in \`${machine.shell}\``;
     parts.push(
-      `The user sent this message from ${where}. \`read\`, \`write\`, \`edit\` and \`bash\` act on that ` +
-        `machine in the project folder${shell}. \`agent_read\`, \`agent_write\`, \`agent_edit\` and ` +
+      `The user sent this message from ${where}. \`read\`, \`write\`, \`edit\` and \`bash\` act there${folder} ` +
+        `unless \`machine\` names another${shell}. \`agent_read\`, \`agent_write\`, \`agent_edit\` and ` +
         "`agent_bash` act in your own workspace sandbox; that sandbox is a full Linux environment, so other " +
         "paths there work too.",
     );

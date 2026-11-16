@@ -31,9 +31,13 @@ could guess — and guessing wrong on `cmd.exe` versus `bash` costs a turn.
 
 `machineBinding` now carries the machine's label, OS and version, and the
 prompt says "The user sent this message from WORKSTATION-A (windows 10.0.19045).
-`read`, `write`, `edit` and `bash` act on that machine in the project folder,
-and `command` runs in `cmd.exe`." A machine that never reported its OS is
-named alone; the shell clause is dropped rather than guessed.
+`read`, `write`, `edit` and `bash` act there, in the project folder, unless
+`machine` names another, and their `command` runs in `cmd.exe`."
+
+The wording is exact about what the tools do. The plain tools carry a
+per-call `machine` argument, so the machine is the default, not the only
+target. The folder clause appears only when the chat has a project folder,
+and the shell clause only when the machine reported an OS.
 
 ## 0.6.109 — downloads stream, they do not buffer
 

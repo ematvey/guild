@@ -132,19 +132,26 @@ describe("composeAgentInstructions", () => {
       name: "WORKSTATION-A",
       os: "windows 10.0.19045",
       shell: "cmd.exe",
+      projectFolder: "C:\\Users\\alice\\Documents\\Patents",
     });
     expect(bound).toContain("agent_write/agent_edit");
     expect(bound).toContain("The user sent this message from WORKSTATION-A (windows 10.0.19045).");
-    expect(bound).toContain("act on that machine in the project folder, and `command` runs in `cmd.exe`");
+    expect(bound).toContain("act there, in the project folder, unless `machine` names another");
+    expect(bound).toContain("their `command` runs in `cmd.exe`");
     expect(bound).toContain("`agent_bash` act in your own workspace sandbox");
     // A machine that never reported its OS still gets named.
     const bare = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, {
       name: "eaa3d4d7-0967-47e4-8865-02658caa6420",
       os: null,
       shell: null,
+      projectFolder: null,
     });
     expect(bare).toContain("The user sent this message from eaa3d4d7-0967-47e4-8865-02658caa6420.");
     expect(bare).not.toContain("`command` runs in");
+    // No project: the tools still act on the machine, but not in a folder.
+    expect(bare).toContain("`bash` act there unless `machine` names another.");
+    expect(bare).not.toContain("in the project folder");
+    expect(bare).not.toContain("their `command` runs in");
     const unbound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
     expect(unbound).not.toContain("agent_bash");
     expect(unbound).toContain("Edit them with write/edit");
