@@ -1,3 +1,17 @@
+## 0.6.117 — a page header keeps room for its title
+
+The Windows caption buttons take the right end of a page's first row, so
+the settings header lost 138 px of width. Its title and description shared
+one flex row with the section's actions, and the row gave the actions their
+width first: on a 940 px window the title read "Gate…" and the description
+wrapped into a five-line column 300 px tall.
+
+The header now puts the title and the actions on one row and the
+description on its own line below, where nothing squeezes it. The title
+keeps a 128 px floor; when the actions cannot fit beside it, they drop to
+their own line at the right end instead of eating the title. The header is
+`min-h-11`, so it matches the first row of the other columns.
+
 ## 0.6.116 — one default environment: the agent's workspace
 
 Design B, decided in 0.6.105 and shipped only half there. The plain file

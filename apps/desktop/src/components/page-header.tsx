@@ -3,6 +3,10 @@
 // pages and a tab row. `bar` spans the column over a bottom border (the
 // agents and skills pages); `section` sits at the top of a scrolling
 // section (settings).
+//
+// The title keeps room for itself: when the actions do not fit beside it,
+// they drop to their own line at the right end instead of squeezing the
+// title into a column too narrow to read.
 
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -32,7 +36,7 @@ export function PageHeader({
       className={
         bar
           ? `shrink-0 border-b border-border bg-background px-4 pt-3 sm:px-6 ${CAPTION_BUTTONS_INSET}`
-          : `sticky top-0 z-10 mb-6 border-b border-border bg-background ${CAPTION_BUTTONS_INSET}`
+          : `sticky top-0 z-10 mb-6 flex min-h-11 flex-col justify-center border-b border-border bg-background py-1.5 ${CAPTION_BUTTONS_INSET}`
       }
     >
       {back && (
@@ -43,25 +47,29 @@ export function PageHeader({
           <ArrowLeft className="size-4" /> {back.label}
         </button>
       )}
-      <div className={bar ? "flex flex-wrap items-center gap-3 pb-3" : "flex items-start justify-between gap-4"}>
-        <div className={bar ? "min-w-0 w-full sm:w-auto sm:flex-1" : "min-w-0"}>
-          <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
-          {description !== undefined && description !== "" && (
-            <p
-              className={
-                bar ? "mt-0.5 truncate text-sm text-muted-foreground" : "mt-1 max-w-2xl text-sm text-muted-foreground"
-              }
-            >
-              {description}
-            </p>
-          )}
-        </div>
-        {actions !== undefined && (
-          <div className={bar ? "flex flex-wrap items-center gap-2" : "flex shrink-0 items-center gap-2"}>
-            {actions}
+      {bar ? (
+        <div className="flex flex-wrap items-center gap-3 pb-3">
+          <div className="min-w-0 w-full sm:w-auto sm:flex-1">
+            <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+            {description !== undefined && description !== "" && (
+              <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
+            )}
           </div>
-        )}
-      </div>
+          {actions !== undefined && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <h1 className="min-w-0 grow basis-32 truncate text-lg font-semibold tracking-tight">{title}</h1>
+            {actions !== undefined && (
+              <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>
+            )}
+          </div>
+          {description !== undefined && description !== "" && (
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
+          )}
+        </>
+      )}
       {tabs !== undefined && <div className="flex flex-wrap items-center gap-3">{tabs}</div>}
     </header>
   );
