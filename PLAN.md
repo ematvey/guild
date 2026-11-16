@@ -16,6 +16,20 @@ object type is tracked at all.
 Scope: the analytics endpoints need `business-intelligence`. The README names
 it, and a 403 now points at it.
 
+## 0.6.115 — a route page starts below the first row
+
+A route page (apps, agents, skills, settings, integrations) had no first row:
+its content started at the window edge, so the caption buttons and the page's
+own top-right controls — a Manage button, Search agents and Create agent, a
+Refresh live chip — sat in the same place. The page header also dragged the
+window, which made the drag zone depend on the page.
+
+A route page now gets the same first row as every other column: an empty band
+of `TOP_ROW` height that drags the window (`titleBarDragDeep`), with the page
+below it. The page header is content again, so it no longer drags and no
+longer reserves the caption buttons' box. The band is absent on mobile and in
+the web build, where no window controls float over the page.
+
 ## 0.6.114 — the first row drags the window
 
 The window moved only when the click landed on a header's own background: a
