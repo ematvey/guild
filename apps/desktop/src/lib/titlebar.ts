@@ -32,7 +32,7 @@ export const TITLE_BAR_INSET = OVERLAY_TITLE_BAR ? "pt-7" : "";
 /** The first row of every column — the rail's logo, a list header, the thread
  *  header. One height, so the three columns and the caption buttons share a
  *  baseline. */
-export const TOP_ROW = "h-14";
+export const TOP_ROW = "h-11";
 
 /** Right padding of a first row that reaches the window's right edge: the box
  *  the Windows caption buttons occupy, so no control sits under them. */
@@ -42,3 +42,9 @@ export const CAPTION_BUTTONS_INSET = CUSTOM_TITLE_BAR ? "pr-[138px]" : "";
  *  window. Children keep their own clicks. */
 export const titleBarDrag: Record<string, string> =
   OVERLAY_TITLE_BAR || CUSTOM_TITLE_BAR ? { "data-tauri-drag-region": "" } : {};
+
+/** Spread onto a first row: the whole row moves the window, not only its own
+ *  background. A clickable child — a button, a link, a field, anything with
+ *  role=button — still takes the click. */
+export const titleBarDragDeep: Record<string, string> =
+  OVERLAY_TITLE_BAR || CUSTOM_TITLE_BAR ? { "data-tauri-drag-region": "deep" } : {};

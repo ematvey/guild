@@ -8,14 +8,14 @@
 import { useEffect, useState } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { TOP_ROW, titleBarDrag } from "../lib/titlebar";
+import { TOP_ROW, titleBarDragDeep } from "../lib/titlebar";
 
 /** The edge or corner a resize drag starts from (the shape the window API
  *  takes; the package keeps it private). */
 type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
 
 const BUTTON =
-  "flex h-8 w-[46px] items-center justify-center text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground";
+  "flex h-full w-[46px] items-center justify-center text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground";
 /** One resize edge: a thin strip that hands the drag to the window. */
 function Edge({ direction, className }: { direction: ResizeDirection; className: string }) {
   return (
@@ -58,7 +58,7 @@ export function WindowsTitleBar() {
       {/* The right end of the first row: the page header under it reserves
           exactly this box, so the buttons sit on the same line as the row's
           own title and controls. */}
-      <div {...titleBarDrag} className={`absolute right-0 top-0 z-[60] flex ${TOP_ROW} items-center`}>
+      <div {...titleBarDragDeep} className={`absolute right-0 top-0 z-[60] flex ${TOP_ROW} items-center`}>
         <button aria-label="Minimize" className={BUTTON} onClick={() => void win.minimize()}>
           <Minus className="size-3.5" />
         </button>

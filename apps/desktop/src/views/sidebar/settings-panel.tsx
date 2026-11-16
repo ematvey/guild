@@ -1,6 +1,6 @@
 import { SETTINGS_SECTIONS } from "../settings/settings-sections";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
-import { TOP_ROW, titleBarDrag } from "../../lib/titlebar";
+import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 
 export function SettingsPanel({
   role,
@@ -28,7 +28,7 @@ export function SettingsPanel({
   ];
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div {...titleBarDrag} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
+      <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
         <span className="font-semibold">Settings</span>
         <span className="flex items-center gap-1">
           <CollapseButton onCollapse={onCollapse} />

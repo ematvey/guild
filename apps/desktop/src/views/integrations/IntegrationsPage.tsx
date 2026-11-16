@@ -48,7 +48,7 @@ import { CatalogLandingPage } from "./landing";
 import { AddOrgMcp } from "./connect-mcp";
 import { CatalogSources, InstallBundle } from "./sources";
 import { CollapseButton } from "../sidebar/chrome";
-import { TOP_ROW } from "../../lib/titlebar";
+import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 
 type Navigate = (next: IntegrationsRoute, options?: { replace?: boolean }) => void;
@@ -174,7 +174,7 @@ function ListPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
+      <div {...titleBarDragDeep} className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
         <h1 className="text-lg font-semibold">Integrations</h1>
         <span className="flex items-center gap-1">
           <CollapseButton onCollapse={onCollapse} />

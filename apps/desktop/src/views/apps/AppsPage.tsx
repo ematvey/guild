@@ -26,7 +26,7 @@ import {
 import type { App } from "@guild/wire/rest";
 import { useMemberProfile } from "../../lib/profile-store";
 import { CollapseButton } from "../sidebar/chrome";
-import { TOP_ROW } from "../../lib/titlebar";
+import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
@@ -115,7 +115,7 @@ function ListPane({
   const shared = (apps ?? []).filter((app) => app.owner_user_id !== me);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
+      <div {...titleBarDragDeep} className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
         <h1 className="text-lg font-semibold">Apps</h1>
         <CollapseButton onCollapse={onCollapse} />
       </div>

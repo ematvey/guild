@@ -16,6 +16,20 @@ object type is tracked at all.
 Scope: the analytics endpoints need `business-intelligence`. The README names
 it, and a 403 now points at it.
 
+## 0.6.114 — the first row drags the window
+
+The window moved only when the click landed on a header's own background: a
+click on the row's text, its icons or the gaps between them did nothing.
+
+Every first row now carries `data-tauri-drag-region="deep"`
+(`titleBarDragDeep`), so the whole row — rail logo, list header, thread
+header, page header, and the caption buttons' box — moves the window. A
+clickable child still takes its click: the plus, the collapse button, the
+chat menu, a field, anything with `role="button"`.
+
+The row also loses 12 px of height: `TOP_ROW` is 44 px, and the caption
+buttons fill it. All first rows still share one baseline.
+
 ## 0.6.113 — one top row for every column
 
 The Windows caption buttons floated over a band that no page content
