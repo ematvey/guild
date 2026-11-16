@@ -1,16 +1,20 @@
-## 0.6.106 — bytes cross the machine link
+## 0.6.107 — bytes cross the machine link, and only bytes
 
-`write_file` carried text only, so `MachineExecutionEnv.writeFile` refused a
-`Uint8Array`. A Gmail attachment or a Drive PDF aimed at a project folder
-failed with "binary writes are not supported over machine dispatch", and the
-same refusal would have hit any attachment download to a machine.
+`write_file` is the model's tool: the model writes text it produced. It
+carried text only, so `MachineExecutionEnv.writeFile` refused a `Uint8Array`
+and a Gmail attachment or a Drive PDF aimed at a project folder failed with
+"binary writes are not supported over machine dispatch".
 
-`write_file` now takes `encoding: base64`: the content is bytes, and the
-engine decodes it into the file. Text stays text. The server sends base64 only
-to a client that decodes it — `binaryWritesSupported` compares the machine's
-`app_version` with `BINARY_WRITE_VERSION` — because an older client would
-write the base64 string itself, and a corrupted PDF is worse than a refusal.
-The refusal names the machine and the release to install.
+The first attempt let `write_file` take `encoding: base64`. That was wrong:
+it put bytes in a model tool, and a model that can emit base64 is a model
+that can silently corrupt a file. Bytes are never the model's to write.
+
+`fs.write_raw_v1` is the host's transfer op, next to `fs.read_raw_v1` and
+`fs.stat_v1`: `{path, data_b64}` in, `{path, size}` out, scoped to the
+workspace, capped at 64 MiB. `MachineExecutionEnv.writeFile` sends text
+through `write_file` and bytes through the raw op. An engine that lacks the
+op answers "unknown tool", and the write fails as `not_supported` — a
+refusal, never a file full of base64 text.
 
 ## 0.6.105 — a file a tool brings lands where the call says
 

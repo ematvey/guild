@@ -271,7 +271,7 @@
       "role": "domain"
     },
     {
-      "where": "apps/server/src/harness/attachment-tools.ts",
+      "where": "apps/server/src/harness/chat-files.ts",
       "concept": "attachment",
       "role": "domain"
     },

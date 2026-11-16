@@ -235,6 +235,7 @@ function fileErr(code: (typeof FileError.prototype)["code"], message: string, pa
 
 const RAW_READ_OP = "fs.read_raw_v1";
 const RAW_STAT_OP = "fs.stat_v1";
+const RAW_WRITE_OP = "fs.write_raw_v1";
 
 /** The FileError code for a raw op failure code (`too_large` is an
  *  invalid request for this transport). */
@@ -259,32 +260,6 @@ function shellQuote(arg: string): string {
   return `"${arg.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
 }
 
-/** The first client release whose `write_file` decodes a base64 `content`.
- *  Below it, a binary write is refused: the client would save the base64
- *  text. */
-export const BINARY_WRITE_VERSION = "0.6.106";
-
-/** Whether a machine's client release can take bytes over the link. An
- *  unknown or unparseable version cannot. */
-export function binaryWritesSupported(appVersion: string | null): boolean {
-  if (appVersion === null) return false;
-  const parse = (v: string): number[] =>
-    v
-      .split("-")[0]!
-      .split(".")
-      .map((p) => Number(p));
-  const have = parse(appVersion);
-  const need = parse(BINARY_WRITE_VERSION);
-  for (let i = 0; i < need.length; i++) {
-    const a = have[i] ?? 0;
-    const b = need[i] ?? 0;
-    if (!Number.isFinite(a)) return false;
-    if (a > b) return true;
-    if (a < b) return false;
-  }
-  return true;
-}
-
 export interface MachineEnvOptions {
   machineId: string;
   orgId: string;
@@ -294,10 +269,6 @@ export interface MachineEnvOptions {
   workdir: string | null;
   timeoutMs: number;
   dispatch: Pick<MachineDispatch, "dispatch">;
-  /** The machine's client can receive bytes (a base64 `write_file`). An
-   *  older client would write the base64 text itself, so a binary write to
-   *  it is refused instead. */
-  binaryWrites: boolean;
 }
 
 /** An ExecutionEnv whose file/shell operations run on the chat's bound
@@ -334,16 +305,17 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(path.join(...parts));
   }
 
-  /** One raw file op (`fs.read_raw_v1` / `fs.stat_v1`) and its decoded
-   *  JSON payload. A failure carries `{code, message}`; an engine that
-   *  predates the op answers "unknown tool", which fails as
-   *  `not_supported` instead of falling back to the lossy `read_file`. */
-  private async rawOp(
-    op: typeof RAW_READ_OP | typeof RAW_STAT_OP,
-    p: string,
+  /** One raw file op (`fs.read_raw_v1`, `fs.stat_v1`, `fs.write_raw_v1`)
+   *  and its decoded JSON payload. A failure carries `{code, message}`; an
+   *  engine that predates the op answers "unknown tool", which fails as
+   *  `not_supported` instead of falling back to the lossy tool. */
+  private async rawCall(
+    op: typeof RAW_READ_OP | typeof RAW_STAT_OP | typeof RAW_WRITE_OP,
+    args: Record<string, unknown>,
     context: Context,
   ): Promise<Result<Record<string, unknown>, FileError>> {
-    const outcome = await this.runTool(op, { path: p }, context);
+    const p = String(args.path ?? "");
+    const outcome = await this.runTool(op, args, context);
     let payload: unknown;
     try {
       payload = JSON.parse(outcome.content);
@@ -366,6 +338,14 @@ export class MachineExecutionEnv implements ExecutionEnv {
       return fileErr("unknown", `malformed ${op} result`, p);
     }
     return ok(payload as Record<string, unknown>);
+  }
+
+  private async rawOp(
+    op: typeof RAW_READ_OP | typeof RAW_STAT_OP,
+    p: string,
+    context: Context,
+  ): Promise<Result<Record<string, unknown>, FileError>> {
+    return this.rawCall(op, { path: p }, context);
   }
 
   private async readRaw(
@@ -477,24 +457,22 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return fileErr("not_supported", "watching is not supported over machine dispatch");
   }
 
-  async writeFile(p: string, content: string | Uint8Array, _context: Context): Promise<Result<void, FileError>> {
-    // Bytes a text frame cannot carry (a downloaded PDF, an image) ride
-    // base64; the machine decodes them into the same file. A client that
-    // predates the decoding would write the base64 text itself, so the
-    // write is refused rather than corrupted.
-    if (typeof content !== "string" && !this.options.binaryWrites) {
-      return fileErr(
-        "not_supported",
-        `this machine's Guild client cannot receive binary files; update it on ${this.options.machineId} to ${BINARY_WRITE_VERSION} or newer`,
-        p,
-      );
+  async writeFile(p: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
+    // Text is the model's own writing: it goes through the same `write_file`
+    // the model calls. Bytes are a file the server moves — a downloaded PDF,
+    // an image — so they ride the raw transfer op and never touch a tool the
+    // model drives.
+    if (typeof content === "string") {
+      const outcome = await this.runTool("write_file", { path: p, content }, context);
+      if (outcome.is_error) return fileErr("unknown", outcome.content, p);
+      return ok(undefined);
     }
-    const args =
-      typeof content === "string"
-        ? { path: p, content }
-        : { path: p, content: Buffer.from(content).toString("base64"), encoding: "base64" };
-    const outcome = await this.runTool("write_file", args, _context);
-    if (outcome.is_error) return fileErr("unknown", outcome.content, p);
+    const written = await this.rawCall(
+      RAW_WRITE_OP,
+      { path: p, data_b64: Buffer.from(content).toString("base64") },
+      context,
+    );
+    if (!written.ok) return written;
     return ok(undefined);
   }
 

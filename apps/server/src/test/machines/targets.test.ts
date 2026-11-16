@@ -143,8 +143,8 @@ describe("renderMachineLines", () => {
   it("names the label, the id, the live flag, the OS and the shell", () => {
     expect(
       renderMachineLines([
-        { machine_id: "m-1", label: "MacBook", online: true, os: "macos", os_version: "26.1", app_version: null },
-        { machine_id: "m-2", label: null, online: false, os: "windows", os_version: "26H2", app_version: null },
+        { machine_id: "m-1", label: "MacBook", online: true, os: "macos", os_version: "26.1" },
+        { machine_id: "m-2", label: null, online: false, os: "windows", os_version: "26H2" },
       ]),
     ).toBe(
       "- MacBook · m-1 · online · macos 26.1 · shell: sh -c\n" +
@@ -153,19 +153,15 @@ describe("renderMachineLines", () => {
   });
 
   it("claims no shell for a machine whose OS is unknown", () => {
-    expect(
-      renderMachineLines([
-        { machine_id: "m-1", label: "Box", online: true, os: null, os_version: null, app_version: null },
-      ]),
-    ).toBe("- Box · m-1 · online");
+    expect(renderMachineLines([{ machine_id: "m-1", label: "Box", online: true, os: null, os_version: null }])).toBe(
+      "- Box · m-1 · online",
+    );
   });
 
   it("omits an unknown version but keeps the OS", () => {
-    expect(
-      renderMachineLines([
-        { machine_id: "m-1", label: "Box", online: true, os: "linux", os_version: null, app_version: null },
-      ]),
-    ).toBe("- Box · m-1 · online · linux · shell: sh -c");
+    expect(renderMachineLines([{ machine_id: "m-1", label: "Box", online: true, os: "linux", os_version: null }])).toBe(
+      "- Box · m-1 · online · linux · shell: sh -c",
+    );
   });
 });
 

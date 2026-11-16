@@ -907,21 +907,15 @@ export class ChatStore {
     machine_label: string | null;
     org_id: string;
     project_folder: string | null;
-    app_version: string | null;
   } | null> {
     const res = await this.pool.query<{
       machine_id: string | null;
       machine_label: string | null;
       org_id: string;
       project_folder: string | null;
-      app_version: string | null;
     }>(
-      `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder,
-              m.app_version
-       FROM chats c
-       LEFT JOIN projects pr ON pr.id = c.project_id
-       LEFT JOIN machines m ON m.machine_id = c.machine_id
-       WHERE c.id = $1`,
+      `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
+       FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
       [chatId],
     );
     const row = res.rows[0];

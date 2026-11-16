@@ -435,6 +435,10 @@ impl Tool for ReadFile {
 /// `too_large` instead of arriving truncated.
 pub const MAX_RAW_READ_BYTES: usize = 8 * 1024 * 1024;
 
+/// Cap on one raw file write (`fs.write_raw_v1`): a larger payload fails
+/// with `too_large` instead of crossing the socket.
+pub const MAX_RAW_WRITE_BYTES: usize = 64 * 1024 * 1024;
+
 /// A failed raw file op: a FileError-style code plus a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawFsError {
@@ -574,6 +578,36 @@ pub async fn read_raw(
     }))
 }
 
+/// `fs.write_raw_v1`: writes the exact bytes of `data_b64` to one path
+/// scoped to the workspace, creating parent directories. Returns
+/// `{"path", "size"}`.
+///
+/// This is the host moving a file, not a model tool: the model never
+/// produces bytes, it names a destination. `write_file` stays text.
+pub async fn write_raw(workdir: &Path, path: &str, data_b64: &str) -> Result<Value, RawFsError> {
+    let resolved =
+        resolve_scoped(workdir, path).map_err(|e| RawFsError::new("invalid", e.to_string()))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| RawFsError::new("invalid", format!("data_b64 is not valid base64: {e}")))?;
+    if bytes.len() > MAX_RAW_WRITE_BYTES {
+        return Err(RawFsError::new(
+            "too_large",
+            format!(
+                "{} bytes exceeds the {MAX_RAW_WRITE_BYTES}-byte machine file transfer limit",
+                bytes.len()
+            ),
+        ));
+    }
+    write_bytes(&resolved, &bytes)
+        .await
+        .map_err(|e| RawFsError::new("unknown", e.to_string()))?;
+    Ok(serde_json::json!({
+        "path": resolved.display().to_string(),
+        "size": bytes.len(),
+    }))
+}
+
 pub struct WriteFile;
 
 #[async_trait]
@@ -592,17 +626,8 @@ impl Tool for WriteFile {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| ToolFailure::InvalidInput("missing content".into()))?;
-        // `encoding: base64` carries bytes a text file cannot: a downloaded
-        // PDF, an image. Text stays text.
-        let bytes = if args["encoding"].as_str() == Some("base64") {
-            base64::engine::general_purpose::STANDARD
-                .decode(content)
-                .map_err(|e| ToolFailure::InvalidInput(format!("content is not valid base64: {e}")))?
-        } else {
-            content.as_bytes().to_vec()
-        };
-        write_bytes(&path, &bytes).await?;
-        let n = bytes.len();
+        write_bytes(&path, content.as_bytes()).await?;
+        let n = content.len();
         Ok(ToolOutcome {
             images: Vec::new(),
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
@@ -625,38 +650,6 @@ mod tests {
         let mut s = format!(r"\\wsl.localhost\TestDistro\{}", tmp.display());
         s.push_str(rest);
         PathBuf::from(s)
-    }
-
-    #[test]
-    fn write_file_base64_writes_the_bytes_a_text_frame_cannot_carry() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let dir = std::env::temp_dir().join(format!("guild-write-b64-{}", std::process::id()));
-            tokio::fs::create_dir_all(&dir).await.unwrap();
-            // A PDF header: bytes a JSON string would mangle.
-            let bytes: Vec<u8> = vec![0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x00, 0xff];
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            let out = WriteFile
-                .run(
-                    &dir,
-                    serde_json::json!({ "path": "in/report.pdf", "content": encoded, "encoding": "base64" }),
-                )
-                .await
-                .unwrap();
-            assert!(out.output_for_model.contains("wrote 10 bytes"));
-            let written = tokio::fs::read(dir.join("in/report.pdf")).await.unwrap();
-            assert_eq!(written, bytes);
-            // Text stays text.
-            WriteFile
-                .run(&dir, serde_json::json!({ "path": "notes.txt", "content": "hi" }))
-                .await
-                .unwrap();
-            assert_eq!(
-                tokio::fs::read(dir.join("notes.txt")).await.unwrap(),
-                b"hi".to_vec()
-            );
-            let _ = tokio::fs::remove_dir_all(&dir).await;
-        });
     }
 
     #[test]
@@ -776,6 +769,52 @@ mod tests {
         assert!(resolve_scoped(base, "../outside.txt").is_err());
         assert!(resolve_scoped(base, "/etc/passwd").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_raw_carries_bytes_the_text_tool_cannot_and_stays_in_the_workspace() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("guild-write-raw-{}", std::process::id()));
+            tokio::fs::create_dir_all(&dir).await.unwrap();
+            // A PDF header: bytes a JSON text field would mangle.
+            let bytes: Vec<u8> = vec![0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x00, 0xff];
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let out = write_raw(&dir, "in/report.pdf", &encoded).await.unwrap();
+            assert_eq!(out["size"], 10);
+            assert_eq!(
+                tokio::fs::read(dir.join("in/report.pdf")).await.unwrap(),
+                bytes
+            );
+            // Text stays text: the same bytes as a string, no base64.
+            WriteFile
+                .run(
+                    &dir,
+                    serde_json::json!({ "path": "notes.txt", "content": "%PDF" }),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                tokio::fs::read(dir.join("notes.txt")).await.unwrap(),
+                b"%PDF".to_vec()
+            );
+            // A write cannot leave the workspace, and bad base64 is refused.
+            assert_eq!(
+                write_raw(&dir, "../escape.bin", &encoded)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "invalid"
+            );
+            assert_eq!(
+                write_raw(&dir, "bad.bin", "not base64!!")
+                    .await
+                    .unwrap_err()
+                    .code,
+                "invalid"
+            );
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        });
     }
 
     fn decode(v: &Value) -> Vec<u8> {

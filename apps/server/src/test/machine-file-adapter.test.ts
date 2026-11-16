@@ -3,13 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  BINARY_WRITE_VERSION,
-  binaryWritesSupported,
-  MachineExecutionEnv,
-  type MachineDispatch,
-  type MachineToolOutcome,
-} from "../machines/dispatch.js";
+import { MachineExecutionEnv, type MachineDispatch, type MachineToolOutcome } from "../machines/dispatch.js";
 
 type Dispatch = Pick<MachineDispatch, "dispatch">;
 
@@ -51,6 +45,11 @@ function engine(dir: string, opts: { legacy?: boolean } = {}): { dispatch: Dispa
           } catch {
             return reply({ exists: false });
           }
+        case "fs.write_raw_v1": {
+          const bytes = Buffer.from((call.args as { data_b64: string }).data_b64, "base64");
+          writeFileSync(file, bytes);
+          return reply({ path: file, size: bytes.length });
+        }
         case "write_file": {
           // As the engine does: `encoding: base64` means the content is bytes.
           const { encoding } = call.args as { encoding?: string };
@@ -84,26 +83,11 @@ function env(dir: string, dispatch: Dispatch): MachineExecutionEnv {
     workdir: dir,
     timeoutMs: 1000,
     dispatch,
-    binaryWrites: true,
   });
 }
 
-describe("binaryWritesSupported", () => {
-  it("accepts the release that decodes base64 and anything newer, refuses the rest", () => {
-    expect(binaryWritesSupported(BINARY_WRITE_VERSION)).toBe(true);
-    expect(binaryWritesSupported("0.6.107")).toBe(true);
-    expect(binaryWritesSupported("0.7.0")).toBe(true);
-    expect(binaryWritesSupported("1.0.0")).toBe(true);
-    expect(binaryWritesSupported("0.6.99")).toBe(false);
-    expect(binaryWritesSupported("0.6.105")).toBe(false);
-    expect(binaryWritesSupported("0.5.200")).toBe(false);
-    expect(binaryWritesSupported(null)).toBe(false);
-    expect(binaryWritesSupported("not-a-version")).toBe(false);
-  });
-});
-
 describe("machine file adapter", () => {
-  it("writes bytes as base64 when the client decodes them", async () => {
+  it("sends bytes over the raw write op, not through the model's write_file", async () => {
     const dir = scratch();
     const { dispatch, calls } = engine(dir);
     const env = new MachineExecutionEnv({
@@ -113,18 +97,17 @@ describe("machine file adapter", () => {
       workdir: dir,
       timeoutMs: 1000,
       dispatch,
-      binaryWrites: true,
     });
     const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
     const written = await env.writeFile(path.join(dir, "report.pdf"), bytes, BACKGROUND_CONTEXT);
     expect(written.ok).toBe(true);
-    expect(calls).toContain("write_file");
+    expect(calls).toContain("fs.write_raw_v1");
     expect([...readFileSync(path.join(dir, "report.pdf"))]).toEqual([...bytes]);
   });
 
-  it("refuses a binary write to a client that would save the base64 text", async () => {
+  it("refuses bytes to an engine that has no raw write op", async () => {
     const dir = scratch();
-    const { dispatch } = engine(dir);
+    const { dispatch } = engine(dir, { legacy: true });
     const env = new MachineExecutionEnv({
       machineId: "m",
       orgId: "o",
@@ -132,11 +115,10 @@ describe("machine file adapter", () => {
       workdir: dir,
       timeoutMs: 1000,
       dispatch,
-      binaryWrites: false,
     });
     const written = await env.writeFile(path.join(dir, "report.pdf"), new Uint8Array([0x25, 0x50]), BACKGROUND_CONTEXT);
     expect(written.ok).toBe(false);
-    expect(written.ok ? "" : written.error.message).toContain("cannot receive binary files");
+    expect(written.ok ? "" : written.error.message).toContain("update the desktop app");
   });
 
   it("reads large CRLF text without a trailing newline exactly, and an edit writes it back whole", async () => {

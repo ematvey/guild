@@ -441,6 +441,7 @@ const CAPABILITIES: &[&str] = &[
     "fs_list",
     RAW_READ_OP,
     RAW_STAT_OP,
+    RAW_WRITE_OP,
 ];
 
 /// Control-plane ops the server sends over the executor socket: capability
@@ -526,6 +527,7 @@ struct ExecOutcome {
 /// like `read_file`; a failure's content is `{"code", "message"}`.
 const RAW_READ_OP: &str = "fs.read_raw_v1";
 const RAW_STAT_OP: &str = "fs.stat_v1";
+const RAW_WRITE_OP: &str = "fs.write_raw_v1";
 
 const NO_WORKDIR: &str = "no workspace folder is set for this chat — pick a project with 'Choose project' in the composer";
 
@@ -539,7 +541,7 @@ async fn read_roots(dir: &str) -> Result<Vec<PathBuf>, String> {
 }
 
 async fn execute_raw_file_op(name: &str, arguments: &str, workdir: Option<&str>) -> ExecOutcome {
-    use guild_core::tools::fs::{read_raw, stat_raw, RawFsError, MAX_RAW_READ_BYTES};
+    use guild_core::tools::fs::{read_raw, stat_raw, write_raw, RawFsError, MAX_RAW_READ_BYTES};
     let result: Result<serde_json::Value, serde_json::Value> = async {
         let invalid = |m: String| serde_json::json!({ "code": "invalid", "message": m });
         let dir = workdir.ok_or_else(|| invalid(NO_WORKDIR.to_string()))?;
@@ -548,11 +550,23 @@ async fn execute_raw_file_op(name: &str, arguments: &str, workdir: Option<&str>)
         let path = args["path"]
             .as_str()
             .ok_or_else(|| invalid("missing path".into()))?;
-        let roots = read_roots(dir).await.map_err(invalid)?;
-        let out = if name == RAW_READ_OP {
-            read_raw(Path::new(dir), &roots, path, MAX_RAW_READ_BYTES).await
-        } else {
-            stat_raw(Path::new(dir), &roots, path).await
+        // A write is scoped to the workspace alone; reads also reach the
+        // skill dirs.
+        let out = match name {
+            RAW_WRITE_OP => {
+                let data = args["data_b64"]
+                    .as_str()
+                    .ok_or_else(|| invalid("missing data_b64".into()))?;
+                write_raw(Path::new(dir), path, data).await
+            }
+            RAW_READ_OP => {
+                let roots = read_roots(dir).await.map_err(invalid)?;
+                read_raw(Path::new(dir), &roots, path, MAX_RAW_READ_BYTES).await
+            }
+            _ => {
+                let roots = read_roots(dir).await.map_err(invalid)?;
+                stat_raw(Path::new(dir), &roots, path).await
+            }
         };
         out.map_err(|e: RawFsError| e.to_json())
     }
@@ -576,7 +590,7 @@ async fn execute_client_tool(
     workdir: Option<&str>,
     hooks: Option<Arc<guild_core::tools::artifacts::ArtifactHooks>>,
 ) -> ExecOutcome {
-    if matches!(name, RAW_READ_OP | RAW_STAT_OP) {
+    if matches!(name, RAW_READ_OP | RAW_STAT_OP | RAW_WRITE_OP) {
         return execute_raw_file_op(name, arguments, workdir).await;
     }
     let result = async {
@@ -1566,7 +1580,8 @@ mod tests {
                 "fs_home",
                 "fs_list",
                 "fs.read_raw_v1",
-                "fs.stat_v1"
+                "fs.stat_v1",
+                "fs.write_raw_v1"
             ])
         );
         for retired in [
@@ -1621,6 +1636,18 @@ mod tests {
 
         let none = execute_client_tool(RAW_READ_OP, &args, None, None).await;
         assert!(none.is_error);
+
+        // A write carries bytes the text tool cannot, and cannot leave the
+        // workspace.
+        let bytes: Vec<u8> = vec![0x25, 0x50, 0x44, 0x46, 0x00, 0xff];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let write = serde_json::json!({"path": "out/report.pdf", "data_b64": encoded}).to_string();
+        let written = execute_client_tool(RAW_WRITE_OP, &write, Some(&workdir), None).await;
+        assert!(!written.is_error, "{}", written.content);
+        assert_eq!(std::fs::read(dir.join("out/report.pdf")).unwrap(), bytes);
+        let escape = serde_json::json!({"path": "../escape.bin", "data_b64": encoded}).to_string();
+        let escaped = execute_client_tool(RAW_WRITE_OP, &escape, Some(&workdir), None).await;
+        assert!(escaped.is_error);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

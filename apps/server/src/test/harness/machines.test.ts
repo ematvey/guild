@@ -13,9 +13,7 @@ describe("renderMachinesSection", () => {
 
   it("ends with the machine list", () => {
     expect(
-      renderMachinesSection([
-        { machine_id: "m-1", label: "WORKSTATION-A", online: true, os: "windows", os_version: "26H2", app_version: null },
-      ]),
+      renderMachinesSection([{ machine_id: "m-1", label: "WORKSTATION-A", online: true, os: "windows", os_version: "26H2" }]),
     ).toBe(`${MACHINES_SECTION_HEADER}\n\n- WORKSTATION-A · m-1 · online · windows 26H2 · shell: cmd.exe`);
   });
 

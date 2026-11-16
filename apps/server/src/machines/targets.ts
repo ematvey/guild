@@ -13,7 +13,7 @@
 // That is why they are a dependency rather than a direct hub call.
 
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { binaryWritesSupported, MachineExecutionEnv, type MachineDispatch } from "./dispatch.js";
+import { MachineExecutionEnv, type MachineDispatch } from "./dispatch.js";
 import type { MachineRow } from "../platform/store/machines.js";
 
 /** A machine the member may address, with its live flag and the OS it runs. */
@@ -23,8 +23,6 @@ export interface MachineTarget {
   online: boolean;
   os: string | null;
   os_version: string | null;
-  /** The client release the machine last connected with. */
-  app_version: string | null;
 }
 
 /** A call the member cannot make: the message is written for the model. */
@@ -69,7 +67,6 @@ export class MachineTargets {
       online: live.has(row.machine_id),
       os: row.os,
       os_version: row.os_version,
-      app_version: row.app_version,
     }));
   }
 
@@ -126,7 +123,6 @@ export class MachineTargets {
       workdir,
       timeoutMs: this.deps.timeoutMs(),
       dispatch,
-      binaryWrites: binaryWritesSupported(target.app_version),
     });
   }
 }

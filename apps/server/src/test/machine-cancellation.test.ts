@@ -22,7 +22,6 @@ function fixture() {
     workdir: "/tmp",
     timeoutMs: 1000,
     dispatch,
-    binaryWrites: true,
   });
   return { dispatch, env, cancel, frame: () => dispatched! };
 }
