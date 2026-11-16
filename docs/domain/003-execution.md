@@ -80,7 +80,7 @@ The system prompt of a Turn has two parts:
 
 The Workspace files are read again at every admission and resume, so an Agent that edits them changes its next Turn. They are capped at 32 KiB together. Project instructions come from the Member's Machine: `AGENTS.md` files from the git root to the working directory, plus `MEMORY.md`. They are stored with the Thread so that a resumed Turn keeps them.
 
-Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download` fetches any file of the Thread, and any file its child results carry, into the working folder at a path the call names.
+Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download` fetches any file of the Thread, and any file its child results carry, into a working folder at a path the call names; `send_file` takes a file of a working folder back into the Thread as an Attachment.
 
 Compaction replaces the older context with a summary. It runs automatically, or on request, and its summary waits for the running Turn to end. Context usage is the token count of the last completed model call since the last compaction.
 
@@ -92,6 +92,8 @@ Compaction replaces the older context with a summary. It runs automatically, or 
 | Bound to a Project | `read`, `write`, `edit`, `bash` on the Project's Machine, in the Project folder | `agent_read`, `agent_write`, `agent_edit`, `agent_bash` in the sandbox |
 
 **A Machine named per call.** The four coding tools take a `machine` argument: its id, or a label unique among the caller's Machines. The call then runs on that Machine instead of the Thread's own environment, and `cwd` names the folder it runs in. Without `cwd` it runs in the Machine's home directory, read once and kept until the Machine goes offline, and no folder carries from one call to the next, so a command writes `cd <folder> && …`. A Machine the caller did not pair is not addressable, and `cwd` without `machine` is refused. The `machines` prompt section and the `machine_list` tool carry the same list: label, id and live flag.
+
+**The file tools take the same target.** `download` and `send_file` take `machine` and `cwd` with the same meaning, through the same wrapper as the coding tools. `download` reads one file of the Thread out of object storage and writes it into that environment at the path the call names. `send_file` reads one file of that environment and attaches it to the Thread. Without `machine` both act on the Thread's own environment.
 
 **Sandbox.** One gVisor container per Agent, with the Workspace mounted read-write. It serves every Thread of that Agent, including Threads of different Members. An Agent's sandbox is always on: the idle reaper skips it, and it is stopped only to free capacity. Bytes leave the sandbox only as Attachments or Tool artifacts. The server reads the Workspace without following links, so a link planted inside the sandbox never resolves on the server.
 

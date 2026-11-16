@@ -1,8 +1,7 @@
-// download: writes one file of this chat into the call's environment. A chat
-// file is an attachment or a tool result the server spilled; both are rows in
-// object storage, and both are reachable by id or by filename. The destination
-// is the environment the call runs in — the chat's sandbox, or the project
-// folder when the chat runs on a machine.
+// download: writes one file of this chat into a working folder. A chat file is
+// an attachment or a tool result the server spilled; both are rows in object
+// storage, and both are reachable by id or by filename. The destination is the
+// call's environment — the chat's own, or a machine the call names.
 
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
@@ -19,6 +18,7 @@ import { attachmentObjectKey, type AttachmentStore } from "../platform/store/att
 import { toolArtifactObjectKey, type ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import { relativeDestination } from "../platform/domain/paths.js";
 import type { ObjectStore } from "../platform/s3.js";
+import { withMachineTarget } from "./agent-tools.js";
 
 export interface DownloadDeps {
   attachments: Pick<AttachmentStore, "reachableFromChat">;
@@ -26,6 +26,10 @@ export interface DownloadDeps {
   objects: Pick<ObjectStore, "get">;
   chatOfConversation(conversationId: ConversationId): Promise<string | null>;
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
+  /** One call on a machine the chat's owner paired: the `machine` target of
+   *  a download. It throws `MachineTargetError` when the call is not theirs
+   *  to make. */
+  machineEnv(conversationId: ConversationId, request: { machine: string; cwd?: string }): Promise<ExecutionEnv>;
 }
 
 /** One file this chat can download: an attachment or a spilled tool result. */
@@ -119,62 +123,65 @@ const fail = (message: string): ToolExecutionResult => ({
 });
 
 export function createDownloadTool(deps: DownloadDeps): ToolRegistration {
-  return defineTool({
-    name: "download",
-    description:
-      "Download one file of this chat into the working folder. A file is an attachment the user sent, or a large " +
-      "tool result the server saved. `file` names it by id or by filename, and `path` is where it goes. The file " +
-      "lands in the environment the call runs in: the chat's sandbox, or the project folder when the chat runs on " +
-      "a machine.",
-    parameters: Type.Object({
-      file: Type.String({ description: "File id, or filename (exact, or a unique part of it)." }),
-      path: Type.String({ description: "Destination path relative to the working folder." }),
-      overwrite: Type.Optional(
-        Type.Boolean({ description: "Replace the destination when it already exists. Default: false." }),
-      ),
+  return withMachineTarget(
+    defineTool({
+      name: "download",
+      description:
+        "Download one file of this chat into a working folder. A file is an attachment the user sent, or a large " +
+        "tool result the server saved. `file` names it by id or by filename, and `path` is where it goes. Without " +
+        "`machine` the file lands in the chat's own environment: the sandbox, or the project folder when the chat runs " +
+        "on a machine. `machine` names a paired machine and `cwd` the folder on it.",
+      parameters: Type.Object({
+        file: Type.String({ description: "File id, or filename (exact, or a unique part of it)." }),
+        path: Type.String({ description: "Destination path relative to the working folder." }),
+        overwrite: Type.Optional(
+          Type.Boolean({ description: "Replace the destination when it already exists. Default: false." }),
+        ),
+      }),
+      replay: "safe",
+      outputLimits: { maxBytes: 4 * 1024 },
+      execute: async (args, api, context) => {
+        try {
+          const chatId = await deps.chatOfConversation(api.conversationId);
+          if (chatId === null) return fail("this conversation has no chat");
+          const orgId = await deps.orgOfConversation(api.conversationId);
+          if (orgId === null) return fail("this conversation has no org");
+          const files = await chatFiles(deps, orgId, chatId);
+          const picked = pick(files, args.file);
+          if (typeof picked === "string") return fail(picked);
+          const env = api.env;
+          if (env === undefined) return fail("no execution environment is configured");
+          const bytes = await deps.objects.get(picked.key);
+          const written = await writeIntoEnv(env, args.path ?? "", bytes, context, {
+            overwrite: args.overwrite === true,
+          });
+          if (!written.ok) return fail(written.reason);
+          const target = written.value.path;
+          const absolute = written.value.absolute;
+          const sha256 = createHash("sha256").update(bytes).digest("hex");
+          const details: JsonValue = {
+            id: picked.id,
+            filename: picked.filename,
+            content_type: picked.content_type,
+            size_bytes: bytes.length,
+            sha256,
+            path: target,
+            absolute_path: absolute,
+          };
+          return {
+            output: [
+              {
+                type: "text",
+                text: `Saved ${picked.filename} (${bytes.length} bytes, ${picked.content_type}) to ${target}\nsha256: ${sha256}`,
+              },
+            ],
+            details,
+          };
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : String(error));
+        }
+      },
     }),
-    replay: "safe",
-    outputLimits: { maxBytes: 4 * 1024 },
-    execute: async (args, api, context) => {
-      try {
-        const chatId = await deps.chatOfConversation(api.conversationId);
-        if (chatId === null) return fail("this conversation has no chat");
-        const orgId = await deps.orgOfConversation(api.conversationId);
-        if (orgId === null) return fail("this conversation has no org");
-        const files = await chatFiles(deps, orgId, chatId);
-        const picked = pick(files, args.file);
-        if (typeof picked === "string") return fail(picked);
-        const env = api.env;
-        if (env === undefined) return fail("no execution environment is configured");
-        const bytes = await deps.objects.get(picked.key);
-        const written = await writeIntoEnv(env, args.path ?? "", bytes, context, {
-          overwrite: args.overwrite === true,
-        });
-        if (!written.ok) return fail(written.reason);
-        const target = written.value.path;
-        const absolute = written.value.absolute;
-        const sha256 = createHash("sha256").update(bytes).digest("hex");
-        const details: JsonValue = {
-          id: picked.id,
-          filename: picked.filename,
-          content_type: picked.content_type,
-          size_bytes: bytes.length,
-          sha256,
-          path: target,
-          absolute_path: absolute,
-        };
-        return {
-          output: [
-            {
-              type: "text",
-              text: `Saved ${picked.filename} (${bytes.length} bytes, ${picked.content_type}) to ${target}\nsha256: ${sha256}`,
-            },
-          ],
-          details,
-        };
-      } catch (error) {
-        return fail(error instanceof Error ? error.message : String(error));
-      }
-    },
-  });
+    { envFor: (api, request) => deps.machineEnv(api.conversationId, request) },
+  );
 }

@@ -224,7 +224,7 @@ export class GuildRuntime {
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
-  /** The member's paired machines: the per-call target a coding tool call
+  /** The member's paired machines: the per-call target a file tool call
    *  resolves through `machine`, and the list the prompt and `machine_list`
    *  render. */
   private readonly machineTargets: MachineTargets;
@@ -479,6 +479,19 @@ export class GuildRuntime {
       attachments: stores.attachments,
       artifacts: stores.toolArtifacts,
       ...(objects === undefined ? {} : { objects }),
+      machineEnv: async (conversationId, request) => {
+        const chatId = await chatOfConversation(conversationId);
+        if (chatId === null) throw new MachineTargetError("this conversation has no chat");
+        const owner = await stores.chats.ownerOf(chatId);
+        if (owner === null) throw new MachineTargetError("this chat has no owner to run a machine call for");
+        return this.machineTargets.envFor({
+          orgId: owner.org_id,
+          userId: owner.user_id,
+          chatId,
+          machine: request.machine,
+          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        });
+      },
       integrations: {
         gateDecision: async (conversationId, callName) => {
           const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);

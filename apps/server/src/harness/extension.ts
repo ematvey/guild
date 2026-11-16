@@ -9,6 +9,7 @@ import {
   type PromptSection,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 import { createDownloadTool } from "./chat-files.js";
 import { createMachineListTool, renderMachinesSection, type MachineListDeps } from "./machines.js";
@@ -125,6 +126,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   attachments?: Pick<AttachmentStore, "reachableFromChat">;
   artifacts?: Pick<ToolArtifactStore, "listForChat">;
   objects?: Pick<ObjectStore, "get">;
+  /** One call on a machine the chat's owner paired: the download tool's
+   *  `machine` target. */
+  machineEnv?(conversationId: ConversationId, request: { machine: string; cwd?: string }): Promise<ExecutionEnv>;
 }
 
 /** Codemode-only exposure: tools the model must not see directly become
@@ -201,7 +205,10 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       ...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()),
       ...(deps.threadTools ?? []).map(toolsOnlyCaller),
       ...(deps.machines === undefined ? [] : [createMachineListTool(deps.machines)]),
-      ...(deps.attachments === undefined || deps.artifacts === undefined || deps.objects === undefined
+      ...(deps.attachments === undefined ||
+      deps.artifacts === undefined ||
+      deps.objects === undefined ||
+      deps.machineEnv === undefined
         ? []
         : [
             createDownloadTool({
@@ -210,6 +217,7 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
               objects: deps.objects,
               chatOfConversation: deps.chatOfConversation,
               orgOfConversation: deps.orgOfConversation,
+              machineEnv: deps.machineEnv,
             }),
           ]),
     ],

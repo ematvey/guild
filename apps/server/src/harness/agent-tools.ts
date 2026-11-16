@@ -57,9 +57,18 @@ export interface RoutedCodingOptions {
   envFor(request: MachineCallRequest): Promise<ExecutionEnv>;
 }
 
-/** Adds the machine target to one coding tool: `machine` swaps the call's
- *  environment for that machine's, `cwd` sets the folder it runs in. */
-function routeCodingTool(tool: ToolRegistration, options: RoutedCodingOptions): ToolRegistration {
+/** What a tool needs to send one call to a machine: the caller resolves it
+ *  per call, because a conversation-scoped tool has no static caller. */
+export interface MachineTargetOptions {
+  /** The environment for one call on a named machine; it throws
+   *  `MachineTargetError` when the member cannot make that call. */
+  envFor(api: ToolExecutionApi, request: { machine: string; cwd?: string }): Promise<ExecutionEnv>;
+}
+
+/** Adds the machine target to one file tool: `machine` swaps the call's
+ *  environment for that machine's, `cwd` sets the folder it runs in. Every
+ *  file tool takes the same two arguments with the same meaning. */
+export function withMachineTarget(tool: ToolRegistration, options: MachineTargetOptions): ToolRegistration {
   const parameters = tool.parameters as { properties?: Record<string, unknown> };
   const run = tool.execute.bind(tool) as (
     args: Record<string, unknown>,
@@ -86,10 +95,7 @@ function routeCodingTool(tool: ToolRegistration, options: RoutedCodingOptions): 
       }
       let env: ExecutionEnv;
       try {
-        env = await options.envFor({
-          chatId: options.chatId,
-          orgId: options.orgId,
-          userId: options.userId,
+        env = await options.envFor(api, {
           machine,
           ...(typeof cwd === "string" ? { cwd } : {}),
         });
@@ -107,7 +113,16 @@ function routeCodingTool(tool: ToolRegistration, options: RoutedCodingOptions): 
  *  project's machine and folder on a project-bound chat. */
 export function createRoutedCodingTools(options: RoutedCodingOptions): ToolRegistration[] {
   return [createReadTool(), createWriteTool(), createEditTool(), createBashTool()].map((tool) =>
-    routeCodingTool(tool, options),
+    withMachineTarget(tool, {
+      envFor: (_api, request) =>
+        options.envFor({
+          chatId: options.chatId,
+          orgId: options.orgId,
+          userId: options.userId,
+          machine: request.machine,
+          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        }),
+    }),
   );
 }
 

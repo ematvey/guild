@@ -266,7 +266,14 @@ export class TurnTools {
             objects: deps.objects,
             agent,
             chatId,
-            workspaceRoot: deps.config.agentWorkspaceWriteRoot,
+            machineEnv: (request: { machine: string; cwd?: string }) =>
+              deps.machines.envFor({
+                chatId,
+                orgId: agent.org_id,
+                userId: ref.user_id,
+                machine: request.machine,
+                ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+              }),
           };
     const member = deps.apps === undefined ? null : await deps.identity.getUser(ref.user_id);
     const tools = createAgentTools({

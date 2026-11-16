@@ -1,3 +1,27 @@
+## 0.6.111 — `download` and `send_file` take the machine target
+
+The decision of 0.6.105 gave `download` a required `path` but no way to name
+where the bytes go: the tool wrote into the chat's own environment, so a
+Gmail attachment fetched in a plain chat could not reach the user's machine
+at all. An agent that needed that wrote the file as base64 in six parts and
+then probed HTTP routes of the server from the user's machine.
+
+`download` and `send_file` now take the same `machine` and `cwd` arguments
+as `read`, `write`, `edit` and `bash`, through the same wrapper
+(`withMachineTarget` in `harness/agent-tools.ts`). The wrapper is one
+implementation of the argument, its validation and the environment swap;
+the four coding tools, `download` and `send_file` all use it.
+
+`send_file` also stops reading the workspace volume directly. It reads
+through the call's environment, so it sends a file from the sandbox, from a
+project folder, or from a machine the call names — and one rule
+(`relativeDestination`) bounds both the path it reads and the path `download`
+writes. A symlink is still refused: the file is opened with `noFollow`.
+
+The default is unchanged: without `machine` a call keeps the chat's own
+environment. Moving the default to the agent's workspace is a separate
+change.
+
 ## 0.6.110 — the prompt names the machine the message came from
 
 A project chat said only "this chat is bound to the user's project", so the

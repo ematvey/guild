@@ -73,6 +73,7 @@ function harness(
   artifacts: readonly ToolArtifactRow[],
   objects: FakeObjects,
   env: NodeExecutionEnv,
+  machine?: { dir: string; requests: Array<{ machine: string; cwd?: string }> },
 ) {
   const tool = createDownloadTool({
     attachments: { reachableFromChat: async () => [...rows] },
@@ -80,6 +81,11 @@ function harness(
     objects,
     chatOfConversation: async () => CHAT,
     orgOfConversation: async () => ORG,
+    machineEnv: async (_conversationId, request) => {
+      if (machine === undefined) throw new Error("no machine in this test");
+      machine.requests.push(request);
+      return new NodeExecutionEnv({ cwd: machine.dir });
+    },
   });
   const call = (args: Record<string, unknown>) =>
     tool.execute(args as never, { conversationId: CONVERSATION, env } as never, {} as never);
@@ -119,6 +125,21 @@ describe("download", () => {
     const result = await call({ file: spilled.filename, path: "pipeline.csv" });
     expect(result.isError).toBeUndefined();
     expect(await readFile(path.join(sandbox, "pipeline.csv"), "utf8")).toBe("a,b\n1,2\n");
+  });
+
+  it("writes into a machine the call names, not into the chat's own folder", async () => {
+    const objects = new FakeObjects();
+    objects.seedAttachment(statement, "pdf-bytes\n");
+    const dir = await mkdtemp(path.join(tmpdir(), "guild-download-machine-"));
+    const machine = { dir, requests: [] as Array<{ machine: string; cwd?: string }> };
+    const { call } = harness([statement], [], objects, new NodeExecutionEnv({ cwd: sandbox }), machine);
+
+    const result = await call({ file: statement.id, path: "patents/statement.pdf", machine: "WORKSTATION-A" });
+    expect(result.isError).toBeUndefined();
+    expect(machine.requests).toEqual([{ machine: "WORKSTATION-A" }]);
+    expect(await readFile(path.join(dir, "patents", "statement.pdf"), "utf8")).toBe("pdf-bytes\n");
+    expect(await readFile(path.join(sandbox, "patents", "statement.pdf")).catch(() => null)).toBeNull();
+    await rm(dir, { recursive: true, force: true });
   });
 
   it("writes into the project folder when the call runs on the machine", async () => {
