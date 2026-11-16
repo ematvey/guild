@@ -105,7 +105,7 @@ An Integration call acts as the Member's own mapped identity; overriding it is a
 
 ## Exec policy and Approvals
 
-A shell command (`bash`, `execute`, `agent_bash`) meets exec policy first. The command is split into its segments, and the strictest decision wins:
+A shell command (`bash`, `execute`) meets exec policy first. The command is split into its segments, and the strictest decision wins:
 
 | Decision | Effect |
 | --- | --- |

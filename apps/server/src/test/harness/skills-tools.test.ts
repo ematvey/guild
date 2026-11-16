@@ -50,7 +50,6 @@ interface FakeOptions {
     owner_label?: string | null;
     forked_from?: string | null;
   }>;
-  executor?: "machine" | "server" | null;
   /** Extra files served from the object store on a registry read. */
   bundleFiles?: Record<string, string>;
 }
@@ -137,7 +136,6 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
     },
     chatOfConversation: async () => CHAT,
     chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member", label: "Member" }),
-    executorKind: async () => options.executor ?? null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: options.dir ?? "/nonexistent" }),
     materialize: async (args) => {
       recorded.materialized.push(args as unknown as Record<string, unknown>);
@@ -192,7 +190,7 @@ describe("read_skill", () => {
 
   it("reads the pinned version, lists extra files, records the read", async () => {
     const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
-    const { deps, recorded } = fakeDeps({ install, executor: "server" });
+    const { deps, recorded } = fakeDeps({ install });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
     const result = await (
@@ -248,7 +246,6 @@ describe("read_skill", () => {
     const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
     const { deps } = fakeDeps({
       install,
-      executor: "server",
       bundleFiles: {
         "manifest.json": '{"kind":"skill","slug":"hello","version":"v1","description":"A skill"}',
         "SKILL.md": "# Deploy\nRun the deploy checklist.",
@@ -267,7 +264,7 @@ describe("read_skill", () => {
   });
 
   it("installs on first use, emits skill.installed, materializes into the server sandbox", async () => {
-    const { deps, recorded } = fakeDeps({ install: null, executor: "server" });
+    const { deps, recorded } = fakeDeps({ install: null });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
     const result = await (
@@ -283,20 +280,9 @@ describe("read_skill", () => {
     expect(text(result)).not.toMatch(/sync/i);
   });
 
-  it("notes the syncing state on a machine right after install-on-use", async () => {
-    const { deps } = fakeDeps({ install: null, executor: "machine" });
-    const runtime = makeRuntime(deps);
-    const read = runtime.tools().find((t) => t.name === "read_skill")!;
-    const result = await (
-      read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
-    )({ slug: "hello" }, API, CTX);
-    expect(result.isError).toBeFalsy();
-    expect(text(result)).toMatch(/sync/i);
-  });
-
   it("notes a newer version when pinned behind latest", async () => {
     const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
-    const { deps } = fakeDeps({ install, executor: "server" });
+    const { deps } = fakeDeps({ install });
     const runtime = makeRuntime(deps);
     const read = runtime.tools().find((t) => t.name === "read_skill")!;
     const result = await (
@@ -316,7 +302,7 @@ describe("read_skill local-first", () => {
       mkdirSync(path.join(dir, "skills", "hello", "scripts"), { recursive: true });
       writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\nFrom the workspace tree.", "utf8");
       writeFileSync(path.join(dir, "skills", "hello", "scripts", "run.sh"), "echo hi\n", "utf8");
-      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const { deps, recorded } = fakeDeps({ dir });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
       const result = await (
@@ -345,7 +331,7 @@ describe("read_skill local-first", () => {
     try {
       mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
       writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\n", "utf8");
-      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const { deps, recorded } = fakeDeps({ dir });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
       const result = await (
@@ -369,7 +355,7 @@ describe("read_skill local-first", () => {
     try {
       mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
       writeFileSync(path.join(dir, "skills", "hello", "notes.txt"), "no manifest here", "utf8");
-      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const { deps, recorded } = fakeDeps({ dir });
       const runtime = makeRuntime(deps);
       const read = runtime.tools().find((t) => t.name === "read_skill")!;
       const result = await (
@@ -530,7 +516,7 @@ describe("push_skill", () => {
     try {
       mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
       writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Deploy\n\nRun the deploy checklist.\n", "utf8");
-      const { deps, recorded } = fakeDeps({ dir, executor: "server", control: null, install: null, versions: [] });
+      const { deps, recorded } = fakeDeps({ dir, control: null, install: null, versions: [] });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
       const result = await (
@@ -551,21 +537,9 @@ describe("push_skill", () => {
     }
   });
 
-  it("is not available from a machine", async () => {
-    const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
-    const { deps } = fakeDeps({ install, executor: "machine" });
-    const runtime = makeRuntime(deps);
-    const push = runtime.tools().find((t) => t.name === "push_skill")!;
-    const result = await (
-      push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>
-    )({ slug: "hello" }, API, CTX);
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/pushing from a machine is not available yet/);
-  });
-
   it("reports gate refusals as error results, not throws", async () => {
     const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
-    const { deps, recorded } = fakeDeps({ install, executor: "server", gate: "forbidden" });
+    const { deps, recorded } = fakeDeps({ install, gate: "forbidden" });
     const runtime = makeRuntime(deps);
     const push = runtime.tools().find((t) => t.name === "push_skill")!;
     const result = await (
@@ -584,7 +558,7 @@ describe("push_skill", () => {
       writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Deploy\nRun the checklist.", "utf8");
       writeFileSync(path.join(dir, "skills", "hello", "scripts", "run.sh"), "echo hi\n", "utf8");
       const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
-      const { deps, recorded } = fakeDeps({ install, executor: "server", versions: [{ version: "v1" }] });
+      const { deps, recorded } = fakeDeps({ install, versions: [{ version: "v1" }] });
       (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () =>
         new NodeExecutionEnv({ cwd: dir });
       const runtime = makeRuntime(deps);
@@ -615,7 +589,6 @@ describe("push_skill", () => {
       const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
       const { deps, recorded } = fakeDeps({
         install,
-        executor: "server",
         versions: [{ version: "v1" }, { version: "v3" }],
       });
       (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () =>

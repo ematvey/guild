@@ -1,3 +1,27 @@
+## 0.6.116 — one default environment: the agent's workspace
+
+Design B, decided in 0.6.105 and shipped only half there. The plain file
+tools now act on the Agent's own Workspace unless the call names a
+`machine`. The separate `agent_read`/`agent_write`/`agent_edit`/`agent_bash`
+set is gone, and with it the chat-bound machine executor.
+
+The reason is a hole in the Approval gate. The gate classified a call as
+`machine` when the arguments carried `machine`, else `server`, and
+pre-approved `server` calls. In a project chat the four coding tools carried
+no `machine` and ran on the user's disk — so a `write` into
+`C:\Users\alice\Documents\Patents` ran with no card, while the same call
+with `machine: "WORKSTATION-A"` got one. The classification and the environment
+disagreed, and the safe direction was the one missing.
+
+One default makes the classification true: no `machine` means the sandbox,
+really. The rule is now one sentence — the card follows the call's target.
+`machine` is the only argument that reaches the user's computer, so it is
+the only one that gates. The agent allowlist applies to every tool, since
+there is no second set to keep outside it.
+
+A `machine` call without `cwd` still runs in the Machine's home. The prompt
+names the project folder, so the call passes it.
+
 ## 0.6.113 — HubSpot analytics reach the agent
 
 The HubSpot integration read the CRM and nothing else: a question about page
@@ -69,7 +93,6 @@ The strip is gone. The three buttons stay, and they float over the top band of
 the columns. The columns' own backgrounds reach the window edge, as they do on
 macOS under the traffic lights. `TITLE_BAR_INSET` still reserves the band, and
 the band still drags the window; a click on a button is not a drag.
-
 ## 0.6.111 — `download` and `send_file` take the machine target
 
 The decision of 0.6.105 gave `download` a required `path` but no way to name

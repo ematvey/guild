@@ -40,8 +40,7 @@ A Turn's tool set is assembled at admission, in this order:
 1. **Base tools,** narrowed by the Agent's allowlist. Code mode is always kept.
 2. **Integration tools:** the Integrations in the Agent's Integration list, each narrowed to the classes within its entry's ceiling. Trait tools follow the allowlist instead. An Integration with no offered tool disappears.
 3. **The Member's own MCP servers.**
-4. **Workspace tools:** on a Machine-bound Thread, the `agent_*` tools, which sit outside the allowlist.
-5. **Conversation tools,** narrowed by the allowlist.
+4. **Conversation tools,** narrowed by the allowlist.
 
 File and shell tools are called directly. Integration and MCP tools are called through code mode: the model writes a short script that calls `tools.<name>`, and each nested call is gated on its own.
 
