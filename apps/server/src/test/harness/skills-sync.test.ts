@@ -83,7 +83,6 @@ function makeFixture(options: { selfBaseUrl?: string } = {}): Fixture {
     skillReads: undefined,
     chatOfConversation: async () => null,
     chatOwner: async () => null,
-    executorKind: async () => null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
     machines: { listForUser: async () => fx.machines as MachineRow[] },
     machineOnline: (machineId) => fx.online.has(machineId),
@@ -241,8 +240,7 @@ describe("skills syncUser", () => {
       skillReads: undefined,
       chatOfConversation: async () => null,
       chatOwner: async () => null,
-      executorKind: async () => null,
-      conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
+        conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
     });
 
     await runtime.syncUser(ORG, USER);
@@ -282,8 +280,7 @@ describe("skills syncUser", () => {
       skillReads: undefined,
       chatOfConversation: async () => null,
       chatOwner: async () => null,
-      executorKind: async () => null,
-      conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
+        conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
       machines: {
         listForUser: async () => {
           throw new Error("db down");

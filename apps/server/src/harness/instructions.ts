@@ -73,10 +73,7 @@ export function composeAgentInstructions(
     parts.push(`<generated_ui>\n${genuiPrompt()}\n</generated_ui>`);
   }
   const workspace: string[] = [
-    machine !== null
-      ? "Your own files. Read them with agent_read and edit them with agent_write/agent_edit; " +
-        "a change applies on your next turn."
-      : "Your own files. Edit them with write/edit; a change applies on your next turn.",
+    "Your own files. Edit them with write/edit; a change applies on your next turn.",
   ];
   let budget = TOTAL_MAX_CHARS;
   for (const entry of CONFIG_FILES) {
@@ -154,13 +151,16 @@ export function composeAgentInstructions(
   }
   if (machine !== null) {
     const where = machine.os === null ? machine.name : `${machine.name} (${machine.os})`;
-    const folder = machine.projectFolder === null ? "" : ", in the project folder,";
-    const shell = machine.shell === null ? "" : `, and their \`command\` runs in \`${machine.shell}\``;
+    const shell = machine.shell === null ? "" : `, and \`command\` runs in \`${machine.shell}\``;
+    const folder =
+      machine.projectFolder === null
+        ? ""
+        : ` This thread belongs to the project folder \`${machine.projectFolder}\` on it.`;
     parts.push(
-      `The user sent this message from ${where}. \`read\`, \`write\`, \`edit\` and \`bash\` act there${folder} ` +
-        `unless \`machine\` names another${shell}. \`agent_read\`, \`agent_write\`, \`agent_edit\` and ` +
-        "`agent_bash` act in your own workspace sandbox; that sandbox is a full Linux environment, so other " +
-        "paths there work too.",
+      `The user sent this message from ${where}. Your file tools act in your own workspace; to work on that ` +
+        `machine, pass \`machine: "${machine.name}"\`${shell}. \`cwd\` names a folder there; without it a ` +
+        `call runs in the machine's home, and no folder carries from one call to the next, so write a ` +
+        `command as \`cd <folder> && <command>\`.${folder}`,
     );
   }
   if (canDelegate) {

@@ -1,15 +1,11 @@
-// The coding tools' three bindings: the plain names with a per-call machine
-// target, the same four renamed and bound to the agent sandbox, and the
-// allowlist filter the agent applies on top of both.
+// The file tools' machine target: one `machine` argument, one environment
+// swap, shared by every tool that reads or writes a file.
 
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { JsonValue } from "@earendil-works/chord";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { MachineTargetError } from "../machines/targets.js";
-
-/** The agent-sandbox tools, in prompt order. */
-export const AGENT_TOOL_NAMES = ["agent_read", "agent_write", "agent_edit", "agent_bash"] as const;
 
 /** The tool API with `env` replaced: pi's tools resolve their environment
  *  through `api.env`, so this is the whole binding. */
@@ -109,8 +105,7 @@ export function withMachineTarget(tool: ToolRegistration, options: MachineTarget
 }
 
 /** The four coding tools with a per-call machine target. Without `machine`
- *  they act on the conversation's own environment: the sandbox, or the
- *  project's machine and folder on a project-bound chat. */
+ *  they act on the conversation's own environment: the agent's workspace. */
 export function createRoutedCodingTools(options: RoutedCodingOptions): ToolRegistration[] {
   return [createReadTool(), createWriteTool(), createEditTool(), createBashTool()].map((tool) =>
     withMachineTarget(tool, {
@@ -124,27 +119,6 @@ export function createRoutedCodingTools(options: RoutedCodingOptions): ToolRegis
         }),
     }),
   );
-}
-
-/** The four coding tools, renamed and bound to `env`. The descriptions say
- *  which environment they act on, so the model can tell them from the
- *  machine-bound `read`/`write`/`edit`/`bash`. */
-export function createAgentWorkspaceTools(env: ExecutionEnv): ToolRegistration[] {
-  const pairs: ReadonlyArray<[string, ToolRegistration]> = [
-    ["agent_read", createReadTool()],
-    ["agent_write", createWriteTool()],
-    ["agent_edit", createEditTool()],
-    ["agent_bash", createBashTool()],
-  ];
-  return pairs.map(([name, tool]) => ({
-    ...tool,
-    name,
-    description:
-      `${tool.description} Runs in your own agent workspace (the sandbox), not on the user's machine. ` +
-      "Pass timeout (seconds) for any command that can block. Keep the workspace small: do not install " +
-      "browsers, desktop apps, models or datasets there, and remove a temporary tree when it is no longer needed.",
-    execute: (args, api, context) => tool.execute(args, withEnv(api, env), context),
-  })) as ToolRegistration[];
 }
 
 /** The direct tool surface for an agent: its allowlist narrows the coding

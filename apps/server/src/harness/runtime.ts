@@ -43,7 +43,7 @@ import type { UsageReports } from "../platform/store/usage.js";
 import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import { machineDispatch, type MachineDispatchHost } from "../machines/dispatch.js";
 import { MachineTargetError, MachineTargets, type MachineFacts } from "../machines/targets.js";
 import { hubMachineFacts } from "../machines/hub-facts.js";
 import type { SandboxTarget } from "../sandbox/client.js";
@@ -312,7 +312,6 @@ export class GuildRuntime {
       agents: this.agents,
       ...(objects === undefined ? {} : { objects }),
       chatOfConversation,
-      machineDispatch: () => this.turns.machineDispatch ?? this.dispatch(),
       skills: () => this.skillsRuntime,
     });
     this.skillsRuntime = new SkillRuntime({
@@ -338,7 +337,6 @@ export class GuildRuntime {
         const label = owner.display_name !== null && owner.display_name !== "" ? owner.display_name : owner.email;
         return { orgId: owner.org_id, userId: owner.user_id, role: owner.role, label };
       },
-      executorKind: (conversationId) => this.executorKind(conversationId),
       conversationEnv: (conversationId, orgId) => this.executors.envFor(conversationId, orgId),
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
@@ -475,7 +473,6 @@ export class GuildRuntime {
       internalKey: config.internalKey,
       allowShellTools: config.allowShellTools,
       chatOfConversation,
-      executorKind: (conversationId) => this.executorKind(conversationId),
       attachments: stores.attachments,
       artifacts: stores.toolArtifacts,
       ...(objects === undefined ? {} : { objects }),
@@ -623,11 +620,6 @@ export class GuildRuntime {
    *  mapping; unmapped conversations — e.g. the root — have none). */
   async chatOfConversation(conversationId: number): Promise<string | null> {
     return this.conversationToChat.get(conversationId) ?? null;
-  }
-
-  /** Where this conversation's tools execute (executors.ts). */
-  executorKind(conversationId: number): Promise<ExecutorKind> {
-    return this.executors.executorKind(conversationId);
   }
 
   /** Removes a conversation's sandbox container (its files stay on the

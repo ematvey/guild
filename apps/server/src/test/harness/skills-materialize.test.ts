@@ -88,7 +88,6 @@ function makeFixture(): Fixture {
     skillReads: undefined,
     chatOfConversation: async () => null,
     chatOwner: async () => null,
-    executorKind: async () => null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
   };
   return { runtime: new SkillRuntime(deps), warns, objects, metas, installs };

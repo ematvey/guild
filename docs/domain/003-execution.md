@@ -86,14 +86,17 @@ Compaction replaces the older context with a summary. It runs automatically, or 
 
 ## Where Tool calls run
 
-| Thread | File and shell tools | Workspace |
+One default, for every Thread: a file tool without `machine` acts on the Agent's own Workspace, in its sandbox. A Project does not change that. The Thread's Machine is a fact the prompt states, not a target: to work on it the call names it.
+
+| Tool | Without `machine` | With `machine` |
 | --- | --- | --- |
-| Not bound to a Project | `read`, `write`, `edit`, `bash` in the Agent's sandbox, on its Workspace | The same tools |
-| Bound to a Project | `read`, `write`, `edit`, `bash` on the Project's Machine, in the Project folder | `agent_read`, `agent_write`, `agent_edit`, `agent_bash` in the sandbox |
+| `read`, `write`, `edit`, `bash` | The Agent's Workspace, in the sandbox | That Machine, in `cwd` |
+| `download` | Writes a file of the Thread into the Workspace | Writes it on that Machine |
+| `send_file` | Reads a file of the Workspace into the Thread | Reads it from that Machine |
 
-**A Machine named per call.** The four coding tools take a `machine` argument: its id, or a label unique among the caller's Machines. The call then runs on that Machine instead of the Thread's own environment, and `cwd` names the folder it runs in. Without `cwd` it runs in the Machine's home directory, read once and kept until the Machine goes offline, and no folder carries from one call to the next, so a command writes `cd <folder> && …`. A Machine the caller did not pair is not addressable, and `cwd` without `machine` is refused. The `machines` prompt section and the `machine_list` tool carry the same list: label, id and live flag.
+**A Machine named per call.** Every file tool takes `machine`: its id, or a label unique among the caller's Machines. The call then runs on that Machine instead of the sandbox, and `cwd` names the folder it runs in. Without `cwd` it runs in the Machine's home directory, read once and kept until the Machine goes offline, and no folder carries from one call to the next, so a command writes `cd <folder> && …`. A Machine the caller did not pair is not addressable, and `cwd` without `machine` is refused. The `machines` prompt section and the `machine_list` tool carry the same list: label, id and live flag.
 
-**The file tools take the same target.** `download` and `send_file` take `machine` and `cwd` with the same meaning, through the same wrapper as the coding tools. `download` reads one file of the Thread out of object storage and writes it into that environment at the path the call names. `send_file` reads one file of that environment and attaches it to the Thread. Without `machine` both act on the Thread's own environment.
+**The target decides the card.** The Approval gate classifies a call by what it names: `machine` present means the call reaches the Member's own computer, and it takes a card; without `machine` the call stays inside the sandbox and takes the batch contract. Because the default really is the sandbox, the classification and the environment agree.
 
 **Sandbox.** One gVisor container per Agent, with the Workspace mounted read-write. It serves every Thread of that Agent, including Threads of different Members. An Agent's sandbox is always on: the idle reaper skips it, and it is stopped only to free capacity. Bytes leave the sandbox only as Attachments or Tool artifacts. The server reads the Workspace without following links, so a link planted inside the sandbox never resolves on the server.
 
@@ -180,5 +183,5 @@ A Turn cut off mid-Step resumes from its last recorded entry. A Tool call cut of
 
 ## Known gaps
 
-- The workspace change journal keys paths without their root. On Project-bound Threads it records `write` on the Machine and misses `agent_write` in the sandbox.
+- The workspace change journal keys paths without their root, so one path written on a Machine and in the sandbox reads as one file.
 - Event sources (webhooks, chat messages) cannot trigger a Routine yet; only time can.

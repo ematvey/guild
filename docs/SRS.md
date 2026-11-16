@@ -91,13 +91,12 @@ via the `sandbox-runner` service: a plain chat gets
 gate both run before execution; `execute` additionally requires the server
 shell flag (`allow_shell_tools`).
 
-A machine-bound chat keeps its sandbox reachable through a second tool set
-(`agent_read`, `agent_write`, `agent_edit`, `agent_bash`), bound to the
-agent sandbox env while the plain names stay on the machine
-(`apps/server/src/harness/agent-tools.ts`). The set is registered per turn,
-outside the agent's tool allowlist, and it counts as server-side for the
-shell allowlist and the batch contract; `toolClass()` maps it to the same
-policy classes as the plain tools.
+Every chat keeps one file-tool set. Without `machine` a call acts on the
+agent's workspace in the sandbox; `machine` names one of the Member's paired
+computers and `cwd` the folder on it
+(`apps/server/src/harness/agent-tools.ts`). A Machine call counts as
+machine-side for the shell allowlist and takes an Approval card; a call
+without `machine` stays inside the sandbox and takes the batch contract.
 
 **SRS-9 — No third executor.**
 The batch workspace executor is removed. Workspace execution belongs to

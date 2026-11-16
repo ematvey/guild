@@ -42,7 +42,7 @@ import { CODING_TOOL_NAMES, type IntegrationsRuntime } from "./integrations.js";
 import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import type { MachineTargets } from "../machines/targets.js";
-import { createAgentWorkspaceTools, createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
+import { createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
 import { composeAgentInstructions, type MachineContext } from "./instructions.js";
 import { shellOf } from "../machines/targets.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
@@ -69,7 +69,7 @@ export interface TurnToolDeps {
   readonly binding: Pick<ThreadBinding, "threadContext" | "spawnedBy">;
   readonly integrations: Pick<IntegrationsRuntime, "prepareTurn">;
   readonly userMcp: Pick<UserMcpRuntime, "prepareTurn">;
-  readonly executors: Pick<ConversationExecutors, "executorKind" | "envFor">;
+  readonly executors: Pick<ConversationExecutors, "envFor">;
   /** The member's paired machines: the per-call environment a coding tool
    *  resolves when the call names one. */
   readonly machines: Pick<MachineTargets, "envFor">;
@@ -93,10 +93,10 @@ export interface TurnToolDeps {
   };
 }
 
-/** The chat-scoped extensions provisioning installs: agent tools, machine
- *  tools, and the agent's own workspace tools. */
-export function chatExtensionNames(chatId: string): [string, string, string] {
-  return [`guild-agent-tools:${chatId}`, `guild-machine-tools:${chatId}`, `guild-agent-workspace-tools:${chatId}`];
+/** The chat-scoped extensions provisioning installs: agent tools and the
+ *  file tools with their per-call machine target. */
+export function chatExtensionNames(chatId: string): [string, string] {
+  return [`guild-agent-tools:${chatId}`, `guild-file-tools:${chatId}`];
 }
 
 export class TurnTools {
@@ -116,19 +116,15 @@ export class TurnTools {
     const prepared = await deps.integrations.prepareTurn(conversationId, chatId, orgId);
     const userPrepared = await deps.userMcp.prepareTurn(conversationId, chatId, orgId, signal);
     const base = deps.base();
-    const machineBound = (await deps.executors.executorKind(conversationId)) === "machine";
     // The agent's allowlist narrows the direct coding and skill tools the
     // same way it narrows integrations. Codemode itself is always present:
     // it is the only path to the script-only tools.
     const allowed = directBaseTools(base.tools, agent);
     const coding = (tool: ToolRegistration): boolean => (CODING_TOOL_NAMES as readonly string[]).includes(tool.name);
-    // A project-bound chat keeps every coding tool, as before; a sandbox
-    // chat keeps the ones the allowlist lets through.
-    const codingSource = machineBound ? base.tools : allowed;
     const baseTools = allowed.filter((tool) => !coding(tool));
     const agentTools = await this.agentTools(chatId);
-    // The plain names carry a per-call `machine` target; without it they act
-    // on the conversation's own environment.
+    // The file tools carry a per-call `machine` target; without it they act
+    // on the conversation's own environment, the agent's workspace.
     const owner = await deps.chats.ownerOf(chatId);
     const routedTools = createRoutedCodingTools({
       chatId,
@@ -136,15 +132,8 @@ export class TurnTools {
       userId: owner?.user_id ?? "",
       envFor: (request) => deps.machines.envFor(request),
     });
-    const codingAllowed = new Set(codingSource.filter(coding).map((tool) => tool.name));
+    const codingAllowed = new Set(allowed.filter(coding).map((tool) => tool.name));
     const machineTools = routedTools.filter((tool) => codingAllowed.has(tool.name));
-    // A project-bound chat runs the plain coding tools on the user's
-    // machine, so the agent gets a second set bound to its own sandbox.
-    // They are outside the allowlist: the workspace is the agent's memory,
-    // not an optional capability.
-    const workspaceTools = machineBound
-      ? createAgentWorkspaceTools(await deps.executors.envFor(conversationId, orgId))
-      : [];
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
     // under a chat-scoped name and listed with the other extensions.
@@ -152,7 +141,6 @@ export class TurnTools {
     const scoped = [
       { name: names[0], tools: agentTools },
       { name: names[1], tools: machineTools },
-      { name: names[2], tools: workspaceTools },
     ].filter((extension) => extension.tools.length > 0);
     for (const extension of scoped) deps.registry.install(extension);
     await conversation.configure(
@@ -164,7 +152,6 @@ export class TurnTools {
           ...prepared.tools,
           ...userPrepared.tools,
           ...agentTools,
-          ...workspaceTools,
         ],
         ...(agent === null
           ? {}

@@ -30,16 +30,11 @@ export function clientToolClass(name: string): string {
     case "read":
       return "read_file";
     case "bash":
-    case "agent_bash":
       return "execute";
     case "write":
-    case "agent_write":
       return "write_file";
     case "edit":
-    case "agent_edit":
       return "edit_file";
-    case "agent_read":
-      return "read_file";
     default:
       return name;
   }

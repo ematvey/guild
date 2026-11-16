@@ -432,7 +432,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(eventsA.some((e) => e.event.type === "turn_error")).toBe(false);
   }, 120_000);
 
-  it("a machine-bound chat dispatches its tool through the IPC proxy to the hub", async () => {
+  it("a call that names a machine dispatches through the IPC proxy to the hub", async () => {
     const platformOf = (): import("../composition.js").PlatformContext =>
       (stack.env.app as unknown as { platform: import("../composition.js").PlatformContext }).platform;
 
@@ -484,9 +484,13 @@ describe("worker-per-chat (fork supervisor)", () => {
     });
     expect(created.statusCode).toBe(200);
     const chatId = (JSON.parse(created.body) as { id: string }).id;
+    await stack.env.db.query("UPDATE chats SET approval=$2 WHERE id=$1", [
+      chatId,
+      JSON.stringify({ default: "full_access" }),
+    ]);
     await platformOf().chats.setMachine(stack.orgId, chatId, machineId, machineId);
     stack.mock.setResponses([
-      { body: toolCallSse("bash", JSON.stringify({ command: "uname -r" })) },
+      { body: toolCallSse("bash", JSON.stringify({ command: "uname -r", machine: machineId, cwd: "/home/dev" })) },
       { body: finalSse("kernel answer") },
     ]);
     const sent = await stack.env.app.inject({
@@ -651,7 +655,7 @@ describe("worker-per-chat (fork supervisor)", () => {
       ]);
       await stack.env.app.platform.chats.setMachine(stack.orgId, chatId, machineId, machineId);
       stack.mock.setResponses([
-        { body: toolCallSse("bash", JSON.stringify({ command: "sleep 30" })) },
+        { body: toolCallSse("bash", JSON.stringify({ command: "sleep 30", machine: machineId, cwd: "/home/dev" })) },
         { body: finalSse("stopped") },
       ]);
       await submit(chatId, "start long command");

@@ -13,12 +13,9 @@ import type { Config } from "../config.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
-import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
-import { chatStager } from "../chats/stage.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
-import { MachineExecutionEnv, type ExecutorKind, type MachineDispatch } from "../machines/dispatch.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import type { AgentRunStore } from "../agents/store.js";
 import { addTurnAttachments, materializeTurnAttachments } from "../chats/attachment-materialize.js";
@@ -29,16 +26,13 @@ export interface ExecutorDeps {
   /** The agent-thread reads (workspace resolution). */
   readonly pool: PlatformPool;
   readonly log: Logger;
-  readonly chats: Pick<ChatStore, "identityOf" | "machineBinding" | "ownerOf">;
+  readonly chats: Pick<ChatStore, "identityOf" | "ownerOf">;
   readonly threads: Pick<ThreadStore, "turnAttachmentIds">;
   readonly attachments: Pick<AttachmentStore, "byIds">;
   readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat"> };
   readonly objects?: ObjectStore;
-  readonly toolArtifacts?: Pick<ToolArtifactStore, "create" | "get" | "listForChat">;
   /** The conversation's chat id (null for unmapped conversations). */
   chatOfConversation(conversationId: number): Promise<string | null>;
-  /** The machine dispatch registry machine-bound chats run through. */
-  machineDispatch(): Pick<MachineDispatch, "dispatch"> | undefined;
   /** The skill runtime (materialization into plain chats' sandboxes). */
   skills(): Pick<SkillRuntime, "materializeIntoSandbox" | "materializeSkill">;
 }
@@ -67,40 +61,11 @@ export class ConversationExecutors {
         : null;
   }
 
-  /** Where this conversation's tools execute — the env factory and the
-   *  approval gate both resolve through this: the chat's bound machine, an
-   *  agent thread's workspace sandbox, or the per-conversation sandbox
-   *  (null: a plain chat, or an unmapped conversation). */
-  async executorKind(conversationId: number): Promise<ExecutorKind> {
-    const chatId = await this.deps.chatOfConversation(conversationId);
-    if (chatId === null) return null;
-    const chat = await this.deps.chats.identityOf(chatId);
-    if (chat === null) return null;
-    if (chat.machine_id !== null) return "machine";
-    return (await this.agentWorkspaceForChat(chat.org_id, chatId)) !== null ? "server" : null;
-  }
-
-  /** The harness env factory: the machine env for a machine-bound chat,
-   *  else the server-side sandbox with the owner's skills and the turn's
-   *  attachments in place. */
+  /** The harness env factory: the server-side sandbox with the owner's
+   *  skills and the turn's attachments in place. A machine is reached by
+   *  naming it on one call, never by the chat's binding. */
   async harnessEnv(conversationId: number): Promise<ExecutionEnv> {
-    const kind = await this.executorKind(conversationId);
     const chatId = await this.deps.chatOfConversation(conversationId);
-    if (kind === "machine") {
-      const dispatch = this.deps.machineDispatch();
-      if (dispatch === undefined) throw new Error("machine-bound chat has no dispatch host");
-      const binding = chatId === null ? null : await this.deps.chats.machineBinding(chatId);
-      if (chatId === null || binding === null) throw new Error("machine-bound chat lost its machine");
-      return new MachineExecutionEnv({
-        machineId: binding.machine_id,
-        orgId: binding.org_id,
-        chatId,
-        workdir: binding.project_folder,
-        timeoutMs: this.deps.config.clientToolTimeoutMs,
-        dispatch,
-        stage: this.stager(binding.org_id, chatId),
-      });
-    }
     if (chatId === null) {
       // Unmapped conversations have no org to sandbox under; only the
       // in-process executor serves them.
@@ -115,18 +80,6 @@ export class ConversationExecutors {
     const env = await this.envFor(conversationId, chat.org_id, { materialize: true });
     await this.materializeAttachmentsForTurn(chatId, chat.org_id, env);
     return env;
-  }
-
-  /** How the machine receives a file the server holds: staged in the chat's
-   *  artifact store, pulled by the machine. */
-  private stager(orgId: string, chatId: string): (bytes: Uint8Array, name: string) => Promise<string> {
-    const { objects, toolArtifacts } = this.deps;
-    if (objects === undefined || toolArtifacts === undefined) {
-      return async () => {
-        throw new Error("this server has no object store to stage files in");
-      };
-    }
-    return chatStager(toolArtifacts as ToolArtifactStore, objects, orgId, chatId);
   }
 
   /** The execution env for a conversation's server-side tools: a runner

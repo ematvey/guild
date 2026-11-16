@@ -35,7 +35,6 @@ import type { MachineRow, MachineStore } from "../platform/store/machines.js";
 import type { SkillStore } from "../platform/store/skills.js";
 import type { MachineRequestResult } from "../hub/index.js";
 import type { TeamStore } from "../platform/store/teams.js";
-import type { ExecutorKind } from "../machines/dispatch.js";
 
 /** The registry's slug shape (registry-manifest validateManifest): every
  *  slug the skill tools touch becomes a path segment. */
@@ -64,7 +63,6 @@ export interface SkillRuntimeDeps {
   chatOwner(chatId: string): Promise<{ orgId: string; userId: string; role: string; label: string } | null>;
   /** Where the conversation's tools execute (machine dispatch vs the
    *  server-side workspace/sandbox). */
-  executorKind(conversationId: number): Promise<ExecutorKind>;
   /** The execution env the conversation's server-side files live in (the
    *  agent-session workspace for executor "server", the per-conversation
    *  sandbox otherwise), rooted at its cwd; the read/push paths read
@@ -707,34 +705,30 @@ export class SkillRuntime {
     const install = await this.deps.skills.byUserAndSlug(orgId, userId, slug);
     const version = install?.pinned_version ?? control.latest_version;
     if (version === null) return this.errorResult(`skill ${slug} has no published version`);
-    let justInstalled = false;
     if (install === null) {
       // An install without a pin follows the latest version, so a later
       // publish reaches this user without a re-install.
       await this.deps.skills.install(orgId, userId, slug, null);
-      justInstalled = true;
       // Best-effort fan-out: the event feeds the activity feed, syncUser
-      // reaches the user's machines, and materialization (executor
-      // "server") drops the files into the current sandbox — a
-      // failure in any of them never blocks the read.
+      // reaches the user's machines, and materialization drops the files
+      // into the current sandbox — a failure in any of them never blocks
+      // the read.
       try {
         await this.deps.events.emit(orgId, "skill.installed", { slug, version, user_id: userId });
       } catch (error) {
         this.deps.log.warn(`skill.installed emit failed: ${(error as Error).message}`);
       }
       await this.syncUser(orgId, userId);
-      if ((await this.deps.executorKind(Number(api.conversationId))) === "server") {
-        try {
-          await this.deps.materialize?.({
-            conversationId: Number(api.conversationId),
-            chatId: id.chatId,
-            orgId,
-            slug,
-            version,
-          });
-        } catch (error) {
-          this.deps.log.warn(`skill materialize failed: ${(error as Error).message}`);
-        }
+      try {
+        await this.deps.materialize?.({
+          conversationId: Number(api.conversationId),
+          chatId: id.chatId,
+          orgId,
+          slug,
+          version,
+        });
+      } catch (error) {
+        this.deps.log.warn(`skill materialize failed: ${(error as Error).message}`);
       }
     }
     const meta = await this.deps.registry.getVersionMeta(orgId, "skill", slug, version);
@@ -796,11 +790,6 @@ export class SkillRuntime {
         parts.push(`Additional files not shown inline (binary, or over the output budget):\n${listed.join("\n")}`);
       }
     }
-    if (justInstalled && (await this.deps.executorKind(Number(api.conversationId))) === "machine") {
-      parts.push(
-        "Note: the skill was just installed — its additional files are still syncing to your machine and may not be readable yet.",
-      );
-    }
     if (control.latest_version !== null && control.latest_version !== version) {
       parts.push(`Note: a newer version (${control.latest_version}) exists — ask the user before updating.`);
     }
@@ -842,10 +831,6 @@ export class SkillRuntime {
     // tombstone check, publishGate (a null item passes = creation allowed,
     // owner becomes the pusher via upsertVersion's create path), and the
     // SKILL.md requirement are the only gates.
-    const executor = await this.deps.executorKind(Number(api.conversationId));
-    if (executor === "machine") {
-      return this.errorResult("pushing from a machine is not available yet");
-    }
     if (this.deps.objects === undefined) {
       return this.errorResult("pushing is unavailable: the object store is not configured");
     }

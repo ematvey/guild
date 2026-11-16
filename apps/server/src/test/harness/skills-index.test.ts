@@ -110,7 +110,6 @@ function fakeDeps(options: FakeOptions): SkillRuntimeDeps {
     skillReads: undefined,
     chatOfConversation: async () => "chat-1",
     chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member", label: "Member" }),
-    executorKind: async () => null,
     conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
   };
 }
@@ -223,7 +222,6 @@ function extensionDeps(skillRuntime: SkillRuntime | undefined, orgId: string | n
     internalKey: null,
     allowShellTools: false,
     chatOfConversation: async () => "chat-1",
-    executorKind: async () => null,
     currentModel: async () => null,
     orgProfile: async () => ({ name: "Skill Test Org", prompt: null }),
     orgOfConversation: async () => orgId,
