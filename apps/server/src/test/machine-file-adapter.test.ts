@@ -45,9 +45,13 @@ function engine(dir: string, opts: { legacy?: boolean } = {}): { dispatch: Dispa
           } catch {
             return reply({ exists: false });
           }
-        case "write_file":
-          writeFileSync(file, args.content ?? "");
+        case "write_file": {
+          // As the engine does: `encoding: base64` means the content is bytes.
+          const { encoding } = call.args as { encoding?: string };
+          const content = args.content ?? "";
+          writeFileSync(file, encoding === "base64" ? Buffer.from(content, "base64") : content);
           return reply(`wrote to ${file}`);
+        }
         default:
           return reply(`invalid input: unknown tool ${call.name}`, true);
       }
@@ -67,10 +71,54 @@ afterEach(() => {
 });
 
 function env(dir: string, dispatch: Dispatch): MachineExecutionEnv {
-  return new MachineExecutionEnv({ machineId: "m", orgId: "o", chatId: "c", workdir: dir, timeoutMs: 1000, dispatch });
+  return new MachineExecutionEnv({
+    machineId: "m",
+    orgId: "o",
+    chatId: "c",
+    workdir: dir,
+    timeoutMs: 1000,
+    dispatch,
+    binaryWrites: true,
+  });
 }
 
 describe("machine file adapter", () => {
+  it("writes bytes as base64 when the client decodes them", async () => {
+    const dir = scratch();
+    const { dispatch, calls } = engine(dir);
+    const env = new MachineExecutionEnv({
+      machineId: "m",
+      orgId: "o",
+      chatId: "c",
+      workdir: dir,
+      timeoutMs: 1000,
+      dispatch,
+      binaryWrites: true,
+    });
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
+    const written = await env.writeFile(path.join(dir, "report.pdf"), bytes, BACKGROUND_CONTEXT);
+    expect(written.ok).toBe(true);
+    expect(calls).toContain("write_file");
+    expect([...readFileSync(path.join(dir, "report.pdf"))]).toEqual([...bytes]);
+  });
+
+  it("refuses a binary write to a client that would save the base64 text", async () => {
+    const dir = scratch();
+    const { dispatch } = engine(dir);
+    const env = new MachineExecutionEnv({
+      machineId: "m",
+      orgId: "o",
+      chatId: "c",
+      workdir: dir,
+      timeoutMs: 1000,
+      dispatch,
+      binaryWrites: false,
+    });
+    const written = await env.writeFile(path.join(dir, "report.pdf"), new Uint8Array([0x25, 0x50]), BACKGROUND_CONTEXT);
+    expect(written.ok).toBe(false);
+    expect(written.ok ? "" : written.error.message).toContain("cannot receive binary files");
+  });
+
   it("reads large CRLF text without a trailing newline exactly, and an edit writes it back whole", async () => {
     const dir = scratch();
     const lines = Array.from({ length: 5000 }, (_, i) => `line ${i} — padded so the file is well past 64 KB`);

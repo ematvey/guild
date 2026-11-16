@@ -16,7 +16,12 @@ import type { AttachmentStore } from "../platform/store/attachments.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
-import { MachineExecutionEnv, type ExecutorKind, type MachineDispatch } from "../machines/dispatch.js";
+import {
+  binaryWritesSupported,
+  MachineExecutionEnv,
+  type ExecutorKind,
+  type MachineDispatch,
+} from "../machines/dispatch.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import type { AgentRunStore } from "../agents/store.js";
 import { addTurnAttachments, materializeTurnAttachments } from "../chats/attachment-materialize.js";
@@ -95,6 +100,7 @@ export class ConversationExecutors {
         workdir: binding.project_folder,
         timeoutMs: this.deps.config.clientToolTimeoutMs,
         dispatch,
+        binaryWrites: binaryWritesSupported(binding.app_version),
       });
     }
     if (chatId === null) {

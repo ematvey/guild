@@ -259,6 +259,32 @@ function shellQuote(arg: string): string {
   return `"${arg.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
 }
 
+/** The first client release whose `write_file` decodes a base64 `content`.
+ *  Below it, a binary write is refused: the client would save the base64
+ *  text. */
+export const BINARY_WRITE_VERSION = "0.6.106";
+
+/** Whether a machine's client release can take bytes over the link. An
+ *  unknown or unparseable version cannot. */
+export function binaryWritesSupported(appVersion: string | null): boolean {
+  if (appVersion === null) return false;
+  const parse = (v: string): number[] =>
+    v
+      .split("-")[0]!
+      .split(".")
+      .map((p) => Number(p));
+  const have = parse(appVersion);
+  const need = parse(BINARY_WRITE_VERSION);
+  for (let i = 0; i < need.length; i++) {
+    const a = have[i] ?? 0;
+    const b = need[i] ?? 0;
+    if (!Number.isFinite(a)) return false;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
 export interface MachineEnvOptions {
   machineId: string;
   orgId: string;
@@ -268,6 +294,10 @@ export interface MachineEnvOptions {
   workdir: string | null;
   timeoutMs: number;
   dispatch: Pick<MachineDispatch, "dispatch">;
+  /** The machine's client can receive bytes (a base64 `write_file`). An
+   *  older client would write the base64 text itself, so a binary write to
+   *  it is refused instead. */
+  binaryWrites: boolean;
 }
 
 /** An ExecutionEnv whose file/shell operations run on the chat's bound
@@ -448,10 +478,22 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   async writeFile(p: string, content: string | Uint8Array, _context: Context): Promise<Result<void, FileError>> {
-    if (typeof content !== "string") {
-      return fileErr("not_supported", "binary writes are not supported over machine dispatch", p);
+    // Bytes a text frame cannot carry (a downloaded PDF, an image) ride
+    // base64; the machine decodes them into the same file. A client that
+    // predates the decoding would write the base64 text itself, so the
+    // write is refused rather than corrupted.
+    if (typeof content !== "string" && !this.options.binaryWrites) {
+      return fileErr(
+        "not_supported",
+        `this machine's Guild client cannot receive binary files; update it on ${this.options.machineId} to ${BINARY_WRITE_VERSION} or newer`,
+        p,
+      );
     }
-    const outcome = await this.runTool("write_file", { path: p, content }, _context);
+    const args =
+      typeof content === "string"
+        ? { path: p, content }
+        : { path: p, content: Buffer.from(content).toString("base64"), encoding: "base64" };
+    const outcome = await this.runTool("write_file", args, _context);
     if (outcome.is_error) return fileErr("unknown", outcome.content, p);
     return ok(undefined);
   }

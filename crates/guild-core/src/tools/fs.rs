@@ -592,8 +592,17 @@ impl Tool for WriteFile {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| ToolFailure::InvalidInput("missing content".into()))?;
-        write_bytes(&path, content.as_bytes()).await?;
-        let n = content.len();
+        // `encoding: base64` carries bytes a text file cannot: a downloaded
+        // PDF, an image. Text stays text.
+        let bytes = if args["encoding"].as_str() == Some("base64") {
+            base64::engine::general_purpose::STANDARD
+                .decode(content)
+                .map_err(|e| ToolFailure::InvalidInput(format!("content is not valid base64: {e}")))?
+        } else {
+            content.as_bytes().to_vec()
+        };
+        write_bytes(&path, &bytes).await?;
+        let n = bytes.len();
         Ok(ToolOutcome {
             images: Vec::new(),
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
@@ -616,6 +625,38 @@ mod tests {
         let mut s = format!(r"\\wsl.localhost\TestDistro\{}", tmp.display());
         s.push_str(rest);
         PathBuf::from(s)
+    }
+
+    #[test]
+    fn write_file_base64_writes_the_bytes_a_text_frame_cannot_carry() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("guild-write-b64-{}", std::process::id()));
+            tokio::fs::create_dir_all(&dir).await.unwrap();
+            // A PDF header: bytes a JSON string would mangle.
+            let bytes: Vec<u8> = vec![0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x00, 0xff];
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let out = WriteFile
+                .run(
+                    &dir,
+                    serde_json::json!({ "path": "in/report.pdf", "content": encoded, "encoding": "base64" }),
+                )
+                .await
+                .unwrap();
+            assert!(out.output_for_model.contains("wrote 10 bytes"));
+            let written = tokio::fs::read(dir.join("in/report.pdf")).await.unwrap();
+            assert_eq!(written, bytes);
+            // Text stays text.
+            WriteFile
+                .run(&dir, serde_json::json!({ "path": "notes.txt", "content": "hi" }))
+                .await
+                .unwrap();
+            assert_eq!(
+                tokio::fs::read(dir.join("notes.txt")).await.unwrap(),
+                b"hi".to_vec()
+            );
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        });
     }
 
     #[test]

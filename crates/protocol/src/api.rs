@@ -766,10 +766,15 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "write_file",
-            "Create a file or overwrite it with `content`. Parent directories are created automatically.",
+            "Create a file or overwrite it with `content`. Parent directories are created automatically. Set `encoding` to `base64` when `content` is base64-encoded bytes rather than text.",
             serde_json::json!({
                 "path": str_prop,
-                "content": str_prop
+                "content": str_prop,
+                "encoding": {
+                    "type": "string",
+                    "enum": ["base64"],
+                    "description": "How `content` encodes the bytes. Omitted: UTF-8 text."
+                }
             }),
             &["path", "content"],
         ),
