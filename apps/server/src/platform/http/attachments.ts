@@ -1,6 +1,7 @@
 // Attachment endpoints:
 // upload bytes into object storage and reference them from a chat.
 
+import type { Readable } from "node:stream";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import type { InfraContext } from "../route-contexts.js";
@@ -84,7 +85,7 @@ export function registerAttachmentRoutes(
       verifyPreviewLink(ctx.config.jwtSecret, "attachment", id, signed);
       const row = await ctx.attachments.getById(id);
       const key = attachmentObjectKey(row.org_id, row.id, row.filename);
-      return previewReply(reply, await infra.objects.get(key), row);
+      return previewReply(reply, await infra.objects.getStream(key), row);
     }
     const user = await requireUser(ctx, req);
     const row = await ctx.attachments.get(user.org_id, id);
@@ -92,9 +93,9 @@ export function registerAttachmentRoutes(
     // scoping alone would let a member pull another member's uploads.
     await chats.getChat(user.org_id, row.chat_id, user);
     const key = attachmentObjectKey(row.org_id, row.id, row.filename);
-    let bytes: Buffer;
+    let bytes: Readable;
     try {
-      bytes = await infra.objects.get(key);
+      bytes = await infra.objects.getStream(key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }

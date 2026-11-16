@@ -29,9 +29,7 @@ export function registerAccessRoutes(
   // read them, and whether the viewer may change them.
   app.get("/api/v1/access/:kind/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = parseAccessKind(
-      (req.params as Record<string, string>)["kind"],
-    );
+    const kind = parseAccessKind((req.params as Record<string, string>)["kind"]);
     const id = parseUuidParam(req, "id");
     const level = await guards[kind].level(user, id);
     if (level === null) throw ApiError.notFound(`no such ${kind}`);
@@ -46,9 +44,7 @@ export function registerAccessRoutes(
   // is the item's `visibility`; the rest are named Members and Teams.
   app.put("/api/v1/access/:kind/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const kind = parseAccessKind(
-      (req.params as Record<string, string>)["kind"],
-    );
+    const kind = parseAccessKind((req.params as Record<string, string>)["kind"]);
     const id = parseUuidParam(req, "id");
     await guards[kind].manage(user, id);
     await access.replace(user.org_id, kind, id, parseAccessInput(req.body));

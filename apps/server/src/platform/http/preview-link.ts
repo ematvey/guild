@@ -4,6 +4,7 @@
 // the bytes sets its own sandboxing policy, so the framed page runs with an
 // opaque origin and cannot touch this app's storage or DOM.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import type { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import type { AttachmentStore } from "../store/attachments.js";
 import type { ChatsCtx, IdentityCtx } from "../route-contexts.js";
@@ -47,7 +48,7 @@ export function verifyPreviewLink(secret: string, kind: PreviewKind, id: string,
  *  blob and the page keeps its own resource policy. */
 export function previewReply(
   reply: { status: (code: number) => any },
-  bytes: Buffer,
+  bytes: Buffer | Readable,
   row: { filename: string; content_type: string },
 ): unknown {
   return reply

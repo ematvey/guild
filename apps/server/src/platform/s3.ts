@@ -1,6 +1,7 @@
 // S3-compatible object storage client (rustfs/MinIO; spec §4.4/§4.9): same
 // object keys, same put/get/delete surface across the eras.
 
+import type { Readable } from "node:stream";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export class ObjectStore {
@@ -24,11 +25,21 @@ export class ObjectStore {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: bytes }));
   }
 
-  async get(key: string): Promise<Buffer> {
+  /** The object's bytes as a stream. A download route pipes this into its
+   *  response, so a large file never sits whole in this process. */
+  async getStream(key: string): Promise<Readable> {
     const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const body = res.Body;
+    if (body === undefined) throw new Error(`${key}: object has no body`);
+    return body as Readable;
+  }
+
+  /** The object's bytes whole. For callers that parse them — a bundle, a
+   *  media reference — never for a download route. */
+  async get(key: string): Promise<Buffer> {
+    const stream = await this.getStream(key);
     const chunks: Buffer[] = [];
-    // @ts-expect-error Body is a Readable in the Node runtime.
-    for await (const chunk of res.Body) chunks.push(chunk as Buffer);
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
     return Buffer.concat(chunks);
   }
 

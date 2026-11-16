@@ -1,3 +1,13 @@
+## 0.6.109 — downloads stream, they do not buffer
+
+The byte routes read the whole object into a `Buffer` before replying, so a
+download held the file twice in the server process. `ObjectStore.getStream`
+returns the SDK body as a `Readable`; every download route pipes it —
+attachments, tool artifacts, releases, registry bundles. `get` keeps its
+whole-buffer form for the callers that parse the bytes (a bundle, a media
+reference, a file written into an env), and it is now built on `getStream`,
+so one read path remains.
+
 ## 0.6.108 — a file reaches a machine as a reference, never as bytes
 
 `write_file` is the model's tool: the model writes text it produced. It

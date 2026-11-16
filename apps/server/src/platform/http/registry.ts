@@ -4,6 +4,7 @@
 // disabled MCP-plugin integration row (routines are dropped — 2026-10-04
 // decision: the feature is out of scope, automation bundles are rejected).
 
+import type { Readable } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
@@ -157,9 +158,9 @@ export function registerRegistryRoutes(
         throw ApiError.forbidden("only the approved version can be installed");
       }
     }
-    let bytes: Buffer;
+    let bytes: Readable;
     try {
-      bytes = await objects.get(stored.object_key);
+      bytes = await objects.getStream(stored.object_key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }

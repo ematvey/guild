@@ -17,7 +17,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.6.108"
+version = "0.6.109"
 license = "Apache-2.0"
 
 [workspace.dependencies]

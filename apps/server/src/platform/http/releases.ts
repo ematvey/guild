@@ -3,6 +3,7 @@
 // updater manifest. Artifacts are ed25519-signed over the sha256 digest so
 // downloads are verifiable offline.
 
+import type { Readable } from "node:stream";
 import {
   createHmac,
   createPrivateKey,
@@ -297,9 +298,9 @@ export function registerReleaseRoutes(
     }
     const releaseRow: ReleaseRow = await gateway.releases.get(id);
     const key = objectKey(releaseRow.version, releaseRow.kind, releaseRow.platform, releaseRow.id, releaseRow.filename);
-    let bytes: Buffer;
+    let bytes: Readable;
     try {
-      bytes = await objects.get(key);
+      bytes = await objects.getStream(key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }
