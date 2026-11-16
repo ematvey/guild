@@ -1,3 +1,21 @@
+## 0.6.113 — HubSpot analytics reach the agent
+
+The HubSpot integration read the CRM and nothing else: a question about page
+visits, form submissions or which source brought the contacts had no tool, so
+the agent answered from CRM records or not at all.
+
+The legacy Analytics API is three report families behind one parameter set —
+hosted content, session breakdowns, object engagement — so one read tool,
+`get_analytics`, names all three in its `report` enum. It returns the range
+totals plus one row per breakdown value, paged by `offset`, and the rows carry
+the metric names themselves, so the model reads which metrics a family holds
+from the answer instead of a hard-coded list. `list_analytics_views` names the
+saved views a call passes as `view_id`; `analytics_exists` answers whether an
+object type is tracked at all.
+
+Scope: the analytics endpoints need `business-intelligence`. The README names
+it, and a 403 now points at it.
+
 ## 0.6.112 — the Windows window draws no title bar
 
 The Windows client drew a 32 px strip: the app name at the left, the three

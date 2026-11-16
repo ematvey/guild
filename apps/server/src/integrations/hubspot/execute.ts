@@ -38,6 +38,43 @@ function displayProps(object: string): string[] {
   return DISPLAY_PROPS[object] ?? [];
 }
 
+/** The report families of the legacy Analytics API
+ *  (`/analytics/v2/reports/{report}/{period}`): hosted content, session
+ *  breakdowns, and object engagement. The three documentation pages share
+ *  one parameter set, so one tool names all of them. */
+export const ANALYTICS_REPORTS = [
+  "totals",
+  "sessions",
+  "sources",
+  "geolocation",
+  "utm-campaigns",
+  "utm-contents",
+  "utm-mediums",
+  "utm-sources",
+  "utm-terms",
+  "landing-pages",
+  "standard-pages",
+  "blog-posts",
+  "listing-pages",
+  "knowledge-articles",
+  "pages",
+  "forms",
+  "event-completions",
+  "social-assists",
+] as const;
+
+/** How an analytics report groups the range. `summarize/*` returns the same
+ *  rows plus a summary row per bucket. */
+export const ANALYTICS_PERIODS = [
+  "total",
+  "daily",
+  "weekly",
+  "monthly",
+  "summarize/daily",
+  "summarize/weekly",
+  "summarize/monthly",
+] as const;
+
 /** An object type as a request path segment: HubSpot's ids are letters,
  *  digits, `_` and `-` (`p148247336_subscriptions`, `2-12345`). */
 function objectSegment(value: unknown, tool: string): string {
@@ -51,6 +88,21 @@ function objectSegment(value: unknown, tool: string): string {
 function stringList(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   return value.every((item) => typeof item === "string") ? (value as string[]) : null;
+}
+
+/** One value the call names, checked against the fixed list the tool
+ *  declares: the report and period reach the request path. */
+function oneOf(value: unknown, allowed: readonly string[], name: string, tool: string): string {
+  if (typeof value === "string" && allowed.includes(value)) return value;
+  throw new Error(`${tool} requires ${name}: one of ${allowed.join(", ")}`);
+}
+
+/** A range bound as HubSpot reads it: eight digits, YYYYMMDD. */
+function dayArg(value: unknown, name: string, tool: string): string {
+  if (typeof value !== "string" || !/^\d{8}$/.test(value)) {
+    throw new Error(`${tool} requires ${name} as YYYYMMDD`);
+  }
+  return value;
 }
 
 function recordId(value: unknown, tool: string): string {
@@ -282,6 +334,109 @@ async function hubspotPipelines(base: string, token: string, args: JsonObject): 
   return { content, meta: { card: "crm", kind: "pipelines", object, count: pipelines.length } };
 }
 
+// ---------- analytics ----------
+
+/** One metric row as `key=value` pairs; the row's own label is printed by
+ *  the caller. */
+function metrics(row: JsonObject): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(row)) {
+    if (key === "breakdown") continue;
+    if (typeof value === "number") parts.push(`${key}=${value}`);
+    else if (typeof value === "string" && value !== "") parts.push(`${key}=${value}`);
+  }
+  return parts.join(" ");
+}
+
+/** One legacy Analytics API report: the range totals plus one row per
+ *  breakdown value, paged by offset. */
+async function hubspotAnalytics(base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
+  const report = oneOf(args["report"], ANALYTICS_REPORTS, "report", "get_analytics");
+  const period = oneOf(args["period"], ANALYTICS_PERIODS, "period", "get_analytics");
+  const start = dayArg(args["start"], "start", "get_analytics");
+  const end = dayArg(args["end"], "end", "get_analytics");
+  const params = new URLSearchParams({ start, end });
+  const drilldown = stringList(args["drilldown"]);
+  if (drilldown !== null) {
+    params.set("d1", drilldown[0]);
+    if (drilldown[1] !== undefined) params.set("d2", drilldown[1]);
+  }
+  for (const value of stringList(args["filter"]) ?? []) params.append("f", value);
+  for (const value of stringList(args["exclude"]) ?? []) params.append("e", value);
+  const view = args["view_id"];
+  if (typeof view === "number" && Number.isFinite(view)) params.set("filterId", String(Math.trunc(view)));
+  if (typeof args["sort"] === "string" && args["sort"] !== "") params.set("sort", args["sort"]);
+  const dir = args["sort_dir"];
+  if (dir === "ASC" || dir === "DESC") params.set("sortDir", dir);
+  const limit = clampNumber(args, "limit", 25, 350);
+  params.set("limit", String(limit));
+  const offset = typeof args["offset"] === "number" && Number.isFinite(args["offset"])
+    ? Math.max(0, Math.trunc(args["offset"]))
+    : 0;
+  if (offset > 0) params.set("offset", String(offset));
+  // `summarize/daily` is two path segments in HubSpot's own route.
+  const periodPath = period.split("/").map(pathSegment).join("/");
+  const parsed = await crm(
+    base,
+    token,
+    "GET",
+    `/analytics/v2/reports/${pathSegment(report)}/${periodPath}?${params.toString()}`,
+  );
+  const totals = (parsed["totals"] ?? {}) as JsonObject;
+  const raw = parsed["breakdowns"];
+  const rows = Array.isArray(raw) ? (raw as JsonObject[]) : [];
+  const total = typeof parsed["total"] === "number" ? parsed["total"] : rows.length;
+  const lines = [`${report}/${period} ${start}-${end}: ${rows.length} of ${total} rows`];
+  const totalsLine = metrics(totals);
+  if (totalsLine !== "") lines.push(`totals: ${totalsLine}`);
+  for (const [i, row] of rows.slice(0, limit).entries()) {
+    const label = typeof row["breakdown"] === "string" && row["breakdown"] !== "" ? row["breakdown"] : `row ${offset + i + 1}`;
+    lines.push(`${i + 1}. ${label}: ${metrics(row)}`);
+  }
+  if (rows.length === 0) lines.push("No rows for this report and range.");
+  const next = offset + rows.length;
+  if (total > next) lines.push(`More rows: call again with offset=${next}.`);
+  return {
+    content: lines.join("\n"),
+    meta: { card: "crm", kind: "analytics", report, period, start, end, total, offset },
+  };
+}
+
+/** The org's saved Analytics views: the id `get_analytics` takes as
+ *  `view_id`, and the filters each view holds. */
+async function hubspotAnalyticsViews(base: string, token: string): Promise<ToolOutcome> {
+  const parsed = await crm(base, token, "GET", "/analytics/v2/views");
+  const raw: unknown = parsed;
+  const rows = Array.isArray(raw)
+    ? (raw as JsonObject[])
+    : Array.isArray(parsed["results"])
+      ? (parsed["results"] as JsonObject[])
+      : [];
+  const views = rows.map((row) => ({
+    id: typeof row["id"] === "number" ? row["id"] : null,
+    title: typeof row["title"] === "string" ? row["title"] : "",
+    filters: Array.isArray(row["reportPropertyFilters"]) ? (row["reportPropertyFilters"] as JsonObject[]).length : 0,
+  }));
+  let content = views
+    .map((v, i) => `${i + 1}. id=${v.id ?? "?"} "${v.title}"${v.filters === 0 ? "" : ` filters=${v.filters}`}`)
+    .join("\n");
+  if (content === "") content = "No saved Analytics views.";
+  return { content, meta: { card: "crm", kind: "analytics", views: views.length } };
+}
+
+/** Whether HubSpot tracks analytics for one object type. */
+async function hubspotAnalyticsExists(base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
+  const object = objectSegment(args["object_type"], "analytics_exists");
+  const parsed = await crm(base, token, "GET", `/analytics/v2/reports/${object}/exists`);
+  const exists = parsed["exists"] === true;
+  return {
+    content: exists
+      ? `${object}: HubSpot has analytics data for this object type.`
+      : `${object}: no analytics data for this object type.`,
+    meta: { card: "crm", kind: "analytics", object, exists },
+  };
+}
+
 // ---------- write ----------
 
 async function hubspotCreate(base: string, token: string, args: JsonObject): Promise<ToolOutcome> {
@@ -356,6 +511,12 @@ export async function hubspotExecute(
       return hubspotProperties(base, token, args);
     case "list_pipelines":
       return hubspotPipelines(base, token, args);
+    case "get_analytics":
+      return hubspotAnalytics(base, token, args);
+    case "list_analytics_views":
+      return hubspotAnalyticsViews(base, token);
+    case "analytics_exists":
+      return hubspotAnalyticsExists(base, token, args);
     case "create_object":
       return hubspotCreate(base, token, args);
     case "update_object":

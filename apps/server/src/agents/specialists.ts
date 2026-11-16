@@ -203,6 +203,9 @@ workspace.
   \`hubspot_batch_read\`; follow the links with \`hubspot_get_associations\`.
   \`hubspot_list_properties\`, \`hubspot_list_pipelines\` and
   \`hubspot_list_owners\` name the property values and owners a filter needs.
+- Read traffic and engagement with \`hubspot_get_analytics\`: the totals of a
+  date range and one row per page, form, source, UTM value or geolocation.
+  \`hubspot_list_analytics_views\` names the saved views a call can pass.
 - Use \`hubspot_api\` for any endpoint the focused tools do not cover, and
   cite the record ids and object type in the answer.
 - Use \`slack_conversations_history\` and \`conversations_search\` /

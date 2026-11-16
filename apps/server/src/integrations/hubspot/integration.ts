@@ -3,7 +3,7 @@ import { PROBE_TIMEOUT_MS, probe } from "@guild/integration-sdk";
 import { fetchTimeout } from "../shared.js";
 import type { JsonObject } from "../shared.js";
 import type { IntegrationPlugin } from "@guild/integration-sdk";
-import { hubspotExecute } from "./execute.js";
+import { hubspotExecute, ANALYTICS_PERIODS, ANALYTICS_REPORTS } from "./execute.js";
 import { apiTool } from "@guild/integration-sdk";
 
 /** One CRM search filter. Values are strings: HubSpot compares property
@@ -90,14 +90,16 @@ const plugin: IntegrationPlugin = {
   manifest: {
     name: "hubspot",
     title: "HubSpot",
-    version: "2.0.0",
+    version: "2.1.0",
     publisher: "Guild",
-    summary: "HubSpot CRM: search, read, create, update and delete any object",
+    summary: "HubSpot CRM: search, read, create, update and delete any object, plus Analytics",
     description:
       "Adds the CRM to chats. Search contacts, companies, deals, tickets and any " +
       "other object type with the HubSpot v3 search API — free text, property " +
       "filters, ranges, sorting, paging — read one record or a hundred, follow " +
       "associations, and read the owners, properties and pipelines a query needs. " +
+      "Read the legacy Analytics API: range totals and one row per page, form, " +
+      "source, UTM value or geolocation, and the saved views that filter it. " +
       "Create, update and delete records of any object type; the raw API tool stays " +
       "for the endpoints these tools do not cover.\n\n" +
       "Access uses one private-app token. The token decides which objects and " +
@@ -240,6 +242,80 @@ const plugin: IntegrationPlugin = {
           "List the pipelines and stages of one object type (deals, tickets), with the stage ids a " +
           "stage filter needs. Reads only.",
         parameters: objectTypeParameter("deals, tickets, or another pipelined object type"),
+      },
+      {
+        name: "get_analytics",
+        class: "read" as const,
+        description:
+          "Read HubSpot's legacy Analytics API for one date range: the totals of the range and one " +
+          "row per page, form, social asset, source, UTM value, geolocation or session. `report` picks " +
+          "the family and `period` the grouping; the rows carry the metric names (visits, rawViews, " +
+          "contacts, submissions, bounceRate, timePerSession …) and `totals` sums the whole range. " +
+          "Page with `offset`. Needs the business-intelligence scope. Reads only.",
+        parameters: {
+          type: "object",
+          properties: {
+            report: {
+              type: "string",
+              enum: [...ANALYTICS_REPORTS],
+              description:
+                "Which report: hosted content (landing-pages, standard-pages, blog-posts, " +
+                "listing-pages, knowledge-articles), session breakdowns (totals, sessions, sources, " +
+                "geolocation, utm-campaigns, utm-contents, utm-mediums, utm-sources, utm-terms), or " +
+                "object engagement (pages, forms, event-completions, social-assists)",
+            },
+            period: {
+              type: "string",
+              enum: [...ANALYTICS_PERIODS],
+              description:
+                "How the rows group the range: total (one row per asset for the whole range), " +
+                "daily/weekly/monthly (one row per asset per bucket), summarize/* (the same plus a " +
+                "summary row)",
+            },
+            start: { type: "string", description: "Range start as YYYYMMDD, e.g. 20260901" },
+            end: { type: "string", description: "Range end as YYYYMMDD, inclusive" },
+            drilldown: {
+              type: "array",
+              items: { type: "string" },
+              description: "One or two values that drill into the report, in order (d1, d2)",
+            },
+            filter: {
+              type: "array",
+              items: { type: "string" },
+              description: "Keep only these breakdown values, e.g. [\"/pricing\"]",
+            },
+            exclude: {
+              type: "array",
+              items: { type: "string" },
+              description: "Drop these breakdown values",
+            },
+            view_id: {
+              type: "number",
+              description: "An Analytics view id from list_analytics_views; its saved filters apply",
+            },
+            sort: { type: "string", description: "Metric to sort the rows by, e.g. visits" },
+            sort_dir: { type: "string", enum: ["ASC", "DESC"], description: "Default DESC" },
+            limit: { type: "number", description: "1-350 rows, default 25" },
+            offset: { type: "number", description: "Rows to skip; the `More rows` line gives the next value" },
+          },
+          required: ["report", "period", "start", "end"],
+        },
+      },
+      {
+        name: "list_analytics_views",
+        class: "read" as const,
+        description:
+          "List the org's saved HubSpot Analytics views: the id get_analytics takes as `view_id`, and " +
+          "the filters each view holds. Reads only.",
+        parameters: { type: "object", properties: {} },
+      },
+      {
+        name: "analytics_exists",
+        class: "read" as const,
+        description:
+          "Check whether HubSpot has analytics data for one object type, e.g. a custom object. " +
+          "Reads only.",
+        parameters: objectTypeParameter("The object type id, e.g. pages or p148247336_subscriptions"),
       },
       {
         name: "create_object",

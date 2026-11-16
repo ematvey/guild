@@ -335,6 +335,43 @@ function route(
       }),
     };
   }
+  if (p === "/analytics/v2/reports/pages/total") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        offset: 0,
+        total: 3,
+        totals: { rawViews: 40, visits: 30, contacts: 2 },
+        breakdowns: [
+          { breakdown: "/pricing", rawViews: 25, visits: 20, contacts: 2 },
+          { breakdown: "/blog", rawViews: 15, visits: 10, contacts: 0 },
+        ],
+      }),
+    };
+  }
+  if (p === "/analytics/v2/reports/sessions/summarize/daily") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        offset: 0,
+        total: 1,
+        totals: { visits: 30 },
+        breakdowns: [{ breakdown: "2026-10-01", visits: 30 }],
+      }),
+    };
+  }
+  if (p === "/analytics/v2/reports/pages/exists") {
+    return { status: 200, body: JSON.stringify({ exists: true }) };
+  }
+  if (p === "/analytics/v2/views") {
+    return {
+      status: 200,
+      body: JSON.stringify([
+        { id: 12, title: "Pricing pages", reportPropertyFilters: [{ property: "path" }] },
+        { id: 13, title: "Blog" },
+      ]),
+    };
+  }
   // Langfuse.
   if (p === "/api/public/traces") {
     return {
@@ -1062,6 +1099,88 @@ describe("connector execute spot checks (mock backend)", () => {
       null,
     );
     expect(out.content).toBe("deals 900 deleted.");
+  });
+
+  it("hubspot get_analytics passes the range, the filters and the paging", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_analytics",
+      { report: "pages", period: "total", start: "20261001", end: "20261031", filter: ["/pricing"], limit: 1 },
+      [["token", "hs-1"]],
+      null,
+    );
+    const hit = lastHit("/analytics/v2/reports/pages/total");
+    expect(hit.headers["authorization"]).toBe("Bearer hs-1");
+    expect(hit.query.get("start")).toBe("20261001");
+    expect(hit.query.get("end")).toBe("20261031");
+    expect(hit.query.getAll("f")).toEqual(["/pricing"]);
+    expect(out.content).toContain("totals: rawViews=40 visits=30 contacts=2");
+    expect(out.content).toContain("1. /pricing: rawViews=25 visits=20 contacts=2");
+    expect(out.content).toContain("More rows: call again with offset=2.");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "analytics", report: "pages", total: 3 });
+  });
+
+  it("hubspot get_analytics keeps the summarize period as two path segments", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_analytics",
+      { report: "sessions", period: "summarize/daily", start: "20261001", end: "20261002" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("sessions/summarize/daily 20261001-20261002: 1 of 1 rows");
+    expect(out.content).toContain("1. 2026-10-01: visits=30");
+  });
+
+  it("hubspot get_analytics refuses a report outside the Analytics API", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        "get_analytics",
+        { report: "contacts", period: "total", start: "20261001", end: "20261031" },
+        [["token", "hs-1"]],
+        null,
+      ),
+    ).rejects.toThrow("requires report");
+  });
+
+  it("hubspot list_analytics_views names the view ids and their filters", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_analytics_views",
+      {},
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain('1. id=12 "Pricing pages" filters=1');
+    expect(out.content).toContain('2. id=13 "Blog"');
+  });
+
+  it("hubspot analytics_exists answers for one object type", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "analytics_exists",
+      { object_type: "pages" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("pages: HubSpot has analytics data for this object type.");
+    expect(out.meta).toMatchObject({ exists: true });
   });
 
   it("langfuse list_traces uses the basic auth pair", async () => {
