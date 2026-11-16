@@ -36,16 +36,12 @@ export const TOP_ROW = "h-11";
 
 /** Right padding of a first row that reaches the window's right edge: the box
  *  the Windows caption buttons occupy, so no control sits under them. */
-export const CAPTION_BUTTONS_INSET = CUSTOM_TITLE_BAR ? "pr-[138px]" : "";
+export const CAPTION_BUTTONS_INSET = CUSTOM_TITLE_BAR ? "pr-[138px]!" : "";
 
 /** Spread onto a column or a full-page surface so its top band moves the
  *  window. Children keep their own clicks. */
 export const titleBarDrag: Record<string, string> =
   OVERLAY_TITLE_BAR || CUSTOM_TITLE_BAR ? { "data-tauri-drag-region": "" } : {};
-
-/** True where the window has no native title bar, so the app draws the
- *  window's first row itself and that row drags. */
-export const HAS_TITLE_BAR = OVERLAY_TITLE_BAR || CUSTOM_TITLE_BAR;
 
 /** Spread onto a first row: the whole row moves the window, not only its own
  *  background. A clickable child — a button, a link, a field, anything with

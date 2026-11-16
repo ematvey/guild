@@ -131,7 +131,7 @@ function SectionPane({
   onUsageChange: (usage: UsageQuery) => void;
 }) {
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-8">
+    <div className="mx-auto max-w-4xl px-4 pb-6 sm:px-8 sm:pb-8">
       <SectionBody
         id={def.id}
         email={email}

@@ -26,7 +26,7 @@ import {
 import type { App } from "@guild/wire/rest";
 import { useMemberProfile } from "../../lib/profile-store";
 import { CollapseButton } from "../sidebar/chrome";
-import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
+import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
@@ -221,7 +221,7 @@ function AppHeader({
     (fn) => fn.available && fn.confirm,
   );
   return (
-    <header className="border-b border-border px-4 py-3">
+    <header className={`shrink-0 border-b border-border bg-background px-4 py-3 ${CAPTION_BUTTONS_INSET}`}>
       <div className="flex items-center gap-2">
         {isMobile && (
           <Button

@@ -18,7 +18,7 @@ import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
 import { SidebarRail, type RailTab } from "../sidebar-rail";
-import { HAS_TITLE_BAR, TITLE_BAR_INSET, TOP_ROW, titleBarDrag, titleBarDragDeep } from "../../lib/titlebar";
+import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
   agentDeleting,
@@ -838,14 +838,7 @@ function ThreadView(props: ThreadProps) {
             </div>
           </div>
         )}
-        {routePage !== null ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {/* A route page has no header of its own, so the first row of the
-                column is the drag band: the same row the thread header fills. */}
-            {HAS_TITLE_BAR && !isMobile && <div {...titleBarDragDeep} className={`shrink-0 ${TOP_ROW}`} />}
-            {routePage}
-          </div>
-        ) : (
+        {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader

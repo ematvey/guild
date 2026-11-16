@@ -40,6 +40,25 @@ object type is tracked at all.
 Scope: the analytics endpoints need `business-intelligence`. The README names
 it, and a 403 now points at it.
 
+## 0.6.116 — every page has the chat's fixed header
+
+0.6.115 gave a route page an empty 44 px band, which read as dead space above
+the content. A page now carries its own fixed header row, as the chat does:
+the row names what is open, holds the page's actions at its right end, keeps
+the caption buttons' box clear, and drags the window. The body scrolls under
+it.
+
+`PageHeader` is that row. Its `bar` variant is a shrink-0 row above the scroll
+area; its `section` variant sticks to the top of its scroll container, so the
+settings sections keep their header in place while the section scrolls. The
+caption buttons' inset is important (`pr-[138px]!`): a row's own `px-6` would
+otherwise win and push its actions under the buttons.
+
+The integrations column has the row too, and the page titles moved into it:
+Installed, Catalog, Connect an MCP server, Install a plugin bundle, Catalog
+sources, and the name of the integration the address opened. The in-body
+titles are gone, so a page names itself once.
+
 ## 0.6.115 — a route page starts below the first row
 
 A route page (apps, agents, skills, settings, integrations) had no first row:
