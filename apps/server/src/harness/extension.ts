@@ -10,11 +10,12 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
-import { createDownloadAttachmentTool } from "./attachment-tools.js";
+import { createDownloadTool } from "./chat-files.js";
 import { createMachineListTool, renderMachinesSection, type MachineListDeps } from "./machines.js";
 import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { SkillRuntime } from "./skills.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
+import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
 
 /** The built-in persona: names the workspace and says when a user's "you"
@@ -118,9 +119,11 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** Extra task hooks: the run rows' opener, the workspace conflict
    *  journal, tool tracing. */
   toolHooks?: readonly HookRegistration[];
-  /** Chat attachments and their bytes in object storage — the
-   *  download_attachment tool; absent in tests without them. */
+  /** Chat files and their bytes in object storage — the download tool;
+   *  absent in tests without them. A chat file is an attachment or a spilled
+   *  tool result. */
   attachments?: Pick<AttachmentStore, "reachableFromChat">;
+  artifacts?: Pick<ToolArtifactStore, "listForChat">;
   objects?: Pick<ObjectStore, "get">;
 }
 
@@ -198,11 +201,12 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       ...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()),
       ...(deps.threadTools ?? []).map(toolsOnlyCaller),
       ...(deps.machines === undefined ? [] : [createMachineListTool(deps.machines)]),
-      ...(deps.attachments === undefined || deps.objects === undefined
+      ...(deps.attachments === undefined || deps.artifacts === undefined || deps.objects === undefined
         ? []
         : [
-            createDownloadAttachmentTool({
+            createDownloadTool({
               attachments: deps.attachments,
+              artifacts: deps.artifacts,
               objects: deps.objects,
               chatOfConversation: deps.chatOfConversation,
               orgOfConversation: deps.orgOfConversation,

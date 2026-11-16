@@ -67,8 +67,8 @@ export const BUILTIN_TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: "files",
-    description: "Files: message attachments and files you send to the user.",
-    tools: ["download_attachment", "send_file"],
+    description: "Files: the chat's files, and files you send to the user.",
+    tools: ["download", "send_file"],
   },
   {
     name: "apps",

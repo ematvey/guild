@@ -140,21 +140,26 @@ async function load(bytes: Buffer, sha256: string, slug: string, version: string
     await host.close();
     throw new Error(`integration ${slug}: plugin.js declares version ${manifest.version}, the bundle ${version}`);
   }
-  return connectorOf(manifest, "registry", { logo, readme }, {
-    validate: async (config) => {
-      await host.call("validate", { config });
+  return connectorOf(
+    manifest,
+    "registry",
+    { logo, readme },
+    {
+      validate: async (config) => {
+        await host.call("validate", { config });
+      },
+      testConnection: async (config, secrets) => {
+        await host.call("testConnection", { config, secrets });
+      },
+      execute: async (config, tool, args, secrets, actingAs) => {
+        const outcome = (await host.call("execute", { config, tool, args, secrets, actingAs })) as ToolOutcome;
+        if (outcome?.file !== undefined) {
+          outcome.file = { ...outcome.file, bytes: Buffer.from(outcome.file.bytes) };
+        }
+        return outcome;
+      },
     },
-    testConnection: async (config, secrets) => {
-      await host.call("testConnection", { config, secrets });
-    },
-    execute: async (config, tool, args, secrets, actingAs) => {
-      const outcome = (await host.call("execute", { config, tool, args, secrets, actingAs })) as ToolOutcome;
-      if (outcome?.artifact !== undefined) {
-        outcome.artifact = { ...outcome.artifact, bytes: Buffer.from(outcome.artifact.bytes) };
-      }
-      return outcome;
-    },
-  });
+  );
 }
 
 /** The connector of one approved code bundle, loaded at most once per

@@ -1,3 +1,25 @@
+## 0.6.105 — a file a tool brings lands where the call says
+
+`drive_get_file` and `gmail_get_attachment` returned bytes as a spilled
+artifact. The model got pointer text naming `.guild/artifacts/<chat>/<file>`,
+and in a plain chat nothing ever wrote that file: `read` answered ENOENT, the
+sandbox had no copy, `download_attachment` did not know artifacts, and the
+agent burned twenty turns on a dead path.
+
+A tool now carries bytes as `ToolOutcome.file` — a path and the bytes. The
+integration sink writes them through the call's environment before the model
+sees the result, so the file is a real file the ordinary tools read. Both
+Google get_file tools take a required `path`; there is no default destination.
+The artifact outcome and its pointer text are gone: a result with no
+destination is the only thing that spills.
+
+`download_attachment` becomes `download`, and a chat file is now either kind:
+an attachment or a spilled result, matched by id or by filename. It takes a
+required `path` too, and refuses to replace a file unless `overwrite` is set.
+One rule for a destination lives in `platform/domain/paths.ts` and one writer
+in `harness/chat-files.ts`; both the tool and the integration sink come
+through them.
+
 ## 0.6.104 — a machine line names its shell
 
 A call on a Windows machine was handed bash. WORKSTATION-A's executor answered every

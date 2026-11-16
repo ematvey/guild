@@ -472,6 +472,7 @@ export class GuildRuntime {
       chatOfConversation,
       executorKind: (conversationId) => this.executorKind(conversationId),
       attachments: stores.attachments,
+      artifacts: stores.toolArtifacts,
       ...(objects === undefined ? {} : { objects }),
       integrations: {
         gateDecision: async (conversationId, callName) => {

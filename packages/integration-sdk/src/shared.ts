@@ -8,10 +8,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface ToolOutcome {
   content: string;
   meta?: unknown;
-  /** Binary payload the tool hands the model as a spilled artifact: the
-   *  caller materializes the bytes and replaces `content` with the pointer
-   *  text (chat path). The script API drops the payload. */
-  artifact?: { filename: string; contentType: string; bytes: Buffer };
+  /** Bytes the tool puts into the call's environment at `path`, relative to
+   *  its working folder. The caller writes them before the model sees the
+   *  result, so the file is a real file the ordinary tools can read. The
+   *  script API has no environment and drops the payload. */
+  file?: { path: string; bytes: Buffer };
 }
 
 /** A decoded JSON object: tool arguments, configs and vendor payloads

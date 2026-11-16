@@ -80,7 +80,7 @@ The system prompt of a Turn has two parts:
 
 The Workspace files are read again at every admission and resume, so an Agent that edits them changes its next Turn. They are capped at 32 KiB together. Project instructions come from the Member's Machine: `AGENTS.md` files from the git root to the working directory, plus `MEMORY.md`. They are stored with the Thread so that a resumed Turn keeps them.
 
-Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download_attachment` fetches any file of the Thread, and any file its child results carry, into the working folder.
+Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download` fetches any file of the Thread, and any file its child results carry, into the working folder at a path the call names.
 
 Compaction replaces the older context with a summary. It runs automatically, or on request, and its summary waits for the running Turn to end. Context usage is the token count of the last completed model call since the last compaction.
 

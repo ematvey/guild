@@ -302,9 +302,12 @@ async function gmailGetAttachment(config: JsonObject, args: JsonObject, token: s
     "gmail",
   );
   const part = attachmentParts((message["payload"] ?? {}) as JsonObject).find(([, , id]) => id === attachmentId);
-  const filename =
-    (typeof args["filename"] === "string" ? args["filename"] : null) ?? part?.[0] ?? `gmail_${attachmentId}.bin`;
+  const filename = part?.[0] ?? `gmail_${attachmentId}.bin`;
   const contentType = part?.[1] ?? "application/octet-stream";
+  const destination = args["path"];
+  if (typeof destination !== "string" || destination === "") {
+    throw new Error("gmail_get_attachment requires path");
+  }
   const body = await googleGetJson(
     `${googleApiBase(config)}/gmail/v1/users/me/messages/${urlencode(messageId)}/attachments/${urlencode(attachmentId)}`,
     token,
@@ -315,8 +318,8 @@ async function gmailGetAttachment(config: JsonObject, args: JsonObject, token: s
   const bytes = decodeBodyPartBytes(data);
   if (bytes === null) throw new Error("gmail attachment data is not valid base64url");
   return {
-    content: `attachment ${filename} (${bytes.length} bytes, ${contentType})`,
-    artifact: { filename, contentType, bytes },
+    content: `attachment ${filename} (${bytes.length} bytes, ${contentType}) saved to ${destination}`,
+    file: { path: destination, bytes },
   };
 }
 
@@ -445,10 +448,12 @@ async function driveGetFile(config: JsonObject, args: JsonObject, token: string)
     filename = name;
     url = `${googleApiBase(config)}/drive/v3/files/${urlencode(id)}?alt=media`;
   }
+  const destination = args["path"];
+  if (typeof destination !== "string" || destination === "") throw new Error("drive_get_file requires path");
   const bytes = await fetchBytes(url, { headers: { authorization: `Bearer ${token}` } }, "drive");
   return {
-    content: `file ${filename} (${bytes.length} bytes, ${contentType})`,
-    artifact: { filename, contentType, bytes },
+    content: `file ${filename} (${bytes.length} bytes, ${contentType}) saved to ${destination}`,
+    file: { path: destination, bytes },
   };
 }
 

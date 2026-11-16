@@ -474,14 +474,14 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "gmail_get_attachment",
-      { message_id: "msg-1", attachment_id: "att-1" },
+      { message_id: "msg-1", attachment_id: "att-1", path: "in/data.bin" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("attachment data.bin (4 bytes, image/jpeg)");
-    expect(out.artifact).toBeDefined();
-    expect([...out.artifact!.bytes]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
-    expect(out.artifact!.contentType).toBe("image/jpeg");
+    expect(out.content).toBe("attachment data.bin (4 bytes, image/jpeg) saved to in/data.bin");
+    expect(out.file).toBeDefined();
+    expect(out.file!.path).toBe("in/data.bin");
+    expect([...out.file!.bytes]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
   });
 
   it("drive_get_file downloads an uploaded file byte for byte through alt=media", async () => {
@@ -491,14 +491,13 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-1" },
+      { file_id: "f-1", path: "in/report.pdf" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
-    expect(out.artifact!.filename).toBe("report.pdf");
-    expect(out.artifact!.contentType).toBe("application/pdf");
-    expect([...out.artifact!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf) saved to in/report.pdf");
+    expect(out.file!.path).toBe("in/report.pdf");
+    expect([...out.file!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
     const hit = lastHit("/drive/v3/files/f-1");
     expect(hit.query.get("alt")).toBe("media");
     expect(hit.headers["authorization"]).toBe("Bearer tok-1");
@@ -511,13 +510,12 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-sheet" },
+      { file_id: "f-sheet", path: "budget.csv" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.artifact!.filename).toBe("Budget.csv");
-    expect(out.artifact!.contentType).toBe("text/csv");
-    expect(out.artifact!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
+    expect(out.file!.path).toBe("budget.csv");
+    expect(out.file!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
     expect(lastHit("/drive/v3/files/f-sheet/export").query.get("mimeType")).toBe("text/csv");
   });
 
@@ -528,11 +526,11 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-1", mime_type: "text/markdown" },
+      { file_id: "f-1", mime_type: "text/markdown", path: "report.pdf" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf) saved to report.pdf");
     expect(lastHit("/drive/v3/files/f-1").query.get("alt")).toBe("media");
   });
 
@@ -559,7 +557,7 @@ describe("google_workspace execute (mock backend)", () => {
         "google_workspace",
         googleConfig(),
         "drive_get_file",
-        { file_id: "f-locked" },
+        { file_id: "f-locked", path: "locked.pdf" },
         GOOGLE_SECRETS,
         "member@example.test",
       ),
@@ -899,10 +897,7 @@ describe("connector execute spot checks (mock backend)", () => {
       [["token", "hs-1"]],
       null,
     );
-    const sent = JSON.parse(lastHit("/crm/v3/objects/p148247336_subscriptions/search").body) as Record<
-      string,
-      unknown
-    >;
+    const sent = JSON.parse(lastHit("/crm/v3/objects/p148247336_subscriptions/search").body) as Record<string, unknown>;
     expect(sent["properties"]).toEqual(["end_date", "is_active"]);
     expect(out.content).toContain("id=7 end_date=2026-12-01 is_active=true");
     expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "p148247336_subscriptions", count: 1 });
