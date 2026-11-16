@@ -87,6 +87,7 @@ import { UserMcpRuntime } from "./user-mcp.js";
 import { SkillRuntime } from "./skills.js";
 import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
+import { chatStager } from "../chats/stage.js";
 import { ConversationExecutors } from "./executors.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
 import { appFunctionCheck } from "../agents/publish-app.js";
@@ -436,6 +437,10 @@ export class GuildRuntime {
       // worker mode, the hub's registry in the server.
       dispatch: () => this.turns.machineDispatch ?? this.dispatch(),
       timeoutMs: () => config.clientToolTimeoutMs,
+      stage: async (orgId, chatId, bytes, name) => {
+        if (objects === undefined) throw new Error("this server has no object store to stage files in");
+        return chatStager(stores.toolArtifacts, objects, orgId, chatId)(bytes, name);
+      },
     });
     this.guildExtension = createGuildExtension({
       orgProfile: async (orgId) => {

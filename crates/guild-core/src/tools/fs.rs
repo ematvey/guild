@@ -578,12 +578,18 @@ pub async fn read_raw(
     }))
 }
 
-/// `fs.write_raw_v1`: writes the exact bytes of `data_b64` to one path
+/// The wire form of bytes for a raw file op.
+pub fn encode_bytes(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Writes the exact bytes of `data_b64` to one path
 /// scoped to the workspace, creating parent directories. Returns
 /// `{"path", "size"}`.
 ///
 /// This is the host moving a file, not a model tool: the model never
-/// produces bytes, it names a destination. `write_file` stays text.
+/// produces bytes, it names a destination. `write_file` stays text. The
+/// bytes arrive base64 because the engine has already fetched them.
 pub async fn write_raw(workdir: &Path, path: &str, data_b64: &str) -> Result<Value, RawFsError> {
     let resolved =
         resolve_scoped(workdir, path).map_err(|e| RawFsError::new("invalid", e.to_string()))?;

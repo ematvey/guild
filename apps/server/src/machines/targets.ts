@@ -46,6 +46,9 @@ export interface MachineTargetDeps {
   dispatch(): Pick<MachineDispatch, "dispatch"> | undefined;
   /** The per-call result timeout. */
   timeoutMs(): number;
+  /** Puts bytes the server holds into the chat's file store; the machine
+   *  pulls them by id. */
+  stage(orgId: string, chatId: string, bytes: Uint8Array, name: string): Promise<string>;
 }
 
 export class MachineTargets {
@@ -123,6 +126,7 @@ export class MachineTargets {
       workdir,
       timeoutMs: this.deps.timeoutMs(),
       dispatch,
+      stage: (bytes, name) => this.deps.stage(args.orgId, args.chatId, bytes, name),
     });
   }
 }

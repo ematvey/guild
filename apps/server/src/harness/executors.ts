@@ -13,6 +13,8 @@ import type { Config } from "../config.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { AttachmentStore } from "../platform/store/attachments.js";
+import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
+import { chatStager } from "../chats/stage.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
@@ -32,6 +34,7 @@ export interface ExecutorDeps {
   readonly attachments: Pick<AttachmentStore, "byIds">;
   readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat"> };
   readonly objects?: ObjectStore;
+  readonly toolArtifacts?: Pick<ToolArtifactStore, "create" | "get" | "listForChat">;
   /** The conversation's chat id (null for unmapped conversations). */
   chatOfConversation(conversationId: number): Promise<string | null>;
   /** The machine dispatch registry machine-bound chats run through. */
@@ -95,6 +98,7 @@ export class ConversationExecutors {
         workdir: binding.project_folder,
         timeoutMs: this.deps.config.clientToolTimeoutMs,
         dispatch,
+        stage: this.stager(binding.org_id, chatId),
       });
     }
     if (chatId === null) {
@@ -111,6 +115,18 @@ export class ConversationExecutors {
     const env = await this.envFor(conversationId, chat.org_id, { materialize: true });
     await this.materializeAttachmentsForTurn(chatId, chat.org_id, env);
     return env;
+  }
+
+  /** How the machine receives a file the server holds: staged in the chat's
+   *  artifact store, pulled by the machine. */
+  private stager(orgId: string, chatId: string): (bytes: Uint8Array, name: string) => Promise<string> {
+    const { objects, toolArtifacts } = this.deps;
+    if (objects === undefined || toolArtifacts === undefined) {
+      return async () => {
+        throw new Error("this server has no object store to stage files in");
+      };
+    }
+    return chatStager(toolArtifacts as ToolArtifactStore, objects, orgId, chatId);
   }
 
   /** The execution env for a conversation's server-side tools: a runner

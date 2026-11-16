@@ -22,6 +22,7 @@ function fixture() {
     workdir: "/tmp",
     timeoutMs: 1000,
     dispatch,
+    stage: async () => "artifact",
   });
   return { dispatch, env, cancel, frame: () => dispatched! };
 }

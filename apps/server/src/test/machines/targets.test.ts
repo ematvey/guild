@@ -40,6 +40,7 @@ function rig(options: { rows?: MachineRow[]; online?: string[] } = {}) {
         return `/home/${machineId}`;
       },
     },
+    stage: async () => "artifact",
     dispatch: () => ({
       dispatch: async (call) => {
         dispatched.push({ machineId: call.machineId, workdir: call.workdir });

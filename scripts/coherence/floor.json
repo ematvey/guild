@@ -10,10 +10,10 @@
     "milestone_tags": 6
   },
   "report": {
-    "files": 560,
-    "loc": 112219,
+    "files": 561,
+    "loc": 112332,
     "test_files": 233,
-    "test_loc": 46214,
+    "test_loc": 46210,
     "unmapped_files": 107
   },
   "declared_seams": 12

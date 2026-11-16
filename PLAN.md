@@ -1,20 +1,27 @@
-## 0.6.107 — bytes cross the machine link, and only bytes
+## 0.6.108 — a file reaches a machine as a reference, never as bytes
 
 `write_file` is the model's tool: the model writes text it produced. It
 carried text only, so `MachineExecutionEnv.writeFile` refused a `Uint8Array`
 and a Gmail attachment or a Drive PDF aimed at a project folder failed with
 "binary writes are not supported over machine dispatch".
 
-The first attempt let `write_file` take `encoding: base64`. That was wrong:
-it put bytes in a model tool, and a model that can emit base64 is a model
-that can silently corrupt a file. Bytes are never the model's to write.
+Two wrong answers came first. `write_file` with `encoding: base64` put bytes
+in a model tool, where a model that can emit base64 can silently corrupt a
+file. `fs.write_raw_v1` moved the bytes out of the model's hands but still
+pushed them down the socket — the same payload twice, once as JSON and once
+as a frame, under a size cap the link should not need.
 
-`fs.write_raw_v1` is the host's transfer op, next to `fs.read_raw_v1` and
-`fs.stat_v1`: `{path, data_b64}` in, `{path, size}` out, scoped to the
-workspace, capped at 64 MiB. `MachineExecutionEnv.writeFile` sends text
-through `write_file` and bytes through the raw op. An engine that lacks the
-op answers "unknown tool", and the write fails as `not_supported` — a
-refusal, never a file full of base64 text.
+Files live in object storage already. So the machine gets a reference:
+
+- `fs.fetch_v1` takes `{path, artifact_id}`. The engine pulls the artifact
+  with its own session (`GET /api/v1/tool_artifacts/{id}`) and writes it at
+  `path`. No file content crosses the socket.
+- The server stages bytes it holds in the chat's artifact store
+  (`chats/stage.ts` → `spillArtifact`) and dispatches the id.
+- `MachineExecutionEnv.writeFile` still takes text or bytes: text goes
+  through `write_file`, bytes go through the stager and then the fetch op.
+- An engine without the op answers "unknown tool" and the write fails as
+  `not_supported`: a refusal, never a file full of base64 text.
 
 ## 0.6.105 — a file a tool brings lands where the call says
 

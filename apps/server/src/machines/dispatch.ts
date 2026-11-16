@@ -235,7 +235,7 @@ function fileErr(code: (typeof FileError.prototype)["code"], message: string, pa
 
 const RAW_READ_OP = "fs.read_raw_v1";
 const RAW_STAT_OP = "fs.stat_v1";
-const RAW_WRITE_OP = "fs.write_raw_v1";
+const RAW_FETCH_OP = "fs.fetch_v1";
 
 /** The FileError code for a raw op failure code (`too_large` is an
  *  invalid request for this transport). */
@@ -269,6 +269,10 @@ export interface MachineEnvOptions {
   workdir: string | null;
   timeoutMs: number;
   dispatch: Pick<MachineDispatch, "dispatch">;
+  /** Puts bytes the server holds into the chat's file store and returns the
+   *  artifact id the machine pulls them by. A machine never receives file
+   *  bytes over the socket: it fetches the artifact itself. */
+  stage: (bytes: Uint8Array, name: string) => Promise<string>;
 }
 
 /** An ExecutionEnv whose file/shell operations run on the chat's bound
@@ -310,7 +314,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
    *  engine that predates the op answers "unknown tool", which fails as
    *  `not_supported` instead of falling back to the lossy tool. */
   private async rawCall(
-    op: typeof RAW_READ_OP | typeof RAW_STAT_OP | typeof RAW_WRITE_OP,
+    op: typeof RAW_READ_OP | typeof RAW_STAT_OP | typeof RAW_FETCH_OP,
     args: Record<string, unknown>,
     context: Context,
   ): Promise<Result<Record<string, unknown>, FileError>> {
@@ -459,20 +463,22 @@ export class MachineExecutionEnv implements ExecutionEnv {
 
   async writeFile(p: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
     // Text is the model's own writing: it goes through the same `write_file`
-    // the model calls. Bytes are a file the server moves — a downloaded PDF,
-    // an image — so they ride the raw transfer op and never touch a tool the
-    // model drives.
+    // the model calls. Bytes are a file the server holds — a downloaded PDF,
+    // an attachment — so they are staged in the chat's file store and the
+    // machine pulls them by id. No file content crosses the socket.
     if (typeof content === "string") {
       const outcome = await this.runTool("write_file", { path: p, content }, context);
       if (outcome.is_error) return fileErr("unknown", outcome.content, p);
       return ok(undefined);
     }
-    const written = await this.rawCall(
-      RAW_WRITE_OP,
-      { path: p, data_b64: Buffer.from(content).toString("base64") },
-      context,
-    );
-    if (!written.ok) return written;
+    let artifactId: string;
+    try {
+      artifactId = await this.options.stage(content, p);
+    } catch (error) {
+      return fileErr("unknown", `staging ${p} failed: ${(error as Error).message}`, p);
+    }
+    const fetched = await this.rawCall(RAW_FETCH_OP, { path: p, artifact_id: artifactId }, context);
+    if (!fetched.ok) return fetched;
     return ok(undefined);
   }
 
