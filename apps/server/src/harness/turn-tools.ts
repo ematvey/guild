@@ -43,7 +43,8 @@ import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import type { MachineTargets } from "../machines/targets.js";
 import { createAgentWorkspaceTools, createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
-import { composeAgentInstructions } from "./instructions.js";
+import { composeAgentInstructions, type MachineContext } from "./instructions.js";
+import { shellOf } from "../machines/targets.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
 
 export interface TurnToolDeps {
@@ -57,7 +58,7 @@ export interface TurnToolDeps {
   readonly agents: AgentStore;
   readonly threads: ThreadStore;
   /** The chat owner lookup the subagent tools resolve the requester by. */
-  readonly chats: Pick<ChatStore, "ownerOf" | "getChat" | "listOrgChats" | "orgChatCounts">;
+  readonly chats: Pick<ChatStore, "ownerOf" | "getChat" | "listOrgChats" | "orgChatCounts" | "machineBinding">;
   readonly identity: Pick<IdentityStore, "getUser" | "listUsers">;
   readonly teams: Pick<TeamStore, "listTeams" | "listMembers">;
   /** The org usage reports; absent when the process has no ClickHouse. */
@@ -171,7 +172,7 @@ export class TurnTools {
               instructions: await this.agentInstructions(
                 agent,
                 await deps.conversations.projectInstructions(chatId),
-                workspaceTools.length > 0,
+                await this.machineContext(chatId),
                 chatId,
               ),
             }),
@@ -180,13 +181,31 @@ export class TurnTools {
     );
   }
 
+  /** The machine the user's message came from, as the prompt names it: the
+   *  chat's binding, its OS and the shell a `command` runs in. Null for a
+   *  chat whose tools run in the server sandbox. */
+  private async machineContext(chatId: string): Promise<MachineContext | null> {
+    const binding = await this.deps.chats.machineBinding(chatId);
+    if (binding === null) return null;
+    return {
+      name: binding.machine_label ?? binding.machine_id,
+      os:
+        binding.os === null
+          ? null
+          : binding.os_version === null || binding.os_version === ""
+            ? binding.os
+            : `${binding.os} ${binding.os_version}`,
+      shell: shellOf(binding.os),
+    };
+  }
+
   /** Seeds the workspace config files when absent, reads them, and builds
    *  the thread's instructions. A broken volume never fails a turn: the
    *  prompt falls back to the runtime block alone. */
   private async agentInstructions(
     agent: Agent,
     projectInstructions: string | undefined,
-    machineBound: boolean,
+    machine: MachineContext | null,
     chatId: string,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
@@ -202,7 +221,7 @@ export class TurnTools {
     const thread = (await this.deps.binding.threadContext(chatId)) ?? undefined;
     const canDelegate =
       spawnedBy === undefined ? agent.tools_mode === "all" || agent.tools.includes("subagents") : spawnedBy.can_spawn;
-    return composeAgentInstructions(agent, config, projectInstructions, machineBound, spawnedBy, canDelegate, thread);
+    return composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
   }
 
   /** The conversation tools that exist only for agent threads: send_message,

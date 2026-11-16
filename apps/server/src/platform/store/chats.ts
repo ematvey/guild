@@ -902,20 +902,30 @@ export class ChatStore {
   /** Where a machine-bound chat's tools run: the machine, its label, the
    *  org, and the project folder; null when the chat is gone or has no
    *  machine. */
+  /** The machine a chat's tools run on, with the facts the prompt names:
+   *  the label, the OS and the shell a `command` runs in. */
   async machineBinding(chatId: string): Promise<{
     machine_id: string;
     machine_label: string | null;
     org_id: string;
     project_folder: string | null;
+    os: string | null;
+    os_version: string | null;
   } | null> {
     const res = await this.pool.query<{
       machine_id: string | null;
       machine_label: string | null;
       org_id: string;
       project_folder: string | null;
+      os: string | null;
+      os_version: string | null;
     }>(
-      `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
-       FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
+      `SELECT c.machine_id, COALESCE(m.label, c.machine_label) AS machine_label, c.org_id,
+              pr.folder AS project_folder, m.os, m.os_version
+       FROM chats c
+       LEFT JOIN projects pr ON pr.id = c.project_id
+       LEFT JOIN machines m ON m.machine_id = c.machine_id
+       WHERE c.id = $1`,
       [chatId],
     );
     const row = res.rows[0];

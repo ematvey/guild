@@ -31,7 +31,7 @@ describe("composeAgentInstructions", () => {
       { name: "Echo", is_personal: false, generative_ui: true },
       config(FULL),
       undefined,
-      false,
+      null,
       { parent_name: "Lead", depth: 1, can_spawn: false },
     );
     expect(child).not.toContain("<generated_ui>");
@@ -127,18 +127,31 @@ describe("composeAgentInstructions", () => {
     expect(block.length).toBeLessThan(PROJECT_INSTRUCTIONS_MAX_CHARS + 1000);
   });
 
-  it("names the agent tool set when the chat is bound to a machine", () => {
-    const bound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, true);
+  it("names the machine the message came from and the shell a command runs in", () => {
+    const bound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, {
+      name: "WORKSTATION-A",
+      os: "windows 10.0.19045",
+      shell: "cmd.exe",
+    });
     expect(bound).toContain("agent_write/agent_edit");
-    expect(bound).toContain("`read`, `write`, `edit` and `bash` act on their machine");
+    expect(bound).toContain("The user sent this message from WORKSTATION-A (windows 10.0.19045).");
+    expect(bound).toContain("act on that machine in the project folder, and `command` runs in `cmd.exe`");
     expect(bound).toContain("`agent_bash` act in your own workspace sandbox");
+    // A machine that never reported its OS still gets named.
+    const bare = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, {
+      name: "eaa3d4d7-0967-47e4-8865-02658caa6420",
+      os: null,
+      shell: null,
+    });
+    expect(bare).toContain("The user sent this message from eaa3d4d7-0967-47e4-8865-02658caa6420.");
+    expect(bare).not.toContain("`command` runs in");
     const unbound = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL));
     expect(unbound).not.toContain("agent_bash");
     expect(unbound).toContain("Edit them with write/edit");
   });
 
   it("gives a spawned child its tree context and the reply rule", () => {
-    const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, false, {
+    const text = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, null, {
       parent_name: "Parent",
       depth: 2,
       can_spawn: true,
@@ -150,7 +163,7 @@ describe("composeAgentInstructions", () => {
     expect(text).not.toContain("You cannot spawn further child agents.");
     expect(text.indexOf("<spawned_by")).toBeGreaterThan(text.indexOf("</agent_workspace>"));
 
-    const capped = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, false, {
+    const capped = composeAgentInstructions({ name: "Scout", is_personal: false }, config(FULL), undefined, null, {
       parent_name: "Parent",
       depth: 3,
       can_spawn: false,
@@ -166,7 +179,7 @@ describe("composeAgentInstructions", () => {
       { name: "Echo", is_personal: false },
       config(FULL),
       undefined,
-      false,
+      null,
       undefined,
       true,
     );
@@ -186,7 +199,7 @@ describe("composeAgentInstructions", () => {
       { name: "Assistant", is_personal: true },
       config(FULL),
       undefined,
-      false,
+      null,
       undefined,
       false,
       { type: "routine", routineName: "Morning email digest", origin: null },
@@ -202,7 +215,7 @@ describe("composeAgentInstructions", () => {
       { name: "Assistant", is_personal: true },
       config(FULL),
       undefined,
-      false,
+      null,
       undefined,
       false,
       {
@@ -221,7 +234,7 @@ describe("composeAgentInstructions", () => {
         { name: "Assistant", is_personal: true },
         config(FULL),
         undefined,
-        false,
+        null,
         undefined,
         false,
         { type: "routine", routineName: "Digest", routineDelivery, origin: null },
@@ -235,7 +248,7 @@ describe("composeAgentInstructions", () => {
       { name: "Assistant", is_personal: true },
       config(FULL),
       undefined,
-      false,
+      null,
       undefined,
       false,
       {

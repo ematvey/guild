@@ -1,3 +1,16 @@
+## 0.6.110 — the prompt names the machine the message came from
+
+A project chat said only "this chat is bound to the user's project", so the
+agent knew its tools ran on a machine but not which one, on which OS, in
+which shell. The machines section lists every paired machine, so the agent
+could guess — and guessing wrong on `cmd.exe` versus `bash` costs a turn.
+
+`machineBinding` now carries the machine's label, OS and version, and the
+prompt says "The user sent this message from WORKSTATION-A (windows 10.0.19045).
+`read`, `write`, `edit` and `bash` act on that machine in the project folder,
+and `command` runs in `cmd.exe`." A machine that never reported its OS is
+named alone; the shell clause is dropped rather than guessed.
+
 ## 0.6.109 — downloads stream, they do not buffer
 
 The byte routes read the whole object into a `Buffer` before replying, so a
