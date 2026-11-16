@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
-import { MachineExecutionEnv, type MachineDispatch, type MachineToolOutcome } from "../machines/dispatch.js";
+import {
+  BINARY_WRITE_VERSION,
+  binaryWritesSupported,
+  MachineExecutionEnv,
+  type MachineDispatch,
+  type MachineToolOutcome,
+} from "../machines/dispatch.js";
 
 type Dispatch = Pick<MachineDispatch, "dispatch">;
 
@@ -81,6 +87,20 @@ function env(dir: string, dispatch: Dispatch): MachineExecutionEnv {
     binaryWrites: true,
   });
 }
+
+describe("binaryWritesSupported", () => {
+  it("accepts the release that decodes base64 and anything newer, refuses the rest", () => {
+    expect(binaryWritesSupported(BINARY_WRITE_VERSION)).toBe(true);
+    expect(binaryWritesSupported("0.6.107")).toBe(true);
+    expect(binaryWritesSupported("0.7.0")).toBe(true);
+    expect(binaryWritesSupported("1.0.0")).toBe(true);
+    expect(binaryWritesSupported("0.6.99")).toBe(false);
+    expect(binaryWritesSupported("0.6.105")).toBe(false);
+    expect(binaryWritesSupported("0.5.200")).toBe(false);
+    expect(binaryWritesSupported(null)).toBe(false);
+    expect(binaryWritesSupported("not-a-version")).toBe(false);
+  });
+});
 
 describe("machine file adapter", () => {
   it("writes bytes as base64 when the client decodes them", async () => {
