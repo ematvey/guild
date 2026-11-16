@@ -17,7 +17,7 @@ import {
 import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { DesktopTooltip } from "../components/desktop-tooltip";
 import { UserBadge } from "../components/user-badge";
-import { OVERLAY_TITLE_BAR, TITLE_BAR_INSET, titleBarDrag } from "../lib/titlebar";
+import { OVERLAY_TITLE_BAR, TITLE_BAR_INSET, TOP_ROW, titleBarDrag } from "../lib/titlebar";
 import { ServerMenuItems } from "./server-menu";
 import type { ChatRoute } from "./thread/route";
 
@@ -158,13 +158,15 @@ export function SidebarRail({
       {...titleBarDrag}
       className={`relative flex h-full w-12 shrink-0 flex-col items-center bg-sidebar pb-2 text-sidebar-foreground ${
         OVERLAY_TITLE_BAR ? "" : "border-r border-border"
-      } ${TITLE_BAR_INSET || "pt-2"}`}
+      } ${TITLE_BAR_INSET}`}
     >
       {/* The overlay title bar merges the rail with the sidebar panel: the
           divider starts below the traffic lights, not under them. */}
       {OVERLAY_TITLE_BAR && <div className="pointer-events-none absolute bottom-0 right-0 top-7 w-px bg-border" />}
-      <div className="flex flex-col items-center gap-1">
+      <div className={`flex shrink-0 items-center justify-center ${TOP_ROW}`}>
         <SidebarToggle collapsed={collapsed} onToggle={onToggleCollapse} />
+      </div>
+      <div className="flex flex-col items-center gap-1">
         {tabs.map(({ id, label, icon: Icon }) => (
           <RailButton
             key={id}

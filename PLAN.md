@@ -16,6 +16,21 @@ object type is tracked at all.
 Scope: the analytics endpoints need `business-intelligence`. The README names
 it, and a 403 now points at it.
 
+## 0.6.113 — one top row for every column
+
+The Windows caption buttons floated over a band that no page content
+occupied, so the first row of the rail, the list and the thread started 32 px
+lower, and the three columns did not even agree with each other: their first
+rows were 62, 74 and 67 px from the window edge. The buttons looked pasted
+onto the window.
+
+Every column's first row now has one height (`TOP_ROW`, 56 px): the rail's
+logo, a list header, the thread header. The caption buttons take the right
+end of that row, and a row that reaches the window's right edge pads for
+their box (`CAPTION_BUTTONS_INSET`), so no control sits under them. The
+Windows build no longer insets the columns; the band is gone, and the
+columns' backgrounds run to the window edge.
+
 ## 0.6.112 — the Windows window draws no title bar
 
 The Windows client drew a 32 px strip: the app name at the left, the three

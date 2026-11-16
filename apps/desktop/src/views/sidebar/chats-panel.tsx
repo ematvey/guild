@@ -6,6 +6,7 @@ import type { ChatSummary } from "../../lib/api/chats";
 import type { sidebarGrouping } from "../projects/projects";
 import { ChatListItem } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
+import { TOP_ROW, titleBarDrag } from "../../lib/titlebar";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,7 +54,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div className="flex items-center justify-between px-3 py-3">
+      <div {...titleBarDrag} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
         {/* The workspace switcher lives on the rail's first button; the panel
             header names the tab and carries the new-chat plus, like the
             Projects panel. */}

@@ -6,6 +6,7 @@
 
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
+import { CAPTION_BUTTONS_INSET, titleBarDrag } from "../lib/titlebar";
 
 export function PageHeader({
   title,
@@ -26,7 +27,10 @@ export function PageHeader({
 }) {
   const bar = variant === "bar";
   return (
-    <header className={bar ? "border-b border-border bg-background px-4 pt-3 sm:px-6" : "mb-6"}>
+    <header
+      {...titleBarDrag}
+      className={`${bar ? "border-b border-border bg-background px-4 pt-3 sm:px-6" : "mb-6"} ${CAPTION_BUTTONS_INSET}`}
+    >
       {back && (
         <button
           onClick={back.onClick}
