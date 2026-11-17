@@ -25,4 +25,4 @@ Every part of the design is judged by whether it keeps that true. A conversation
 
 ## These documents
 
-The numbered documents describe what the code does now. Decisions and their history live in `PLAN.md`; build, deploy and release live in `README.md`, `docs/deploy-nuances.md` and `docs/clients.md`.
+The numbered documents describe what the code does now. Build, deploy and release live in `README.md`, `docs/deploy-nuances.md` and `docs/clients.md`.

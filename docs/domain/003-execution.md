@@ -80,18 +80,23 @@ The system prompt of a Turn has two parts:
 
 The Workspace files are read again at every admission and resume, so an Agent that edits them changes its next Turn. They are capped at 32 KiB together. Project instructions come from the Member's Machine: `AGENTS.md` files from the git root to the working directory, plus `MEMORY.md`. They are stored with the Thread so that a resumed Turn keeps them.
 
-Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download_attachment` fetches any file of the Thread, and any file its child results carry, into the working folder.
+Attachments become part of the message. Document text is inlined, images go as image parts when the model accepts them, and other media get a note. The bytes are also materialized at `/tmp/attachments/<run>/`, for every Input the Turn takes: an Input placed mid-Turn (a steer, a child result) adds its files before the next Tool call. That directory is wiped at the start of each Turn. `download` fetches any file of the Thread, and any file its child results carry, into a working folder at a path the call names; `send_file` takes a file of a working folder back into the Thread as an Attachment.
 
 Compaction replaces the older context with a summary. It runs automatically, or on request, and its summary waits for the running Turn to end. Context usage is the token count of the last completed model call since the last compaction.
 
 ## Where Tool calls run
 
-| Thread | File and shell tools | Workspace |
-| --- | --- | --- |
-| Not bound to a Project | `read`, `write`, `edit`, `bash` in the Agent's sandbox, on its Workspace | The same tools |
-| Bound to a Project | `read`, `write`, `edit`, `bash` on the Project's Machine, in the Project folder | `agent_read`, `agent_write`, `agent_edit`, `agent_bash` in the sandbox |
+One default, for every Thread: a file tool without `machine` acts on the Agent's own Workspace, in its sandbox. A Project does not change that. The Thread's Machine is a fact the prompt states, not a target: to work on it the call names it.
 
-**A Machine named per call.** The four coding tools take a `machine` argument: its id, or a label unique among the caller's Machines. The call then runs on that Machine instead of the Thread's own environment, and `cwd` names the folder it runs in. Without `cwd` it runs in the Machine's home directory, read once and kept until the Machine goes offline, and no folder carries from one call to the next, so a command writes `cd <folder> && …`. A Machine the caller did not pair is not addressable, and `cwd` without `machine` is refused. The `machines` prompt section and the `machine_list` tool carry the same list: label, id and live flag.
+| Tool | Without `machine` | With `machine` |
+| --- | --- | --- |
+| `read`, `write`, `edit`, `bash` | The Agent's Workspace, in the sandbox | That Machine, in `cwd` |
+| `download` | Writes a file of the Thread into the Workspace | Writes it on that Machine |
+| `send_file` | Reads a file of the Workspace into the Thread | Reads it from that Machine |
+
+**A Machine named per call.** Every file tool takes `machine`: its id, or a label unique among the caller's Machines. The call then runs on that Machine instead of the sandbox, and `cwd` names the folder it runs in. Without `cwd` it runs in the Machine's home directory, read once and kept until the Machine goes offline, and no folder carries from one call to the next, so a command writes `cd <folder> && …`. A Machine the caller did not pair is not addressable, and `cwd` without `machine` is refused. The `machines` prompt section and the `machine_list` tool carry the same list: label, id and live flag.
+
+**The target decides the card.** The Approval gate classifies a call by what it names: `machine` present means the call reaches the Member's own computer, and it takes a card; without `machine` the call stays inside the sandbox and takes the batch contract. Because the default really is the sandbox, the classification and the environment agree.
 
 **Sandbox.** One gVisor container per Agent, with the Workspace mounted read-write. It serves every Thread of that Agent, including Threads of different Members. An Agent's sandbox is always on: the idle reaper skips it, and it is stopped only to free capacity. Bytes leave the sandbox only as Attachments or Tool artifacts. The server reads the Workspace without following links, so a link planted inside the sandbox never resolves on the server.
 
@@ -178,5 +183,5 @@ A Turn cut off mid-Step resumes from its last recorded entry. A Tool call cut of
 
 ## Known gaps
 
-- The workspace change journal keys paths without their root. On Project-bound Threads it records `write` on the Machine and misses `agent_write` in the sandbox.
+- The workspace change journal keys paths without their root, so one path written on a Machine and in the sandbox reads as one file.
 - Event sources (webhooks, chat messages) cannot trigger a Routine yet; only time can.

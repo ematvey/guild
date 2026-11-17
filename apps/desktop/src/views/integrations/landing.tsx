@@ -162,8 +162,7 @@ export function CatalogLandingPage({
       <header className="flex flex-wrap items-start gap-6 border-b border-border pb-8">
         <Logo svg={data.logo} title={data.title} size="size-16" />
         <div className="min-w-0 flex-1 basis-80">
-          <h1 className="text-2xl font-semibold">{data.title}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {data.publisher || "Unknown publisher"}
             {data.version !== "" && <> · version {data.version}</>}
           </p>

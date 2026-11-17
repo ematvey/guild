@@ -16,7 +16,6 @@ import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { addPluginCatalog, installPluginUrl, removePluginCatalog, uploadPluginBundle } from "../../lib/api/settings";
 import { Field } from "../settings/components/field";
 import type { CatalogRow } from "./integrations-api";
-import { PageTitle } from "./page-title";
 
 type SourceKind = "url" | "github" | "gitlab";
 
@@ -65,10 +64,10 @@ export function CatalogSources({
   return (
     <div className="max-w-4xl">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <PageTitle
-          title="Catalog sources"
-          description="Indexes of plugins your organization can install. Their plugins appear in the catalog. Installing copies the exact bundle a source lists into this server; the source is not needed afterwards."
-        />
+        <p className="max-w-prose text-sm text-muted-foreground">
+          Indexes of plugins your organization can install. Their plugins appear in the catalog. Installing copies the
+          exact bundle a source lists into this server; the source is not needed afterwards.
+        </p>
         <Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={refreshing}>
           <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} /> Refresh
         </Button>
@@ -247,10 +246,10 @@ export function InstallBundle({ onInstalled }: { onInstalled: (slug: string) => 
 
   return (
     <div className="max-w-3xl">
-      <PageTitle
-        title="Install a plugin bundle"
-        description="Install a .guildplugin someone gave you. Installing approves that exact bundle for the whole organization: a plugin runs on this server, so install only plugins you trust."
-      />
+      <p className="max-w-prose text-sm text-muted-foreground">
+        Install a .guildplugin someone gave you. Installing approves that exact bundle for the whole organization: a
+        plugin runs on this server, so install only plugins you trust.
+      </p>
       <div className="grid gap-10 md:grid-cols-2">
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">From a file</h2>

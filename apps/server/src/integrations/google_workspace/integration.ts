@@ -53,7 +53,7 @@ const plugin: IntegrationPlugin = {
         required: true,
         default: null,
         help: "Workspace admin the connection test acts as",
-        placeholder: "admin@yourorg.com",
+        placeholder: "admin@example.com",
         obtain:
           "A Workspace admin who can read the user directory (a super admin works). Guild acts as " +
           "this user only for **Test connection**; a call without a member identity is refused. " +
@@ -107,15 +107,18 @@ const plugin: IntegrationPlugin = {
         name: "gmail_get_attachment",
         class: "read",
         description:
-          "Fetch one Gmail attachment as a downloadable file artifact. Get the attachment id from gmail_get_message's attachment list.",
+          "Fetch one Gmail attachment into the working folder. Get the attachment id from gmail_get_message's attachment list.",
         parameters: {
           type: "object",
           properties: {
             message_id: { type: "string" },
             attachment_id: { type: "string" },
-            filename: { type: "string", description: "Override the materialized filename (optional)" },
+            path: {
+              type: "string",
+              description: "Destination path relative to the working folder.",
+            },
           },
-          required: ["message_id", "attachment_id"],
+          required: ["message_id", "attachment_id", "path"],
         },
       },
       {
@@ -148,18 +151,22 @@ const plugin: IntegrationPlugin = {
         name: "drive_get_file",
         class: "read",
         description:
-          "Download one Drive file as a chat file. An uploaded file (xlsx, pdf, image, docx…) comes back byte for byte. A native Google Doc, Sheet, Slide or Drawing is exported: markdown, csv, pdf and png by default, or the format given in mime_type. Get the id from drive_search.",
+          "Download one Drive file into the working folder. An uploaded file (xlsx, pdf, image, docx…) comes back byte for byte. A native Google Doc, Sheet, Slide or Drawing is exported: markdown, csv, pdf and png by default, or the format given in mime_type. Get the id from drive_search.",
         parameters: {
           type: "object",
           properties: {
             file_id: { type: "string", description: "Drive file id" },
+            path: {
+              type: "string",
+              description: "Destination path relative to the working folder.",
+            },
             mime_type: {
               type: "string",
               description:
                 "Export format for a native Google file (optional): text/markdown, text/plain, text/csv, text/tab-separated-values, text/html, application/pdf, application/rtf, application/zip, application/epub+zip, image/png, image/jpeg, image/svg+xml, the Office and OpenDocument formats. Ignored for uploaded files, which have one format.",
             },
           },
-          required: ["file_id"],
+          required: ["file_id", "path"],
         },
       },
       {

@@ -23,6 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
+import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
 import { shareableUrl } from "../../lib/session";
@@ -79,7 +80,10 @@ export function ThreadHeader({
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   return (
-    <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
+    <header
+      {...titleBarDragDeep}
+      className={`flex items-center gap-2 border-b border-border px-3 ${TOP_ROW} pt-[env(safe-area-inset-top)] text-base ${CAPTION_BUTTONS_INSET}`}
+    >
       {isMobile && (
         <Button
           variant="ghost"

@@ -416,8 +416,7 @@ export function InstalledDetail({
       <header className="flex flex-wrap items-start gap-5">
         <Logo svg={item.logo} title={item.title} size="size-12" />
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold">{item.title}</h1>
-          <p className="mt-1 max-w-prose text-sm text-muted-foreground">{item.summary}</p>
+          <p className="max-w-prose text-sm text-muted-foreground">{item.summary}</p>
           <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
             <StatusDot status={status} />
             {statusLine(status)}

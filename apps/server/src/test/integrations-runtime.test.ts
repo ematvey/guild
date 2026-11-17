@@ -262,6 +262,116 @@ function route(
       }),
     };
   }
+  if (p === "/crm/v3/objects/deals/search") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        total: 42,
+        results: [{ id: "900", properties: { dealname: "North", amount: "5000", dealstage: "closedwon" } }],
+        paging: { next: { after: "900" } },
+      }),
+    };
+  }
+  if (p === "/crm/v3/objects/deals/900" && req.method === "GET") {
+    return {
+      status: 200,
+      body: JSON.stringify({ id: "900", properties: { dealname: "North", amount: "5000", dealstage: "closedwon" } }),
+    };
+  }
+  if (p === "/crm/v3/objects/deals/900" && req.method === "DELETE") {
+    return { status: 204, body: "" };
+  }
+  if (p === "/crm/v3/objects/deals/batch/read") {
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ id: "900", properties: { dealname: "North", amount: "5000" } }] }),
+    };
+  }
+  if (p === "/crm/v3/objects/companies/501/associations/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ toObjectId: "900" }, { toObjectId: "901" }] }),
+    };
+  }
+  if (p === "/crm/v3/pipelines/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [
+          {
+            id: "default",
+            label: "Sales",
+            stages: [
+              { id: "open", label: "Open" },
+              { id: "closedwon", label: "Closed won" },
+            ],
+          },
+        ],
+      }),
+    };
+  }
+  if (p === "/crm/v3/properties/deals") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [
+          {
+            name: "dealstage",
+            label: "Deal stage",
+            type: "enumeration",
+            fieldType: "select",
+            options: [{ value: "open" }, { value: "closedwon" }],
+          },
+          { name: "amount", label: "Amount", type: "number", fieldType: "number" },
+        ],
+      }),
+    };
+  }
+  if (p === "/crm/v3/objects/p148247336_subscriptions/search") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [{ id: "7", properties: { end_date: "2026-12-01", is_active: "true" } }],
+      }),
+    };
+  }
+  if (p === "/analytics/v2/reports/pages/total") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        offset: 0,
+        total: 3,
+        totals: { rawViews: 40, visits: 30, contacts: 2 },
+        breakdowns: [
+          { breakdown: "/pricing", rawViews: 25, visits: 20, contacts: 2 },
+          { breakdown: "/blog", rawViews: 15, visits: 10, contacts: 0 },
+        ],
+      }),
+    };
+  }
+  if (p === "/analytics/v2/reports/sessions/summarize/daily") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        offset: 0,
+        total: 1,
+        totals: { visits: 30 },
+        breakdowns: [{ breakdown: "2026-10-01", visits: 30 }],
+      }),
+    };
+  }
+  if (p === "/analytics/v2/reports/pages/exists") {
+    return { status: 200, body: JSON.stringify({ exists: true }) };
+  }
+  if (p === "/analytics/v2/views") {
+    return {
+      status: 200,
+      body: JSON.stringify([
+        { id: 12, title: "Pricing pages", reportPropertyFilters: [{ property: "path" }] },
+        { id: 13, title: "Blog" },
+      ]),
+    };
+  }
   // Langfuse.
   if (p === "/api/public/traces") {
     return {
@@ -456,14 +566,14 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "gmail_get_attachment",
-      { message_id: "msg-1", attachment_id: "att-1" },
+      { message_id: "msg-1", attachment_id: "att-1", path: "in/data.bin" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("attachment data.bin (4 bytes, image/jpeg)");
-    expect(out.artifact).toBeDefined();
-    expect([...out.artifact!.bytes]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
-    expect(out.artifact!.contentType).toBe("image/jpeg");
+    expect(out.content).toBe("attachment data.bin (4 bytes, image/jpeg) saved to in/data.bin");
+    expect(out.file).toBeDefined();
+    expect(out.file!.path).toBe("in/data.bin");
+    expect([...out.file!.bytes]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
   });
 
   it("drive_get_file downloads an uploaded file byte for byte through alt=media", async () => {
@@ -473,14 +583,13 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-1" },
+      { file_id: "f-1", path: "in/report.pdf" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
-    expect(out.artifact!.filename).toBe("report.pdf");
-    expect(out.artifact!.contentType).toBe("application/pdf");
-    expect([...out.artifact!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf) saved to in/report.pdf");
+    expect(out.file!.path).toBe("in/report.pdf");
+    expect([...out.file!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
     const hit = lastHit("/drive/v3/files/f-1");
     expect(hit.query.get("alt")).toBe("media");
     expect(hit.headers["authorization"]).toBe("Bearer tok-1");
@@ -493,13 +602,12 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-sheet" },
+      { file_id: "f-sheet", path: "budget.csv" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.artifact!.filename).toBe("Budget.csv");
-    expect(out.artifact!.contentType).toBe("text/csv");
-    expect(out.artifact!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
+    expect(out.file!.path).toBe("budget.csv");
+    expect(out.file!.bytes.toString("utf8")).toBe("sheet,rows\n1,2\n");
     expect(lastHit("/drive/v3/files/f-sheet/export").query.get("mimeType")).toBe("text/csv");
   });
 
@@ -510,11 +618,11 @@ describe("google_workspace execute (mock backend)", () => {
       "google_workspace",
       googleConfig(),
       "drive_get_file",
-      { file_id: "f-1", mime_type: "text/markdown" },
+      { file_id: "f-1", mime_type: "text/markdown", path: "report.pdf" },
       GOOGLE_SECRETS,
       "member@example.test",
     );
-    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf)");
+    expect(out.content).toBe("file report.pdf (4 bytes, application/pdf) saved to report.pdf");
     expect(lastHit("/drive/v3/files/f-1").query.get("alt")).toBe("media");
   });
 
@@ -541,7 +649,7 @@ describe("google_workspace execute (mock backend)", () => {
         "google_workspace",
         googleConfig(),
         "drive_get_file",
-        { file_id: "f-locked" },
+        { file_id: "f-locked", path: "locked.pdf" },
         GOOGLE_SECRETS,
         "member@example.test",
       ),
@@ -831,6 +939,248 @@ describe("connector execute spot checks (mock backend)", () => {
     expect(lastHit("/crm/v3/objects/contacts/search").headers["authorization"]).toBe("Bearer hs-1");
     expect(out.content).toContain("id=101");
     expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "contacts", count: 1 });
+  });
+
+  it("hubspot search_deals passes filters, sorts, properties and the page cursor", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "search_deals",
+      {
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: "dealstage", operator: "EQ", value: "closedwon" },
+              { propertyName: "closedate", operator: "BETWEEN", value: "2026-10-01", highValue: "2026-11-01" },
+            ],
+          },
+        ],
+        sorts: [{ propertyName: "closedate", direction: "DESCENDING" }],
+        properties: ["dealname", "amount"],
+        limit: 25,
+        after: "900",
+      },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/deals/search").body) as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      limit: 25,
+      properties: ["dealname", "amount"],
+      sorts: [{ propertyName: "closedate", direction: "DESCENDING" }],
+      after: "900",
+    });
+    expect(sent["query"]).toBeUndefined();
+    expect(out.content).toContain("id=900 dealname=North amount=5000");
+    expect(out.content).toContain('after="900"');
+    expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "deals", total: 42, after: "900" });
+  });
+
+  it("hubspot search_custom searches the object type the call names", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "search_objects",
+      { object_type: "p148247336_subscriptions", properties: ["end_date", "is_active"], limit: 5 },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/p148247336_subscriptions/search").body) as Record<string, unknown>;
+    expect(sent["properties"]).toEqual(["end_date", "is_active"]);
+    expect(out.content).toContain("id=7 end_date=2026-12-01 is_active=true");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "search", object: "p148247336_subscriptions", count: 1 });
+  });
+
+  it("hubspot search_custom refuses a call with no object type", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        "search_objects",
+        {},
+        [["token", "hs-1"]],
+        null,
+      ),
+    ).rejects.toThrow(/requires object_type/);
+  });
+
+  it("hubspot get_object reads one record with the properties it names", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_object",
+      { object_type: "deals", id: "900", properties: ["dealname", "amount"] },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(lastHit("/crm/v3/objects/deals/900").query.get("properties")).toBe("dealname,amount");
+    expect(out.content).toContain("deals id=900 dealname=North amount=5000");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "record", object: "deals", id: "900" });
+  });
+
+  it("hubspot batch_read asks for every id in one call", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "batch_read",
+      { object_type: "deals", ids: ["900", "901"], properties: ["dealname"] },
+      [["token", "hs-1"]],
+      null,
+    );
+    const sent = JSON.parse(lastHit("/crm/v3/objects/deals/batch/read").body) as Record<string, unknown>;
+    expect(sent["inputs"]).toEqual([{ id: "900" }, { id: "901" }]);
+    expect(out.content).toContain("id=900 dealname=North");
+    expect(out.content).toContain("Not found: 901.");
+  });
+
+  it("hubspot get_associations lists the related ids", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_associations",
+      { object_type: "companies", id: "501", to_object_type: "deals" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("deals: 900, 901");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "associations", ids: ["900", "901"] });
+  });
+
+  it("hubspot list_pipelines names the stages a filter needs", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_pipelines",
+      { object_type: "deals" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("Sales (default): Open=open, Closed won=closedwon");
+  });
+
+  it("hubspot list_properties filters by name", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_properties",
+      { object_type: "deals", query: "stage" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("dealstage (Deal stage) enumeration/select [open | closedwon]");
+    expect(out.content).not.toContain("amount");
+  });
+
+  it("hubspot delete_object tolerates the empty 204 answer", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "delete_object",
+      { object_type: "deals", id: "900" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("deals 900 deleted.");
+  });
+
+  it("hubspot get_analytics passes the range, the filters and the paging", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_analytics",
+      { report: "pages", period: "total", start: "20261001", end: "20261031", filter: ["/pricing"], limit: 1 },
+      [["token", "hs-1"]],
+      null,
+    );
+    const hit = lastHit("/analytics/v2/reports/pages/total");
+    expect(hit.headers["authorization"]).toBe("Bearer hs-1");
+    expect(hit.query.get("start")).toBe("20261001");
+    expect(hit.query.get("end")).toBe("20261031");
+    expect(hit.query.getAll("f")).toEqual(["/pricing"]);
+    expect(out.content).toContain("totals: rawViews=40 visits=30 contacts=2");
+    expect(out.content).toContain("1. /pricing: rawViews=25 visits=20 contacts=2");
+    expect(out.content).toContain("More rows: call again with offset=2.");
+    expect(out.meta).toMatchObject({ card: "crm", kind: "analytics", report: "pages", total: 3 });
+  });
+
+  it("hubspot get_analytics keeps the summarize period as two path segments", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_analytics",
+      { report: "sessions", period: "summarize/daily", start: "20261001", end: "20261002" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain("sessions/summarize/daily 20261001-20261002: 1 of 1 rows");
+    expect(out.content).toContain("1. 2026-10-01: visits=30");
+  });
+
+  it("hubspot get_analytics refuses a report outside the Analytics API", async () => {
+    await expect(
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        "get_analytics",
+        { report: "contacts", period: "total", start: "20261001", end: "20261031" },
+        [["token", "hs-1"]],
+        null,
+      ),
+    ).rejects.toThrow("requires report");
+  });
+
+  it("hubspot list_analytics_views names the view ids and their filters", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "list_analytics_views",
+      {},
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toContain('1. id=12 "Pricing pages" filters=1');
+    expect(out.content).toContain('2. id=13 "Blog"');
+  });
+
+  it("hubspot analytics_exists answers for one object type", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "analytics_exists",
+      { object_type: "pages" },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(out.content).toBe("pages: HubSpot has analytics data for this object type.");
+    expect(out.meta).toMatchObject({ exists: true });
   });
 
   it("langfuse list_traces uses the basic auth pair", async () => {

@@ -11,6 +11,7 @@ import {
 } from "../projects/projects";
 import { ChatListItem, ProjectHeader } from "./rows";
 import { CloseSidebarButton, CollapseButton } from "./chrome";
+import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 
 export const WorkPanel = memo(function WorkPanel({
   grouping,
@@ -143,7 +144,7 @@ export const WorkPanel = memo(function WorkPanel({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div className="flex items-center justify-between px-3 py-3">
+      <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
         <span className="font-semibold">Projects</span>
         <span className="flex items-center gap-1">
           <span

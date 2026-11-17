@@ -105,9 +105,11 @@ dbDescribe("agent send_file and turn attachments", () => {
         objects,
         agent,
         chatId: thread.chat_id,
-        workspaceRoot: root,
+        machineEnv: () => Promise.reject(new Error("no machine in this test")),
       },
       { path: "reports/build.html", as: "build.html" },
+      new NodeExecutionEnv({ cwd: workspace }),
+      BACKGROUND_CONTEXT,
     );
     expect(result).toMatchObject({
       filename: "build.html",
@@ -159,13 +161,24 @@ dbDescribe("agent send_file and turn attachments", () => {
     expect(await attachments.pendingAgentFiles(thread.chat_id)).toEqual([]);
   });
 
-  it("rejects paths outside the workspace and symlinks", async () => {
+  it("refuses a path that leaves the working folder", async () => {
     const workspace = path.join(root, "agents", orgId, agent.id);
     await mkdir(workspace, { recursive: true });
     const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
-    const context = { attachments, objects, agent, chatId: thread.chat_id, workspaceRoot: root };
-    await expect(sendFile(context, { path: "../outside.txt" })).rejects.toThrow(/parent traversal|escapes/);
-    await expect(sendFile(context, { path: "/etc/passwd" })).rejects.toThrow(/absolute/);
+    const context = {
+      attachments,
+      objects,
+      agent,
+      chatId: thread.chat_id,
+      machineEnv: () => Promise.reject(new Error("no machine in this test")),
+    };
+    const callEnv = new NodeExecutionEnv({ cwd: workspace });
+    await expect(sendFile(context, { path: "../outside.txt" }, callEnv, BACKGROUND_CONTEXT)).rejects.toThrow(
+      /leave the working folder/,
+    );
+    await expect(sendFile(context, { path: "/etc/passwd" }, callEnv, BACKGROUND_CONTEXT)).rejects.toThrow(
+      /relative to the working folder/,
+    );
   });
 
   it("materializes a turn's files and wipes the previous turn directory", async () => {

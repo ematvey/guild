@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  createAppCallGate,
   createAppTools,
   MAX_CALL_APP_RESULT_CHARS,
   renderAppsIndex,
@@ -317,6 +318,49 @@ describe("call_app", () => {
       function: "deals_by_stage",
     })) as { structuredOutput: { content: string } };
     expect(result.structuredOutput.content).toContain("was cut");
+  });
+});
+
+describe("createAppCallGate", () => {
+  const gate = () =>
+    createAppCallGate({
+      apps: { getVisible: async () => appRow() },
+      chats: {
+        ownerOf: async () => ({
+          org_id: ORG,
+          user_id: MEMBER,
+          email: "ada@example.test",
+          display_name: null,
+          role: "member",
+        }),
+      },
+      chatOfConversation: async () => "chat-1",
+      functionGate: async (_orgId, _userId, fn) => fakes.gate(fn),
+    });
+  const call = (fn: string) => ({ id: "call-1", name: "call_app", arguments: { app_id: APP, function: fn } });
+
+  it("lets a read-class function flow", async () => {
+    reset();
+    expect(await gate().decision(1, call("deals_by_stage") as never)).toBeUndefined();
+  });
+
+  it("sends a write-class function to the Thread's approval mode", async () => {
+    reset();
+    expect(await gate().decision(1, call("create_deal") as never)).toBe("policy");
+  });
+
+  it("asks for an always_ask curation, whatever the Thread's mode", async () => {
+    reset();
+    fakes.gate = (fn) =>
+      fn.name === "deals_by_stage"
+        ? { ok: true, class: "read", alwaysAsk: true, reason: null }
+        : { ok: true, class: "write", alwaysAsk: true, reason: null };
+    expect(await gate().decision(1, call("deals_by_stage") as never)).toBe("ask");
+  });
+
+  it("ignores a tool that is not call_app", async () => {
+    reset();
+    expect(await gate().decision(1, { id: "c", name: "bash", arguments: {} } as never)).toBeUndefined();
   });
 });
 

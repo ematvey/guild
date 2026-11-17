@@ -9,7 +9,11 @@ type Dispatch = Pick<MachineDispatch, "dispatch">;
 
 /** A stand-in engine over a real directory: answers the raw file ops and
  *  `write_file` the way crates/app-server/src/machine_link.rs does. */
-function engine(dir: string, opts: { legacy?: boolean } = {}): { dispatch: Dispatch; calls: string[] } {
+function engine(
+  dir: string,
+  opts: { legacy?: boolean; staged?: Buffer } = {},
+): { dispatch: Dispatch; calls: string[] } {
+  const staged = opts.staged ?? Buffer.from("staged");
   const calls: string[] = [];
   const reply = (content: unknown, is_error = false): MachineToolOutcome => ({
     content: typeof content === "string" ? content : JSON.stringify(content),
@@ -45,9 +49,19 @@ function engine(dir: string, opts: { legacy?: boolean } = {}): { dispatch: Dispa
           } catch {
             return reply({ exists: false });
           }
-        case "write_file":
-          writeFileSync(file, args.content ?? "");
+        case "fs.fetch_v1": {
+          // The engine pulls the staged artifact with its own session; the
+          // fake stands in for that download.
+          writeFileSync(file, staged);
+          return reply({ path: file, size: staged.length });
+        }
+        case "write_file": {
+          // As the engine does: `encoding: base64` means the content is bytes.
+          const { encoding } = call.args as { encoding?: string };
+          const content = args.content ?? "";
+          writeFileSync(file, encoding === "base64" ? Buffer.from(content, "base64") : content);
           return reply(`wrote to ${file}`);
+        }
         default:
           return reply(`invalid input: unknown tool ${call.name}`, true);
       }
@@ -66,11 +80,49 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function env(dir: string, dispatch: Dispatch): MachineExecutionEnv {
-  return new MachineExecutionEnv({ machineId: "m", orgId: "o", chatId: "c", workdir: dir, timeoutMs: 1000, dispatch });
+function env(
+  dir: string,
+  dispatch: Dispatch,
+  stage: (b: Uint8Array, n: string) => Promise<string> = async () => "a-1",
+) {
+  return new MachineExecutionEnv({
+    machineId: "m",
+    orgId: "o",
+    chatId: "c",
+    workdir: dir,
+    timeoutMs: 1000,
+    dispatch,
+    stage,
+  });
 }
 
 describe("machine file adapter", () => {
+  it("stages bytes and lets the machine pull them by id, never over the socket", async () => {
+    const dir = scratch();
+    const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
+    const { dispatch, calls } = engine(dir, { staged: bytes });
+    const staged: { bytes: number; name: string }[] = [];
+    const e = env(dir, dispatch, async (content, name) => {
+      staged.push({ bytes: content.length, name });
+      return "artifact-1";
+    });
+    const written = await e.writeFile(path.join(dir, "report.pdf"), new Uint8Array(bytes), BACKGROUND_CONTEXT);
+    expect(written.ok).toBe(true);
+    // The bytes went to the stager, not into the dispatch frame.
+    expect(staged).toEqual([{ bytes: bytes.length, name: path.join(dir, "report.pdf") }]);
+    expect(calls).toEqual(["fs.fetch_v1"]);
+    expect([...readFileSync(path.join(dir, "report.pdf"))]).toEqual([...bytes]);
+  });
+
+  it("refuses bytes to an engine that cannot pull an artifact", async () => {
+    const dir = scratch();
+    const { dispatch } = engine(dir, { legacy: true });
+    const e = env(dir, dispatch);
+    const written = await e.writeFile(path.join(dir, "report.pdf"), new Uint8Array([0x25, 0x50]), BACKGROUND_CONTEXT);
+    expect(written.ok).toBe(false);
+    expect(written.ok ? "" : written.error.message).toContain("update the desktop app");
+  });
+
   it("reads large CRLF text without a trailing newline exactly, and an edit writes it back whole", async () => {
     const dir = scratch();
     const lines = Array.from({ length: 5000 }, (_, i) => `line ${i} — padded so the file is well past 64 KB`);

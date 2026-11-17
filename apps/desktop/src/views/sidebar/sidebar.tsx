@@ -3,6 +3,7 @@
 // the width, the drag handle and the collapsed state are the same everywhere.
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { trackDrag } from "../../lib/drag";
+import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import {
   clampSidebarWidth,
   saveSidebarCollapsed,
@@ -75,7 +76,8 @@ export function Sidebar({ collapsed, children }: { collapsed: boolean; children:
   return (
     <aside
       aria-label="Sidebar"
-      className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-sidebar-foreground ${
+      {...titleBarDrag}
+      className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-sidebar-foreground ${TITLE_BAR_INSET} ${
         resizing ? "" : "transition-[width] duration-150"
       }`}
       style={{ width }}

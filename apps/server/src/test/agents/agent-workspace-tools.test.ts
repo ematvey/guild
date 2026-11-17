@@ -1,13 +1,12 @@
-// The coding tools' bindings: the agent-sandbox set (renamed and bound to the
-// agent's own env) and the routed set (a per-call `machine` target that swaps
-// the call's environment).
+// The file tools' one binding: a per-call `machine` target that swaps the
+// call's environment, and no target without it.
 
 import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { AGENT_TOOL_NAMES, createAgentWorkspaceTools, createRoutedCodingTools } from "../../harness/agent-tools.js";
+import { createRoutedCodingTools } from "../../harness/agent-tools.js";
 import { MachineTargetError } from "../../machines/targets.js";
 
 function env() {
@@ -86,24 +85,5 @@ describe("createRoutedCodingTools", () => {
     };
     expect(out.isError).toBe(true);
     expect(out.output[0]!.text).toContain("no such machine");
-  });
-});
-
-describe("createAgentWorkspaceTools", () => {
-  it("exposes the four coding tools under agent_ names", () => {
-    const tools = createAgentWorkspaceTools(env());
-    expect(tools.map((t) => t.name)).toEqual([...AGENT_TOOL_NAMES]);
-    for (const tool of tools) expect(tool.description).toContain("your own agent workspace");
-  });
-
-  it("runs the tool in the agent env, not the call's env", async () => {
-    const agentEnv = env();
-    const [read, write] = createAgentWorkspaceTools(agentEnv);
-    // The call's env points at a directory that does not exist: the tool must
-    // ignore it and use the bound agent env.
-    const foreign = { env: { cwd: "/nonexistent-foreign-env" } };
-    await write!.execute({ path: "notes.md", content: "hello" }, foreign as never, {} as never);
-    const out = await read!.execute({ path: "notes.md" }, foreign as never, {} as never);
-    expect(JSON.stringify(out)).toContain("hello");
   });
 });

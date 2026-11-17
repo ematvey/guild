@@ -1,6 +1,6 @@
 //! guild-app-server — the local engine (spec §3.2) as a standalone binary.
 //! The shipped desktop app links the same library and runs the engine
-//! in-process (docs/specs/2026-09-13-single-process-desktop.md); this
+//! in-process; this
 //! binary is the dev/test and headless-host surface.
 //!
 //! - No args: JSON-RPC loop on stdio (dev/test surface).

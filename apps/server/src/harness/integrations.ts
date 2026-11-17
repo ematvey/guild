@@ -31,7 +31,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ToolArtifactStore } from "../platform/store/tool-artifacts.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { artifactMeta, pointerText, spillArtifact } from "../chats/spill.js";
+import { writeIntoEnv } from "./chat-files.js";
 import { auditError, callPlugin } from "../integrations/execute.js";
 import type { JsonObject, ToolOutcome } from "../integrations/shared.js";
 import type { IntegrationGateway } from "../integrations/plugins.js";
@@ -301,9 +301,8 @@ export class IntegrationsRuntime {
     spec: IntegrationToolInfo["spec"],
     execute: (
       args: JsonObject,
-      callId: string,
-      conversationId: number,
-      signal?: AbortSignal,
+      api: ToolExecutionApi,
+      context: Context,
     ) => Promise<{ content: string; isError: boolean; meta?: unknown }>,
   ): ToolRegistration {
     const registration = {
@@ -314,12 +313,7 @@ export class IntegrationsRuntime {
       replay: "unsafe" as const,
       async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
         context.abortSignal?.throwIfAborted();
-        const outcome = await execute(
-          (args ?? {}) as JsonObject,
-          api.callId,
-          Number(api.conversationId),
-          context.abortSignal,
-        );
+        const outcome = await execute((args ?? {}) as JsonObject, api, context);
         context.abortSignal?.throwIfAborted();
         // The tool-owned widget payload rides the details' reserved
         // `guild_meta` key — the bridge maps it onto the tool_result event.
@@ -343,8 +337,8 @@ export class IntegrationsRuntime {
         description: `List the tools of the ${turn.slug} integration that you may call, with JSON schemas.`,
         parameters: { type: "object", properties: {} },
       },
-      async (_args, _callId, conversationId) => {
-        const snapshot = await this.snapshotFor(conversationId);
+      async (_args, api) => {
+        const snapshot = await this.snapshotFor(Number(api.conversationId));
         const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
         if (snapshotTurn === undefined) {
           return { content: `integration ${turn.slug} is not enabled for this conversation`, isError: true };
@@ -370,8 +364,8 @@ export class IntegrationsRuntime {
         description: `Return the usage guide (SKILL.md) for the ${turn.slug} integration.`,
         parameters: { type: "object", properties: {} },
       },
-      async (_args, _callId, conversationId) => {
-        const snapshot = await this.snapshotFor(conversationId);
+      async (_args, api) => {
+        const snapshot = await this.snapshotFor(Number(api.conversationId));
         const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
         if (snapshotTurn === undefined || snapshotTurn.executor !== "mcp") {
           return { content: `integration ${turn.slug} has no guide`, isError: false };
@@ -399,8 +393,8 @@ export class IntegrationsRuntime {
   }
 
   private integrationTool(info: IntegrationToolInfo): ToolRegistration {
-    return IntegrationsRuntime.toolRegistration(info.spec, async (args, callId, conversationId, signal) => {
-      return this.executeToolCall(conversationId, callId, info.spec.name, args, signal);
+    return IntegrationsRuntime.toolRegistration(info.spec, async (args, api, context) => {
+      return this.executeToolCall(api, info.spec.name, args, context);
     });
   }
 
@@ -472,12 +466,14 @@ export class IntegrationsRuntime {
    *  event. A failure is a tool RESULT the model sees, never a thrown
    *  error. */
   private async executeToolCall(
-    conversationId: number,
-    callId: string,
+    api: ToolExecutionApi,
     callName: string,
     args: JsonObject,
-    signal?: AbortSignal,
+    context: Context,
   ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
+    const conversationId = Number(api.conversationId);
+    const callId = api.callId;
+    const signal = context.abortSignal;
     const snapshot = await this.authorizedSnapshot(conversationId);
     const turns = snapshot?.turns ?? [];
     // Guild-provided disclosure tools (never sent to a connector).
@@ -531,50 +527,32 @@ export class IntegrationsRuntime {
     if (!ok) {
       return { content: `web tool failed: ${(outcome.error as Error).message}`, isError: true };
     }
-    return this.materialize(snapshot.chatId, callId, raw, outcome.value);
+    return this.deliver(api, raw, outcome.value, context);
   }
 
-  /** The artifact choke point (tool artifacts design): a tool-carried
-   *  payload spills always and the content becomes the pointer text; a
-   *  spill failure keeps the inline result — the outcome is never lost. */
-  private async materialize(
-    chatId: string,
-    callId: string,
+  /** The file sink: bytes a tool carries are written where the call names
+   *  them, so the model reads them with the ordinary tools. A tool without
+   *  bytes passes its content through unchanged. */
+  private async deliver(
+    api: ToolExecutionApi,
     rawTool: string,
     outcome: ToolOutcome,
+    context: Context,
   ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
-    const { artifacts, objects } = this.deps;
-    if (outcome.artifact !== undefined) {
-      if (objects === undefined) {
-        return { content: outcome.content, isError: false, meta: outcome.meta };
-      }
-      try {
-        const spilled = await spillArtifact(
-          artifacts,
-          objects,
-          (await this.orgIdOfChat(chatId)) ?? "",
-          chatId,
-          callId,
-          rawTool,
-          outcome.artifact.filename,
-          outcome.artifact.contentType,
-          outcome.artifact.bytes,
-        );
-        return {
-          content: pointerText(rawTool, spilled, outcome.artifact.contentType, null),
-          isError: false,
-          meta: artifactMeta(outcome.meta, spilled),
-        };
-      } catch (error) {
-        this.deps.log.error({ err: error, tool: rawTool }, "artifact spill failed, keeping inline");
-        return { content: outcome.content, isError: false, meta: outcome.meta };
-      }
+    if (outcome.file !== undefined) {
+      const env = api.env;
+      if (env === undefined) return { content: outcome.content, isError: false, meta: outcome.meta };
+      const written = await writeIntoEnv(env, outcome.file.path, outcome.file.bytes, context, {
+        overwrite: true,
+      });
+      if (!written.ok) return { content: `${rawTool}: ${written.reason}`, isError: true };
+      return {
+        content: `Saved ${written.value.path} (${outcome.file.bytes.length} bytes)`,
+        isError: false,
+        meta: outcome.meta,
+      };
     }
     return { content: outcome.content, isError: false, meta: outcome.meta };
-  }
-
-  private orgIdOfChat(chatId: string): Promise<string | null> {
-    return this.deps.chats.orgOf(chatId);
   }
 
   /** Fetches and unpacks the guide body (SKILL.md, falling back to

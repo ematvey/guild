@@ -9,7 +9,12 @@ import { Type } from "typebox";
 import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { AppStore } from "../platform/store/apps.js";
 import { MAX_APP_DESCRIPTION, MAX_APP_HTML_BYTES, MAX_APP_NAME } from "../platform/store/apps.js";
-import { AppFunctionError, parseAppFunctions, type AppFunction } from "../platform/domain/app-functions.js";
+import {
+  AppFunctionError,
+  parseAppFunctions,
+  weakerDeclaration,
+  type AppFunction,
+} from "../platform/domain/app-functions.js";
 import { ApiError } from "../platform/errors.js";
 import { isUuid } from "../platform/time.js";
 import type { Agent } from "./types.js";
@@ -58,7 +63,8 @@ A data function is one Integration tool with fixed arguments. Write {"$param": "
   {"name": "deals_by_stage", "description": "Deals in one stage", "integration": "hubspot", "tool": "hubspot_search_deals",
    "args": {"filters": [{"property": "dealstage", "value": {"$param": "stage"}}], "limit": 100},
    "params": {"stage": {"type": "string", "enum": ["won", "lost", "open"], "default": "open"}}}
-Find tool names and argument schemas with <slug>_list_tools, and call the tool once yourself to learn the result's shape. Each viewer's own Integration access applies when they open the App; a write-class tool (the raw <slug>_api tools included, even for a search) asks each viewer to approve its function before it runs, once per App version if they choose. Prefer read-class tools; use a raw api tool only when no read tool can express the query, and name the function so the viewer can tell it only reads. Design for both light and dark themes and for narrow widths, handle errors from guild.call, and show loading states.`;
+A function may declare "class": "read" | "write" | "admin" when the tool's class cannot say what the call does. The raw <slug>_api tool is class write because the whole API is; one fixed request inside it may only read, so declare it: {"name": "subs_expiring", ..., "class": "read"}. Any other tool keeps its own class: a declaration may only make a function stricter, never weaker.
+Find tool names and argument schemas with <slug>_list_tools, and call the tool once yourself to learn the result's shape. Each viewer's own Integration access applies when they open the App; a write- or admin-class function asks each viewer to approve it before it runs, once per App version if they choose, and an Agent's call follows its Thread's approval mode. Prefer read-class tools; use a raw api tool only when no read tool can express the query, and declare "class": "read" when the fixed request only reads. Design for both light and dark themes and for narrow widths, handle errors from guild.call, and show loading states.`;
 
 export function createPublishAppTool(context: PublishAppContext): ToolRegistration {
   return defineTool({
@@ -150,7 +156,8 @@ export function createPublishAppTool(context: PublishAppContext): ToolRegistrati
 }
 
 /** The publish-time reach check: whether the member could call each
- *  function's tool right now, through the same rules a call runs. */
+ *  function's tool right now, through the same rules a call runs, and whether
+ *  the function's declared class is one it may claim. */
 export function appFunctionCheck(
   gateway: IntegrationGateway,
   access: IntegrationAccessStore,
@@ -159,13 +166,16 @@ export function appFunctionCheck(
   return async (orgId, userId, fn) => {
     const user = await identity.getUser(userId);
     try {
-      await memberTool(
+      const tool = await memberTool(
         gateway,
         access,
         { org: orgId, userId, email: user.email, role: user.role },
         fn.integration,
         fn.tool,
       );
+      if (weakerDeclaration(fn, tool)) {
+        return `class "${fn.class}" is weaker than the tool's "${tool.class}"; only the raw api tool takes a lower class`;
+      }
       return null;
     } catch (error) {
       if (error instanceof ApiError) return error.message;

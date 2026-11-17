@@ -15,17 +15,9 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
 import type { AppRow, AppStore } from "../store/apps.js";
-import {
-  AppFunctionError,
-  bindAppFunction,
-  type AppFunction,
-} from "../domain/app-functions.js";
+import { AppFunctionError, appFunctionClass, bindAppFunction, type AppFunction } from "../domain/app-functions.js";
 import { IntegrationAccessStore } from "../store/integration-access.js";
-import {
-  memberTool,
-  runMemberTool,
-  type IntegrationCaller,
-} from "../../integrations/member-tools.js";
+import { memberTool, runMemberTool, type IntegrationCaller } from "../../integrations/member-tools.js";
 import type { UserRow } from "../store/identity.js";
 
 /** How long a page link stays valid: long enough to open and reload. */
@@ -39,8 +31,7 @@ export const APP_CALLS_PER_MINUTE = 120;
 
 /** The CDNs a page may load scripts, styles and fonts from. A request to
  *  them carries no data the page chose beyond the URL of a public file. */
-const CDNS =
-  "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com";
+const CDNS = "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com";
 
 /** The policy an App page is served under. `sandbox` forces an opaque
  *  origin; `connect-src 'none'`, local-only images and no popups or form
@@ -128,11 +119,7 @@ export const APP_BRIDGE = `<script>
  *  `<html>`, else after the doctype, else at the top. A doctype must stay
  *  first, or the page renders in quirks mode. */
 export function injectBridge(html: string): string {
-  for (const re of [
-    /<head(\s[^>]*)?>/i,
-    /<html(\s[^>]*)?>/i,
-    /<!doctype[^>]*>/i,
-  ]) {
+  for (const re of [/<head(\s[^>]*)?>/i, /<html(\s[^>]*)?>/i, /<!doctype[^>]*>/i]) {
     const match = re.exec(html);
     if (match !== null) {
       const at = match.index + match[0].length;
@@ -142,44 +129,24 @@ export function injectBridge(html: string): string {
   return `${APP_BRIDGE}${html}`;
 }
 
-const signature = (
-  secret: string,
-  id: string,
-  version: number,
-  exp: number,
-): string =>
-  createHmac("sha256", secret)
-    .update(`app:${id}:${version}:${exp}`)
-    .digest("hex");
+const signature = (secret: string, id: string, version: number, exp: number): string =>
+  createHmac("sha256", secret).update(`app:${id}:${version}:${exp}`).digest("hex");
 
 /** The path the client frames: the page route with the version and a
  *  signed expiry. */
-export function appPagePath(
-  secret: string,
-  id: string,
-  version: number,
-  now = Date.now(),
-): string {
+export function appPagePath(secret: string, id: string, version: number, now = Date.now()): string {
   const exp = Math.floor(now / 1000) + APP_LINK_TTL_SECONDS;
   return `/api/v1/apps/${id}/page?v=${version}&sig=${exp}.${signature(secret, id, version, exp)}`;
 }
 
-function verifyPageLink(
-  secret: string,
-  id: string,
-  version: number,
-  value: string,
-): void {
+function verifyPageLink(secret: string, id: string, version: number, value: string): void {
   const [rawExp, sig] = value.split(".");
   const exp = Number(rawExp);
-  if (!Number.isFinite(exp) || sig === undefined)
-    throw ApiError.unauthorized("bad app link");
-  if (exp < Math.floor(Date.now() / 1000))
-    throw ApiError.unauthorized("app link expired");
+  if (!Number.isFinite(exp) || sig === undefined) throw ApiError.unauthorized("bad app link");
+  if (exp < Math.floor(Date.now() / 1000)) throw ApiError.unauthorized("app link expired");
   const a = Buffer.from(signature(secret, id, version, exp), "utf8");
   const b = Buffer.from(sig, "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b))
-    throw ApiError.unauthorized("bad app link");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) throw ApiError.unauthorized("bad app link");
 }
 
 /** One data function as a viewer sees it: whether they may call it, and
@@ -190,10 +157,11 @@ export interface ViewerFunction {
   integration: string;
   tool: string;
   params: AppFunction["params"];
-  /** The tool's class; null when the viewer cannot reach the tool. */
+  /** The function's class; null when the viewer cannot reach the tool. */
   class: string | null;
   available: boolean;
-  /** A write- or admin-class tool, or one the Org curates to always ask. */
+  /** A write- or admin-class function, or one the Org curates to always
+   *  ask. */
   confirm: boolean;
   /** The viewer said "always allow" to this function of this version, so
    *  its calls run without asking. */
@@ -210,9 +178,7 @@ class CallBudget {
   private readonly calls = new Map<string, number[]>();
 
   take(key: string, now = Date.now()): boolean {
-    const recent = (this.calls.get(key) ?? []).filter(
-      (at) => now - at < 60_000,
-    );
+    const recent = (this.calls.get(key) ?? []).filter((at) => now - at < 60_000);
     if (recent.length >= APP_CALLS_PER_MINUTE) {
       this.calls.set(key, recent);
       return false;
@@ -233,20 +199,12 @@ function callerOf(user: UserRow): IntegrationCaller {
   };
 }
 
-export function registerAppRoutes(
-  app: FastifyInstance,
-  auth: IdentityCtx,
-  gateway: GatewayCtx,
-  apps: AppStore,
-): void {
+export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx, apps: AppStore): void {
   const access = new IntegrationAccessStore(gateway.integrations.pool);
   const budget = new CallBudget();
 
   /** The viewer's view of every function of an App. */
-  const viewerFunctions = async (
-    row: AppRow,
-    user: UserRow,
-  ): Promise<ViewerFunction[]> => {
+  const viewerFunctions = async (row: AppRow, user: UserRow): Promise<ViewerFunction[]> => {
     const caller = callerOf(user);
     const granted = await apps.grants(row.id, user.id, row.version);
     return Promise.all(
@@ -261,23 +219,17 @@ export function registerAppRoutes(
           granted: granted.has(fn.name),
         };
         try {
-          const tool = await memberTool(
-            gateway,
-            access,
-            caller,
-            fn.integration,
-            fn.tool,
-          );
+          const tool = await memberTool(gateway, access, caller, fn.integration, fn.tool);
+          const cls = appFunctionClass(fn, tool);
           return {
             ...base,
-            class: tool.class,
+            class: cls,
             available: true,
-            confirm: tool.class !== "read" || tool.alwaysAsk,
+            confirm: cls !== "read" || tool.alwaysAsk,
             reason: null,
           };
         } catch (error) {
-          const reason =
-            error instanceof ApiError ? error.message : "unavailable";
+          const reason = error instanceof ApiError ? error.message : "unavailable";
           return {
             ...base,
             class: null,
@@ -294,8 +246,7 @@ export function registerAppRoutes(
   // `app_list` frame keeps it live).
   app.get("/api/v1/apps", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const items =
-      (await apps.listVisible(user.org_id, [user.id])).get(user.id) ?? [];
+    const items = (await apps.listVisible(user.org_id, [user.id])).get(user.id) ?? [];
     return sendJson(reply, { items });
   });
 
@@ -303,11 +254,7 @@ export function registerAppRoutes(
   // may call them.
   app.get("/api/v1/apps/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const row = await apps.getVisible(
-      user.org_id,
-      parseUuidParam(req, "id"),
-      user,
-    );
+    const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user);
     return sendJson(reply, {
       app: row,
       functions: await viewerFunctions(row, user),
@@ -317,11 +264,7 @@ export function registerAppRoutes(
   // `GET /api/v1/apps/{id}/page_link` — the signed URL the client frames.
   app.get("/api/v1/apps/:id/page_link", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const row = await apps.getVisible(
-      user.org_id,
-      parseUuidParam(req, "id"),
-      user,
-    );
+    const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user);
     return sendJson(reply, {
       path: appPagePath(auth.config.jwtSecret, row.id, row.version),
       version: row.version,
@@ -334,8 +277,7 @@ export function registerAppRoutes(
     const id = parseUuidParam(req, "id");
     const version = Number(queryParam(req, "v"));
     const sig = queryParam(req, "sig");
-    if (!Number.isInteger(version) || version < 1 || sig === undefined)
-      throw ApiError.badRequest("bad app link");
+    if (!Number.isInteger(version) || version < 1 || sig === undefined) throw ApiError.badRequest("bad app link");
     verifyPageLink(auth.config.jwtSecret, id, version, sig);
     const page = await apps.page(id, version);
     return reply
@@ -356,11 +298,7 @@ export function registerAppRoutes(
   // that grant. A connector failure is a 200 `ok: false` result.
   app.post("/api/v1/apps/:id/functions/:name", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const row = await apps.getVisible(
-      user.org_id,
-      parseUuidParam(req, "id"),
-      user,
-    );
+    const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user);
     const name = (req.params as Record<string, string>)["name"] ?? "";
     const fn = row.functions.find((item) => item.name === name);
     if (fn === undefined) throw ApiError.notFound("no such function");
@@ -369,26 +307,16 @@ export function registerAppRoutes(
     try {
       args = bindAppFunction(fn, body["params"]);
     } catch (error) {
-      if (error instanceof AppFunctionError)
-        throw ApiError.badRequest(error.message);
+      if (error instanceof AppFunctionError) throw ApiError.badRequest(error.message);
       throw error;
     }
     const caller = callerOf(user);
-    const tool = await memberTool(
-      gateway,
-      access,
-      caller,
-      fn.integration,
-      fn.tool,
-    );
-    if (tool.class !== "read" || tool.alwaysAsk) {
+    const tool = await memberTool(gateway, access, caller, fn.integration, fn.tool);
+    if (appFunctionClass(fn, tool) !== "read" || tool.alwaysAsk) {
       const confirmed = body["confirmed"] === true;
       if (confirmed && body["remember"] === true) {
         await apps.grant(row.id, user.id, row.version, fn.name);
-      } else if (
-        !confirmed &&
-        !(await apps.grants(row.id, user.id, row.version)).has(fn.name)
-      ) {
+      } else if (!confirmed && !(await apps.grants(row.id, user.id, row.version)).has(fn.name)) {
         throw ApiError.conflict(
           "confirmation_required",
           `${fn.name} uses a tool that can change data and needs your confirmation`,
@@ -396,26 +324,13 @@ export function registerAppRoutes(
       }
     }
     if (!budget.take(`${user.id}:${row.id}`)) {
-      throw new ApiError(
-        429,
-        "rate_limited",
-        "this app is calling too often; wait a minute",
-      );
+      throw new ApiError(429, "rate_limited", "this app is calling too often; wait a minute");
     }
-    const result = await runMemberTool(
-      gateway,
-      auth.events,
-      caller,
-      tool.turn,
-      tool.raw,
-      args,
-      user.email,
-      {
-        via: "app",
-        app_id: row.id,
-        function: fn.name,
-      },
-    );
+    const result = await runMemberTool(gateway, auth.events, caller, tool.turn, tool.raw, args, user.email, {
+      via: "app",
+      app_id: row.id,
+      function: fn.name,
+    });
     if (result.ok && Buffer.byteLength(result.content) > MAX_APP_RESULT_BYTES) {
       return sendJson(reply, {
         ok: false,
@@ -429,11 +344,7 @@ export function registerAppRoutes(
   // "always allow" they gave this App.
   app.delete("/api/v1/apps/:id/grants", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const row = await apps.getVisible(
-      user.org_id,
-      parseUuidParam(req, "id"),
-      user,
-    );
+    const row = await apps.getVisible(user.org_id, parseUuidParam(req, "id"), user);
     await apps.clearGrants(row.id, user.id);
     return sendJson(reply, { cleared: true });
   });

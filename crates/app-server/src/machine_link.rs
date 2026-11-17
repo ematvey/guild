@@ -235,9 +235,16 @@ async fn ws_session(
                             // completion order is free to interleave.
                             let outbound = outbound_tx.clone();
                             let hooks = hooks.clone();
+                            let cloud = cloud.clone();
                             executions.spawn(call_id.clone(), async move {
-                                let result =
-                                    execute_client_tool(&name, &arguments, workdir.as_deref(), Some(hooks)).await;
+                                let result = execute_client_tool(
+                                    &name,
+                                    &arguments,
+                                    workdir.as_deref(),
+                                    Some(hooks),
+                                    Some(&cloud),
+                                )
+                                .await;
                                 let msg = WsClientMsg::ToolResult {
                                     chat_id,
                                     call_id,
@@ -441,6 +448,7 @@ const CAPABILITIES: &[&str] = &[
     "fs_list",
     RAW_READ_OP,
     RAW_STAT_OP,
+    RAW_FETCH_OP,
 ];
 
 /// Control-plane ops the server sends over the executor socket: capability
@@ -526,6 +534,7 @@ struct ExecOutcome {
 /// like `read_file`; a failure's content is `{"code", "message"}`.
 const RAW_READ_OP: &str = "fs.read_raw_v1";
 const RAW_STAT_OP: &str = "fs.stat_v1";
+const RAW_FETCH_OP: &str = "fs.fetch_v1";
 
 const NO_WORKDIR: &str = "no workspace folder is set for this chat — pick a project with 'Choose project' in the composer";
 
@@ -538,8 +547,13 @@ async fn read_roots(dir: &str) -> Result<Vec<PathBuf>, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn execute_raw_file_op(name: &str, arguments: &str, workdir: Option<&str>) -> ExecOutcome {
-    use guild_core::tools::fs::{read_raw, stat_raw, RawFsError, MAX_RAW_READ_BYTES};
+async fn execute_raw_file_op(
+    name: &str,
+    arguments: &str,
+    workdir: Option<&str>,
+    cloud: Option<&CloudClient>,
+) -> ExecOutcome {
+    use guild_core::tools::fs::{read_raw, stat_raw, write_raw, RawFsError, MAX_RAW_READ_BYTES};
     let result: Result<serde_json::Value, serde_json::Value> = async {
         let invalid = |m: String| serde_json::json!({ "code": "invalid", "message": m });
         let dir = workdir.ok_or_else(|| invalid(NO_WORKDIR.to_string()))?;
@@ -548,11 +562,37 @@ async fn execute_raw_file_op(name: &str, arguments: &str, workdir: Option<&str>)
         let path = args["path"]
             .as_str()
             .ok_or_else(|| invalid("missing path".into()))?;
-        let roots = read_roots(dir).await.map_err(invalid)?;
-        let out = if name == RAW_READ_OP {
-            read_raw(Path::new(dir), &roots, path, MAX_RAW_READ_BYTES).await
-        } else {
-            stat_raw(Path::new(dir), &roots, path).await
+        // A write is scoped to the workspace alone; reads also reach the
+        // skill dirs.
+        let out = match name {
+            RAW_FETCH_OP => {
+                // The bytes never ride the socket: the server stores them as
+                // a chat artifact and this engine pulls them with its own
+                // session, then writes them here.
+                let id = args["artifact_id"]
+                    .as_str()
+                    .ok_or_else(|| invalid("missing artifact_id".into()))?;
+                let id = uuid::Uuid::parse_str(id)
+                    .map_err(|_| invalid(format!("artifact_id is not a uuid: {id}")))?;
+                let client =
+                    cloud.ok_or_else(|| invalid("this engine has no cloud session".into()))?;
+                let bytes = client
+                    .fetch_tool_artifact(id)
+                    .await
+                    .map_err(|e| invalid(format!("artifact fetch failed: {e}")))?;
+                // `write_raw` takes base64 so one function owns the scope and
+                // size rules; the encode is local, the bytes stay in memory.
+                let encoded = guild_core::tools::fs::encode_bytes(&bytes);
+                write_raw(Path::new(dir), path, &encoded).await
+            }
+            RAW_READ_OP => {
+                let roots = read_roots(dir).await.map_err(invalid)?;
+                read_raw(Path::new(dir), &roots, path, MAX_RAW_READ_BYTES).await
+            }
+            _ => {
+                let roots = read_roots(dir).await.map_err(invalid)?;
+                stat_raw(Path::new(dir), &roots, path).await
+            }
         };
         out.map_err(|e: RawFsError| e.to_json())
     }
@@ -575,9 +615,10 @@ async fn execute_client_tool(
     arguments: &str,
     workdir: Option<&str>,
     hooks: Option<Arc<guild_core::tools::artifacts::ArtifactHooks>>,
+    cloud: Option<&CloudClient>,
 ) -> ExecOutcome {
-    if matches!(name, RAW_READ_OP | RAW_STAT_OP) {
-        return execute_raw_file_op(name, arguments, workdir).await;
+    if matches!(name, RAW_READ_OP | RAW_STAT_OP | RAW_FETCH_OP) {
+        return execute_raw_file_op(name, arguments, workdir, cloud).await;
     }
     let result = async {
         let dir = workdir.ok_or_else(|| NO_WORKDIR.to_string())?;
@@ -1129,7 +1170,7 @@ mod tests {
             .to_string();
             let mut executions = ToolExecutions::default();
             executions.spawn("call-1".into(), async move {
-                let _ = execute_client_tool("execute", &args, Some(&workdir), None).await;
+                let _ = execute_client_tool("execute", &args, Some(&workdir), None, None).await;
             });
             tokio::time::timeout(Duration::from_secs(5), async {
                 while !started.exists() {
@@ -1329,6 +1370,7 @@ mod tests {
             &serde_json::json!({"path": ancestor_skill}).to_string(),
             Some(&child.to_string_lossy()),
             None,
+            None,
         )
         .await;
         assert!(!read.is_error);
@@ -1338,6 +1380,7 @@ mod tests {
             &serde_json::json!({"path": ancestor_skill, "content":"overwrite"}).to_string(),
             Some(&child.to_string_lossy()),
             None,
+            None,
         )
         .await;
         assert!(write.is_error);
@@ -1345,6 +1388,7 @@ mod tests {
             "read_file",
             &serde_json::json!({"path": temp.join("AGENTS.md")}).to_string(),
             Some(&child.to_string_lossy()),
+            None,
             None,
         )
         .await;
@@ -1566,7 +1610,8 @@ mod tests {
                 "fs_home",
                 "fs_list",
                 "fs.read_raw_v1",
-                "fs.stat_v1"
+                "fs.stat_v1",
+                "fs.fetch_v1"
             ])
         );
         for retired in [
@@ -1597,7 +1642,7 @@ mod tests {
         std::fs::write(dir.join("big.txt"), &text).unwrap();
         let workdir = dir.to_string_lossy().to_string();
         let args = serde_json::json!({"path": "big.txt"}).to_string();
-        let read = execute_client_tool(RAW_READ_OP, &args, Some(&workdir), None).await;
+        let read = execute_client_tool(RAW_READ_OP, &args, Some(&workdir), None, None).await;
         assert!(!read.is_error, "{}", read.content);
         let value: serde_json::Value = serde_json::from_str(&read.content).unwrap();
         let bytes = base64::engine::general_purpose::STANDARD
@@ -1605,22 +1650,45 @@ mod tests {
             .unwrap();
         assert_eq!(bytes, text.as_bytes());
 
-        let stat = execute_client_tool(RAW_STAT_OP, &args, Some(&workdir), None).await;
+        let stat = execute_client_tool(RAW_STAT_OP, &args, Some(&workdir), None, None).await;
         let value: serde_json::Value = serde_json::from_str(&stat.content).unwrap();
         assert_eq!(value["kind"], "file");
         assert_eq!(value["size"], text.len());
 
         let missing = serde_json::json!({"path": "nope.txt"}).to_string();
-        let read = execute_client_tool(RAW_READ_OP, &missing, Some(&workdir), None).await;
+        let read = execute_client_tool(RAW_READ_OP, &missing, Some(&workdir), None, None).await;
         assert!(read.is_error);
         let value: serde_json::Value = serde_json::from_str(&read.content).unwrap();
         assert_eq!(value["code"], "not_found");
-        let stat = execute_client_tool(RAW_STAT_OP, &missing, Some(&workdir), None).await;
+        let stat = execute_client_tool(RAW_STAT_OP, &missing, Some(&workdir), None, None).await;
         assert!(!stat.is_error);
         assert_eq!(stat.content, r#"{"exists":false}"#);
 
-        let none = execute_client_tool(RAW_READ_OP, &args, None, None).await;
+        let none = execute_client_tool(RAW_READ_OP, &args, None, None, None).await;
         assert!(none.is_error);
+
+        // A fetch needs the link's cloud session and a real artifact id:
+        // bytes never ride the socket, so there is no payload to write.
+        let fetch =
+            serde_json::json!({"path": "out/report.pdf", "artifact_id": uuid::Uuid::now_v7()})
+                .to_string();
+        let unsessioned =
+            execute_client_tool(RAW_FETCH_OP, &fetch, Some(&workdir), None, None).await;
+        assert!(unsessioned.is_error);
+        assert!(
+            unsessioned.content.contains("cloud session"),
+            "{}",
+            unsessioned.content
+        );
+        let bad = serde_json::json!({"path": "out/report.pdf", "artifact_id": "nope"}).to_string();
+        let unparsed = execute_client_tool(RAW_FETCH_OP, &bad, Some(&workdir), None, None).await;
+        assert!(unparsed.is_error);
+        assert!(
+            unparsed.content.contains("not a uuid"),
+            "{}",
+            unparsed.content
+        );
+        assert!(!dir.join("out/report.pdf").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1802,7 +1870,7 @@ mod tests {
     #[test]
     fn execute_client_tool_requires_a_workdir() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let out = rt.block_on(execute_client_tool("read_file", "{}", None, None));
+        let out = rt.block_on(execute_client_tool("read_file", "{}", None, None, None));
         assert!(out.is_error);
         assert!(out.content.contains("no workspace folder"));
     }
@@ -1815,6 +1883,7 @@ mod tests {
             "{}",
             Some(std::env::temp_dir().to_str().unwrap()),
             None,
+            None,
         ));
         assert!(out.is_error);
         assert!(out.content.contains("unknown tool"));
@@ -1824,8 +1893,14 @@ mod tests {
     async fn executor_preserves_images_and_materializes_missing_artifacts() {
         let dir = temp_scoped_dir("tool-media-artifact");
         std::fs::write(dir.join("picture.png"), b"png-fixture").unwrap();
-        let image =
-            execute_client_tool("read_file", r#"{"path":"picture.png"}"#, dir.to_str(), None).await;
+        let image = execute_client_tool(
+            "read_file",
+            r#"{"path":"picture.png"}"#,
+            dir.to_str(),
+            None,
+            None,
+        )
+        .await;
         assert!(!image.is_error, "{}", image.content);
         assert_eq!(image.images.len(), 1);
         assert!(image.images[0].starts_with("data:image/png;base64,"));
@@ -1858,14 +1933,15 @@ mod tests {
         );
         let path = format!(".guild/artifacts/{chat}/report.txt");
         let args = serde_json::json!({"path":path}).to_string();
-        let read = execute_client_tool("read_file", &args, dir.to_str(), Some(hooks.clone())).await;
+        let read =
+            execute_client_tool("read_file", &args, dir.to_str(), Some(hooks.clone()), None).await;
         assert!(!read.is_error, "{}", read.content);
         assert_eq!(read.content, "artifact body");
         assert_eq!(
             std::fs::read_to_string(dir.join(&path)).unwrap(),
             "artifact body"
         );
-        let cached = execute_client_tool("read_file", &args, dir.to_str(), Some(hooks)).await;
+        let cached = execute_client_tool("read_file", &args, dir.to_str(), Some(hooks), None).await;
         assert!(!cached.is_error);
         std::fs::remove_dir_all(dir).unwrap();
     }

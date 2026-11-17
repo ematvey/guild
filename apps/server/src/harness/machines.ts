@@ -15,8 +15,9 @@ import { renderMachineLines, type MachineTarget } from "../machines/targets.js";
 /** The section's opening: what a machine is and how a call addresses one. */
 export const MACHINES_SECTION_HEADER = [
   "These are the machines the member paired.",
-  "A coding tool call (`read`, `write`, `edit`, `bash`) with a `machine` argument runs on that machine; without it the call runs in the conversation's own environment.",
+  "A file tool call (`read`, `write`, `edit`, `bash`, `download`, `send_file`) with a `machine` argument runs on that machine; without it the call runs in the conversation's own environment.",
   "A machine has no shared folder: without `cwd` a call runs in the machine's home directory, and no folder carries from one call to the next, so write a shell command as `cd <folder> && <command>`.",
+  "A machine line ends with the OS and the `shell` that runs your `command`: write the command in that shell's language, not in bash. `cmd.exe` has no `$VAR`, no `ls`/`find`/`head`/`which` and no `/dev/null`; use `dir`, `type`, `where`, `%USERPROFILE%` and `2>nul`. A Windows folder under `\\\\wsl.localhost\\<distro>\\…` runs `bash` inside that distro instead.",
 ].join("\n");
 
 /** The section body: the header, then one line per machine. */
@@ -42,8 +43,9 @@ export function createMachineListTool(deps: MachineListDeps): ToolRegistration {
   return defineTool({
     name: "machine_list",
     description:
-      "List the machines the member paired, one per line: label, machine id, and whether it is online. Pass a " +
-      "machine's id or its unique label as `machine` to run a coding tool call on it.",
+      "List the machines the member paired, one per line: label, machine id, whether it is online, its OS and the " +
+      "shell a `command` runs in there. Pass a machine's id or its unique label as `machine` to run a coding tool " +
+      "call on it.",
     parameters: Type.Object({}),
     replay: "safe",
     outputLimits: { maxBytes: 4 * 1024 },

@@ -1,8 +1,7 @@
 //! The engine's local socket: line-delimited JSON-RPC over a per-user Unix
 //! socket / named pipe, the entry point for CLI verbs. The desktop app
 //! hosts it in-process (`run_daemon_shared_reclaiming`) with the same
-//! `Shared` its webview dispatches on
-//! (docs/specs/2026-09-13-single-process-desktop.md); `daemon` runs the
+//! `Shared` its webview dispatches on; `daemon` runs the
 //! same host headless — the optional systemd unit (`daemon install`) or a
 //! manual fallback. Whoever hosts the socket runs the machine link.
 //!
@@ -244,7 +243,7 @@ pub fn attach() -> anyhow::Result<Pair> {
 pub fn attach_with(expected_build: Option<&str>) -> anyhow::Result<Pair> {
     // No spawn fallback: the single-process app hosts the socket itself; a
     // CLI verb without a running app fails instead of forking a headless
-    // engine (docs/specs/2026-09-13-single-process-desktop.md).
+    // engine.
     for _ in 0..10u8 {
         if let Ok(pair) = try_connect() {
             if let Ok(pair) = handshake_with(pair, expected_build) {

@@ -43,7 +43,7 @@ import type { UsageReports } from "../platform/store/usage.js";
 import { modalityOf } from "../platform/domain/mime.js";
 import { ASSISTANT_PROMPT_KEY } from "../platform/store/org-kv.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import { machineDispatch, type MachineDispatchHost } from "../machines/dispatch.js";
 import { MachineTargetError, MachineTargets, type MachineFacts } from "../machines/targets.js";
 import { hubMachineFacts } from "../machines/hub-facts.js";
 import type { SandboxTarget } from "../sandbox/client.js";
@@ -87,6 +87,7 @@ import { UserMcpRuntime } from "./user-mcp.js";
 import { SkillRuntime } from "./skills.js";
 import { guildProviderId } from "./models.js";
 import { OrgModels } from "./org-models.js";
+import { chatStager } from "../chats/stage.js";
 import { ConversationExecutors } from "./executors.js";
 import { TurnTools, chatExtensionNames } from "./turn-tools.js";
 import { appFunctionCheck } from "../agents/publish-app.js";
@@ -223,7 +224,7 @@ export class GuildRuntime {
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
-  /** The member's paired machines: the per-call target a coding tool call
+  /** The member's paired machines: the per-call target a file tool call
    *  resolves through `machine`, and the list the prompt and `machine_list`
    *  render. */
   private readonly machineTargets: MachineTargets;
@@ -311,7 +312,6 @@ export class GuildRuntime {
       agents: this.agents,
       ...(objects === undefined ? {} : { objects }),
       chatOfConversation,
-      machineDispatch: () => this.turns.machineDispatch ?? this.dispatch(),
       skills: () => this.skillsRuntime,
     });
     this.skillsRuntime = new SkillRuntime({
@@ -337,7 +337,6 @@ export class GuildRuntime {
         const label = owner.display_name !== null && owner.display_name !== "" ? owner.display_name : owner.email;
         return { orgId: owner.org_id, userId: owner.user_id, role: owner.role, label };
       },
-      executorKind: (conversationId) => this.executorKind(conversationId),
       conversationEnv: (conversationId, orgId) => this.executors.envFor(conversationId, orgId),
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
@@ -436,6 +435,10 @@ export class GuildRuntime {
       // worker mode, the hub's registry in the server.
       dispatch: () => this.turns.machineDispatch ?? this.dispatch(),
       timeoutMs: () => config.clientToolTimeoutMs,
+      stage: async (orgId, chatId, bytes, name) => {
+        if (objects === undefined) throw new Error("this server has no object store to stage files in");
+        return chatStager(stores.toolArtifacts, objects, orgId, chatId)(bytes, name);
+      },
     });
     this.guildExtension = createGuildExtension({
       orgProfile: async (orgId) => {
@@ -470,9 +473,22 @@ export class GuildRuntime {
       internalKey: config.internalKey,
       allowShellTools: config.allowShellTools,
       chatOfConversation,
-      executorKind: (conversationId) => this.executorKind(conversationId),
       attachments: stores.attachments,
+      artifacts: stores.toolArtifacts,
       ...(objects === undefined ? {} : { objects }),
+      machineEnv: async (conversationId, request) => {
+        const chatId = await chatOfConversation(conversationId);
+        if (chatId === null) throw new MachineTargetError("this conversation has no chat");
+        const owner = await stores.chats.ownerOf(chatId);
+        if (owner === null) throw new MachineTargetError("this chat has no owner to run a machine call for");
+        return this.machineTargets.envFor({
+          orgId: owner.org_id,
+          userId: owner.user_id,
+          chatId,
+          machine: request.machine,
+          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        });
+      },
       integrations: {
         gateDecision: async (conversationId, callName) => {
           const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
@@ -604,11 +620,6 @@ export class GuildRuntime {
    *  mapping; unmapped conversations — e.g. the root — have none). */
   async chatOfConversation(conversationId: number): Promise<string | null> {
     return this.conversationToChat.get(conversationId) ?? null;
-  }
-
-  /** Where this conversation's tools execute (executors.ts). */
-  executorKind(conversationId: number): Promise<ExecutorKind> {
-    return this.executors.executorKind(conversationId);
   }
 
   /** Removes a conversation's sandbox container (its files stay on the

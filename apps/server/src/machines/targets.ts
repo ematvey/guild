@@ -16,11 +16,13 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { MachineExecutionEnv, type MachineDispatch } from "./dispatch.js";
 import type { MachineRow } from "../platform/store/machines.js";
 
-/** A machine the member may address, with its live flag. */
+/** A machine the member may address, with its live flag and the OS it runs. */
 export interface MachineTarget {
   machine_id: string;
   label: string | null;
   online: boolean;
+  os: string | null;
+  os_version: string | null;
 }
 
 /** A call the member cannot make: the message is written for the model. */
@@ -44,6 +46,9 @@ export interface MachineTargetDeps {
   dispatch(): Pick<MachineDispatch, "dispatch"> | undefined;
   /** The per-call result timeout. */
   timeoutMs(): number;
+  /** Puts bytes the server holds into the chat's file store; the machine
+   *  pulls them by id. */
+  stage(orgId: string, chatId: string, bytes: Uint8Array, name: string): Promise<string>;
 }
 
 export class MachineTargets {
@@ -63,6 +68,8 @@ export class MachineTargets {
       machine_id: row.machine_id,
       label: row.label,
       online: live.has(row.machine_id),
+      os: row.os,
+      os_version: row.os_version,
     }));
   }
 
@@ -119,18 +126,35 @@ export class MachineTargets {
       workdir,
       timeoutMs: this.deps.timeoutMs(),
       dispatch,
+      stage: (bytes, name) => this.deps.stage(args.orgId, args.chatId, bytes, name),
     });
   }
 }
 
+/** The shell a machine's `command` runs in, from its OS alone. The engine
+ *  picks the shell by workdir as well (`cmd.exe` for a native Windows folder,
+ *  `bash` inside the distro for a `\\wsl.localhost\…` one); the prompt header
+ *  carries that exception, this names the default. `null` when the OS is
+ *  unknown, so no line claims a shell it cannot back. */
+export function shellOf(os: string | null | undefined): string | null {
+  if (os === null || os === undefined) return null;
+  return os.toLowerCase() === "windows" ? "cmd.exe" : "sh -c";
+}
+
 /** One line per machine for the prompt and the `machine_list` tool: the
- *  label, the id and the live flag. */
+ *  label, the id, the live flag, and — when the OS is known — the OS and the
+ *  shell the call's `command` runs in. */
 export function renderMachineLines(machines: readonly MachineTarget[]): string {
   if (machines.length === 0) return "none paired";
   return machines
-    .map(
-      (machine) =>
-        `- ${machine.label ?? "(unlabelled)"} · ${machine.machine_id} · ${machine.online ? "online" : "offline"}`,
-    )
+    .map((machine) => {
+      const parts = [`- ${machine.label ?? "(unlabelled)"}`, machine.machine_id, machine.online ? "online" : "offline"];
+      const shell = shellOf(machine.os);
+      if (machine.os !== null && machine.os !== undefined) {
+        parts.push(machine.os_version ? `${machine.os} ${machine.os_version}` : machine.os);
+      }
+      if (shell !== null) parts.push(`shell: ${shell}`);
+      return parts.join(" · ");
+    })
     .join("\n");
 }

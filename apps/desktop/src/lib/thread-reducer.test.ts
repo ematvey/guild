@@ -448,6 +448,23 @@ describe("applyState: approval upsert mid-stream", () => {
     expect(again.blocks.find((b) => b.kind === "approval")!.key).toBe("2:0");
   });
 
+  it("carries the approval judge's reason onto the card", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    const judged = row(2, {
+      type: "approval_request",
+      call_id: "c1",
+      name: "download",
+      arguments: "{}",
+      judge: { approve: false, reason: "the call names no file", ms: 812 },
+    });
+    const state1 = r.applyState(state("c1", 2, [judged]));
+    const card = state1.blocks.find((b) => b.kind === "approval") as
+      | { approval: { judge?: { reason?: string; ms?: number } } }
+      | undefined;
+    expect(card?.approval.judge).toEqual({ reason: "the call names no file", ms: 812 });
+  });
+
   it("an approved decision removes the card; an expired decision keeps it", () => {
     const r = createThreadReducer();
     r.open("c1");

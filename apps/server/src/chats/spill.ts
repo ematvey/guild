@@ -17,7 +17,6 @@ import {
   toolArtifactObjectKey,
   type ToolArtifactRow,
 } from "../platform/store/tool-artifacts.js";
-import { isTextual } from "../platform/domain/mime.js";
 
 /** Serialized model-facing content above this size spills into an artifact
  *  (one shared threshold for every server-side tool). */
@@ -71,18 +70,10 @@ function formatSize(sizeBytes: number): string {
  *  Text mime: one line naming tool/filename/size, then the explicit marker
  *  and the first 2 KiB excerpt. Binary mime: one line with path, size and
  *  mime only. This exact shape is contract for the model-facing history. */
-export function pointerText(
-  toolName: string,
-  spilled: SpilledArtifact,
-  contentType: string,
-  fullText: string | null,
-): string {
+export function pointerText(toolName: string, spilled: SpilledArtifact, contentType: string, fullText: string): string {
   const head = `Tool "${toolName}" returned a large result saved as ${spilled.filename} (${formatSize(spilled.size_bytes)} — ${spilled.size_bytes} bytes, ${contentType}).`;
-  if (fullText !== null && isTextual(contentType)) {
-    const excerpt = [...fullText].slice(0, EXCERPT_BYTES).join("");
-    return `${head}\nFirst 2 KiB of ${sizeKiB(spilled.size_bytes)} KiB; full result at ${spilled.path}:\n${excerpt}`;
-  }
-  return `${head} Full result at ${spilled.path}.`;
+  const excerpt = [...fullText].slice(0, EXCERPT_BYTES).join("");
+  return `${head}\nFirst 2 KiB of ${sizeKiB(spilled.size_bytes)} KiB; full result at ${spilled.path}:\n${excerpt}`;
 }
 
 /** The `meta` payload a spilled ToolResult carries so clients can render the

@@ -17,6 +17,8 @@ import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
 import { ThemeProvider } from "./theme";
 import { resetSessionState } from "./lib/session-reset";
+import { TITLE_BAR_INSET, titleBarDrag, CUSTOM_TITLE_BAR } from "./lib/titlebar";
+import { WindowsTitleBar } from "./components/windows-title-bar";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
 const BAKED_URL: string = (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
@@ -393,7 +395,10 @@ function DesktopApp() {
     );
   }
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+    <div
+      {...titleBarDrag}
+      className={`flex min-h-screen items-center justify-center bg-background text-foreground ${TITLE_BAR_INSET}`}
+    >
       <UpdateToast />
       <Card className="w-full max-w-sm">
         <CardHeader>
@@ -485,7 +490,7 @@ function DesktopApp() {
 /// Plain full-screen background for the interval before auth/session state is
 /// known: no indicator and no default (logged-out) UI may render first.
 function BootBackground() {
-  return <div className="min-h-screen bg-background" />;
+  return <div {...titleBarDrag} className={`min-h-screen bg-background ${TITLE_BAR_INSET}`} />;
 }
 
 function AppInner() {
@@ -564,6 +569,7 @@ function AppInner() {
 export default function App() {
   return (
     <ThemeProvider>
+      {CUSTOM_TITLE_BAR && <WindowsTitleBar />}
       <AppInner />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}

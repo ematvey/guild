@@ -1,5 +1,5 @@
-// Persistent agent rows and wire shapes (docs/specs/2026-10-18-persistent-agents.md).
-// These names are the contract the agents lanes share; keep them stable.
+// Persistent agent rows and wire shapes. These names are the contract the
+// agents lanes share; keep them stable.
 
 import type { AgentThreadType } from "../platform/domain/thread-type.js";
 import type { AgentIntegrationEntry } from "../platform/domain/integration-access.js";

@@ -78,6 +78,9 @@ export interface ApprovalBlock {
   args: string;
   status: "pending" | "approved" | "denied" | "expired";
   reason?: string;
+  /// The approval judge's verdict, when it ran and did not approve. Its
+  /// reason is why the card exists at all.
+  judge?: { reason?: string; ms?: number };
 }
 
 /// One durable compaction event (compaction spec section E): the model's
@@ -548,7 +551,14 @@ export function foldEvent(acc: ThreadFold, row: ThreadEventRow): void {
         if (existing.status !== "pending") replaceApproval(acc, existing, { ...existing, status: "pending" });
         break;
       }
-      const a: ApprovalBlock = { callId: ev.call_id, name: ev.name, args: ev.arguments, status: "pending" };
+      const judge = ev.judge === undefined ? undefined : { reason: ev.judge.reason, ms: ev.judge.ms };
+      const a: ApprovalBlock = {
+        callId: ev.call_id,
+        name: ev.name,
+        args: ev.arguments,
+        status: "pending",
+        ...(judge === undefined ? {} : { judge }),
+      };
       acc.approvalsByCall.set(ev.call_id, a);
       append(blocks, { kind: "approval", text: "", approval: a, key: nextKey() });
       break;

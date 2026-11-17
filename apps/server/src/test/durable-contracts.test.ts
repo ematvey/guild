@@ -604,7 +604,6 @@ describe("durable integration contracts", () => {
         internalKey: null,
         allowShellTools: true,
         chatOfConversation: async () => id,
-        executorKind: async () => "machine",
         currentModel: async () => null,
       });
       registry.install(
@@ -615,7 +614,7 @@ describe("durable integration contracts", () => {
             defineTool({
               name: "write",
               description: "write",
-              parameters: Type.Object({}),
+              parameters: Type.Object({ machine: Type.Optional(Type.String()) }),
               execute: async () => {
                 executions++;
                 return { output: [{ type: "text", text: "written" }] };
@@ -626,7 +625,7 @@ describe("durable integration contracts", () => {
       );
       const faux = fauxProvider();
       faux.setResponses([
-        fauxAssistantMessage(fauxToolCall("write", {}, { id: "approval-call" }), {
+        fauxAssistantMessage(fauxToolCall("write", { machine: "m-1" }, { id: "approval-call" }), {
           stopReason: "toolUse",
         }),
         fauxAssistantMessage("done"),
@@ -701,7 +700,6 @@ describe("durable integration contracts", () => {
       // The mapping is missing, so no chat policy can be read. Failing open
       // here would skip the exec policy, the shell allowlist and the card.
       chatOfConversation: async () => null,
-      executorKind: async () => "machine",
       currentModel: async () => null,
     });
     registry.install(

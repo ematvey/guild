@@ -1,5 +1,4 @@
-//! Tauri side of the desktop shell — SINGLE PROCESS (spec
-//! docs/specs/2026-09-13-single-process-desktop.md): the GUI process hosts
+//! Tauri side of the desktop shell — SINGLE PROCESS: the GUI process hosts
 //! the engine (session, JSON-RPC dispatch, local tool execution) directly.
 //! There is no headless daemon and no cross-process pipe to one; the local
 //! socket remains only as the CLI-verb entry point, hosted by this process.

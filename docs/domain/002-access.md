@@ -105,7 +105,7 @@ An Integration call acts as the Member's own mapped identity; overriding it is a
 
 ## Exec policy and Approvals
 
-A shell command (`bash`, `execute`, `agent_bash`) meets exec policy first. The command is split into its segments, and the strictest decision wins:
+A shell command (`bash`, `execute`) meets exec policy first. The command is split into its segments, and the strictest decision wins:
 
 | Decision | Effect |
 | --- | --- |
@@ -117,11 +117,11 @@ The Approval gate then decides, in this order:
 
 1. **The Thread's approval mode,** if set: `ask` always asks, `full_access` never asks, and `approve_for_me` asks the Org's judge.
 2. **Otherwise the Member's own policy** for that tool class.
-3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member.
+3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member, and the card shows the judge's reason.
 
 On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks wherever an interactive gate exists. One marked `always_allow` never asks.
 
-An App data function an Agent calls with `call_app` is the exception on the sandbox Executor: a function whose tool is `write`- or `admin`-class, or curated `always_ask`, asks the Member with a card, exactly as the App's own page does. A `read`-class function runs at once.
+An App data function an Agent calls with `call_app` follows the same gate. A `read`-class function runs at once; a function's class is its tool's or its own declaration (see 004). A function curated `always_ask` asks the Member, whatever the Thread's mode. A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the page's grants stay the page's.
 
 An Approval is answered once: the first answer wins under the Thread's lock. No answer within five minutes is a denial that tells the model not to retry. A stop ends a waiting Approval as aborted. An answer that arrives after its Turn ended is recorded as expired.
 

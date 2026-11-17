@@ -10,6 +10,7 @@ import { MAX_APP_HTML_BYTES, type AppRow, type AppStore } from "../platform/stor
 import type { AccessInput, AccessStore } from "../platform/store/access.js";
 import {
   AppFunctionError,
+  appFunctionClass,
   bindAppFunction,
   type AppFunction,
   type JsonObject,
@@ -341,7 +342,8 @@ export function renderAppsIndex(rows: readonly AppRow[]): string | null {
 }
 
 /** The member's reach on one data function's tool, through the same rules a
- *  call runs: the Integration's audience, the Org's curation and the class. */
+ *  call runs: the Integration's audience, the Org's curation and the class —
+ *  the function's own declaration where the tool's class cannot say it. */
 export function appFunctionGate(
   gateway: IntegrationGateway,
   access: IntegrationAccessStore,
@@ -357,7 +359,7 @@ export function appFunctionGate(
         fn.integration,
         fn.tool,
       );
-      return { ok: true, class: tool.class, alwaysAsk: tool.alwaysAsk, reason: null };
+      return { ok: true, class: appFunctionClass(fn, tool), alwaysAsk: tool.alwaysAsk, reason: null };
     } catch (error) {
       if (error instanceof ApiError) return { ok: false, class: null, alwaysAsk: false, reason: error.message };
       throw error;
@@ -383,9 +385,10 @@ export function appFunctionCall(
   };
 }
 
-/** The approval gate's classifier for `call_app`: a function whose tool is
- *  write- or admin-class, or curated to always ask, needs the member's yes. A
- *  read-class function flows, and a function the member cannot call flows too:
+/** The approval gate's classifier for `call_app`: a function curated to always
+ *  ask needs the member's yes, whatever the Thread's mode. A read-class
+ *  function flows, a write- or admin-class function goes to the Thread's
+ *  approval mode ("policy"), and a function the member cannot call flows too:
  *  the tool answers the refusal itself. */
 export function createAppCallGate(deps: {
   apps: Pick<AppStore, "getVisible">;
@@ -411,7 +414,8 @@ export function createAppCallGate(deps: {
       if (fn === undefined) return undefined;
       const gate = await deps.functionGate(owner.org_id, owner.user_id, fn);
       if (!gate.ok) return undefined;
-      return gate.class !== "read" || gate.alwaysAsk ? "ask" : undefined;
+      if (gate.alwaysAsk) return "ask";
+      return gate.class !== "read" ? "policy" : undefined;
     },
   };
 }

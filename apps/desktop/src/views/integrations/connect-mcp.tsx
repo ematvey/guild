@@ -14,7 +14,6 @@ import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
 import { createOrgMcp, probeOrgMcp } from "../../lib/api/settings";
 import { Field } from "../settings/components/field";
-import { PageTitle } from "./page-title";
 
 type ToolClass = "read" | "write" | "admin";
 
@@ -113,10 +112,10 @@ export function AddOrgMcp({ onCreated }: { onCreated: (slug: string) => void }) 
 
   return (
     <div className="max-w-3xl space-y-5">
-      <PageTitle
-        title="Connect an MCP server"
-        description="Connect a remote MCP server for the whole organization. Its tools reach every chat the integration policy allows."
-      />
+      <p className="max-w-prose text-sm text-muted-foreground">
+        Connect a remote MCP server for the whole organization. Its tools reach every chat the integration policy
+        allows.
+      </p>
 
       <div className="space-y-4 rounded-lg border border-border bg-card p-5">
         <div className="grid gap-4 sm:grid-cols-2">

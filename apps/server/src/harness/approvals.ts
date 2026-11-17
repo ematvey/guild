@@ -27,7 +27,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import { codemodeScriptLint } from "./codemode-lint.js";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import { taskAbortRequested } from "../storage/postgres/queries.js";
@@ -63,12 +62,13 @@ export const SERVER_DEFAULT_POLICY = { default: "ask", overrides: { read_file: "
 
 export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
-import { AGENT_TOOL_NAMES } from "./agent-tools.js";
+import { agentThreadForChat } from "../agents/workspace.js";
 
-/** The App call classifier: "ask" when the call targets a write- or
- *  admin-class data function, or one the Org curates to always ask. */
+/** The App call classifier: "ask" when the Org curates the function to always
+ *  ask, "policy" when it targets a write- or admin-class data function (the
+ *  Thread's approval mode decides), undefined when the call flows. */
 export interface AppCallGate {
-  decision(conversationId: number, call: ToolCall): Promise<"ask" | undefined>;
+  decision(conversationId: number, call: ToolCall): Promise<"ask" | "policy" | undefined>;
 }
 
 export interface ApprovalGateDeps {
@@ -89,11 +89,9 @@ export interface ApprovalGateDeps {
   internalKey: string | null;
   /** conversationId → chat id (the runtime's chat mapping). */
   chatOfConversation(conversationId: number): Promise<string | null>;
-  /** Where this conversation's tools execute (drives the shell allowlist +
-   *  the batch contract). */
-  executorKind(conversationId: number): Promise<ExecutorKind>;
-  /** The App call classifier: `call_app` on a write-class data function asks
-   *  the member, every call, as the App page's own dialog does. */
+  /** The App call classifier: `call_app` on a write-class data function is
+   *  classified as `policy`, so the Thread's approval mode decides; an
+   *  `always_ask` curation asks the member every time. */
   appCallGate?: AppCallGate;
   /** The integrations chat runtime: the integration tool envelope —
    *  read-class tools and always_allow-curated tools flow; an `always_ask`
@@ -447,11 +445,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         return undefined;
       }
       const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
-      const isCommandTool = call.name === "bash" || call.name === "execute" || call.name === "agent_bash";
-      // The agent's own sandbox tools act server-side even when the chat is
-      // bound to a machine: same shell allowlist and same batch contract as
-      // the server-side coding tools.
-      const isAgentTool = (AGENT_TOOL_NAMES as readonly string[]).includes(call.name);
+      const isCommandTool = call.name === "bash" || call.name === "execute";
       // An unmapped conversation has no policy to consult, and failing open
       // here skipped the static deny rules, the shell allowlist and the card
       // for every tool. A command-bearing tool is refused instead; non-command
@@ -459,11 +453,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       if (chatId === null) {
         return isCommandTool ? { block: "denied: this conversation has no approval mapping" } : undefined;
       }
-      const executor = await deps.executorKind(Number(runtime.conversationId));
-      // A call that names a machine runs there, whatever the chat's own
-      // executor is: the shell allowlist and the approval class follow the
-      // target, not the chat.
-      const toolExecutor = isAgentTool ? "server" : call.arguments?.["machine"] !== undefined ? "machine" : executor;
+      // A call that names a machine runs there; every other call runs in the
+      // server sandbox. The shell allowlist and the approval class follow the
+      // target, not the chat's binding.
+      const toolExecutor = call.arguments?.["machine"] !== undefined ? "machine" : "server";
 
       // 1. Static exec policy (the machine `execute` path's rules, applied
       //    to the harness's bash tool — same rules, same matcher).
@@ -472,8 +465,8 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         if (decision.kind === "deny") {
           return { block: `denied by exec policy: ${decision.reason}` };
         }
-        // Server-side executors honor the shell allowlist; machine-bound
-        // chats run on the desktop's own executor.
+        // A server-side executor honors the shell allowlist; a machine call
+        // runs on the desktop's own executor.
         if (toolExecutor !== "machine" && !deps.allowShellTools) {
           return { block: "denied: shell tools are disabled on this server" };
         }
@@ -489,7 +482,9 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       //     server tool.
       if (deps.integrations !== undefined) {
         const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
-        if (decision === "ask" && executor !== "server") {
+        // An agent's own thread runs unattended: its integration calls take
+        // the batch contract instead of a card.
+        if (decision === "ask" && (await agentThreadForChat(deps.pool, chatId)) === null) {
           return waitForApproval(deps, runtime, chatId, call, context);
         }
         if (decision === "skip") return undefined;
@@ -497,18 +492,22 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         // "policy" and undefined fall through to the chat approval mode.
       }
 
-      // 1c. App data functions: a write-class or always-ask function asks the
-      //     member, whoever runs the turn — an App's page asks the same
-      //     question in its own dialog.
-      if (deps.appCallGate !== undefined) {
-        const decision = await deps.appCallGate.decision(Number(runtime.conversationId), call);
-        if (decision === "ask") return waitForApproval(deps, runtime, chatId, call, context);
-      }
+      // 1c. App data functions: an `always_ask` curation asks the member,
+      //     whoever runs the turn; a write- or admin-class function goes to
+      //     the Thread's approval mode, so `full_access` runs it. A read-class
+      //     function never reaches here.
+      const appCall =
+        deps.appCallGate === undefined
+          ? undefined
+          : await deps.appCallGate.decision(Number(runtime.conversationId), call);
+      if (appCall === "ask") return waitForApproval(deps, runtime, chatId, call, context);
 
       // 2. The batch contract: server-side workspace sessions are
       //    pre-approved — no interactive gate (the exec policy above still
-      //    ran). Everything else gates by policy.
-      if (toolExecutor === "server" && !isCommandTool) {
+      //    ran). Everything else gates by policy. A write-class App function
+      //    is the exception the member chose to keep: it always takes the
+      //    approval mode, the unattended executor included.
+      if (toolExecutor === "server" && !isCommandTool && appCall !== "policy") {
         // Non-shell server tools (read/write/edit) run under the same batch
         // contract.
         return undefined;

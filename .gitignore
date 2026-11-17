@@ -15,7 +15,6 @@ tsconfig.tsbuildinfo
 .multi-category-report.md
 .multi-category-task.md
 
-# Round-review work products live under docs/reviews/ at merge time
 .fixer-prompt.md
 FIX-REPORT.md
 deploy/compose/config.env.bak*

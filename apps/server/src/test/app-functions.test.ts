@@ -2,7 +2,13 @@
 // binding, the bridge injection and the page policy.
 
 import { describe, expect, it } from "vitest";
-import { AppFunctionError, bindAppFunction, parseAppFunctions } from "../platform/domain/app-functions.js";
+import {
+  AppFunctionError,
+  appFunctionClass,
+  bindAppFunction,
+  parseAppFunctions,
+  weakerDeclaration,
+} from "../platform/domain/app-functions.js";
 import { APP_BRIDGE, APP_CSP, injectBridge } from "../platform/http/apps.js";
 
 const [fn] = parseAppFunctions([
@@ -40,6 +46,39 @@ describe("parseAppFunctions", () => {
         { name: "x", integration: "a", tool: "b", params: { p: { type: "string", enum: ["a"], default: "z" } } },
       ]),
     ).toThrow(/must be one of/);
+  });
+});
+
+describe("appFunctionClass", () => {
+  const rawApi = { class: "write", raw: "api" };
+  const named = { class: "write", raw: "update_object" };
+
+  it("takes the tool's class when the function declares none", () => {
+    expect(appFunctionClass({}, rawApi)).toBe("write");
+    expect(appFunctionClass({}, { class: "read", raw: "search_deals" })).toBe("read");
+  });
+
+  it("lets the raw api tool take a lower declared class", () => {
+    expect(appFunctionClass({ class: "read" }, rawApi)).toBe("read");
+    expect(weakerDeclaration({ class: "read" }, rawApi)).toBe(false);
+  });
+
+  it("keeps a named tool's class over a weaker declaration", () => {
+    expect(appFunctionClass({ class: "read" }, named)).toBe("write");
+    expect(weakerDeclaration({ class: "read" }, named)).toBe(true);
+  });
+
+  it("accepts a stricter declaration", () => {
+    expect(appFunctionClass({ class: "admin" }, { class: "read", raw: "search_deals" })).toBe("admin");
+    expect(weakerDeclaration({ class: "admin" }, { class: "read", raw: "search_deals" })).toBe(false);
+  });
+
+  it("parses a declared class and refuses an unknown one", () => {
+    const [parsed] = parseAppFunctions([{ name: "x", integration: "a", tool: "b", class: "read" }]);
+    expect(parsed!.class).toBe("read");
+    expect(() => parseAppFunctions([{ name: "x", integration: "a", tool: "b", class: "harmless" }])).toThrow(
+      /class must be read, write or admin/,
+    );
   });
 });
 

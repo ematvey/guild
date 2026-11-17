@@ -48,6 +48,7 @@ import { CatalogLandingPage } from "./landing";
 import { AddOrgMcp } from "./connect-mcp";
 import { CatalogSources, InstallBundle } from "./sources";
 import { CollapseButton } from "../sidebar/chrome";
+import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 
 type Navigate = (next: IntegrationsRoute, options?: { replace?: boolean }) => void;
@@ -173,7 +174,7 @@ function ListPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-5">
+      <div {...titleBarDragDeep} className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
         <h1 className="text-lg font-semibold">Integrations</h1>
         <span className="flex items-center gap-1">
           <CollapseButton onCollapse={onCollapse} />
@@ -352,8 +353,7 @@ function InstalledHome({
   }
   return (
     <div>
-      <h2 className="text-2xl font-semibold">Installed</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {installed.length} installed, {onCount} on. Calls are for the last 7 days.
       </p>
       <div className="mt-8 overflow-x-auto">
@@ -439,8 +439,7 @@ function CatalogHome({
   const failing = (catalogs ?? []).filter((c) => c.error !== null);
   return (
     <div className="max-w-4xl">
-      <h2 className="text-2xl font-semibold">Catalog</h2>
-      <p className="mt-2 max-w-prose text-base leading-relaxed text-muted-foreground">
+      <p className="max-w-prose text-base leading-relaxed text-muted-foreground">
         Everything your organization can add. Pick one on the left to read what it does and what it needs before you
         install it.
       </p>
@@ -646,11 +645,36 @@ export function IntegrationsPage({
     );
   }
 
+  // The first row of the column names what is open: the list's view, or the
+  // integration the address picked.
+  const viewTitle =
+    route.view === "connect"
+      ? route.kind === "mcp"
+        ? "Connect an MCP server"
+        : "Install a plugin bundle"
+      : route.view === "sources"
+        ? "Catalog sources"
+        : route.view === "installed"
+          ? route.slug === null
+            ? "Installed"
+            : (installed.find((i) => i.name === route.slug)?.title ?? "Installed")
+          : route.slug === null
+            ? "Catalog"
+            : (findCatalogEntry(catalog, route.slug, route.from)?.title ?? "Catalog");
+
   return (
     <div className="flex min-h-0 flex-1">
       <Sidebar collapsed={sidebar.collapsed}>{list}</Sidebar>
-      <main className="min-w-0 flex-1 overflow-y-auto" data-scrollable>
-        <div className="w-full max-w-[90rem] px-8 pb-20 pt-10 lg:px-12 2xl:px-16">{page}</div>
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header
+          {...titleBarDragDeep}
+          className={`flex shrink-0 items-center gap-3 border-b border-border bg-background px-8 ${TOP_ROW} lg:px-12 2xl:px-16 ${CAPTION_BUTTONS_INSET}`}
+        >
+          <span className="min-w-0 flex-1 truncate text-base font-medium">{viewTitle}</span>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+          <div className="w-full max-w-[90rem] px-8 pb-20 pt-6 lg:px-12 2xl:px-16">{page}</div>
+        </div>
       </main>
     </div>
   );

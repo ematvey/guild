@@ -4,9 +4,8 @@ The system-level contracts that satisfy `docs/PRD.md`. Every claim is
 verified against the code. Present-tense requirements only; identifiers are
 stable (`SRS-n`) for citation.
 
-> **Status (2026-10-22):** the contracts below are current. The cloud server
-> is TypeScript (`apps/server`); `crates/*` paths name the local engine and
-> the shared protocol crates.
+> The cloud server is TypeScript (`apps/server`); `crates/*` paths name the
+> local engine and the shared protocol crates.
 
 Group index:
 
@@ -91,17 +90,16 @@ via the `sandbox-runner` service: a plain chat gets
 gate both run before execution; `execute` additionally requires the server
 shell flag (`allow_shell_tools`).
 
-A machine-bound chat keeps its sandbox reachable through a second tool set
-(`agent_read`, `agent_write`, `agent_edit`, `agent_bash`), bound to the
-agent sandbox env while the plain names stay on the machine
-(`apps/server/src/harness/agent-tools.ts`). The set is registered per turn,
-outside the agent's tool allowlist, and it counts as server-side for the
-shell allowlist and the batch contract; `toolClass()` maps it to the same
-policy classes as the plain tools.
+Every chat keeps one file-tool set. Without `machine` a call acts on the
+agent's workspace in the sandbox; `machine` names one of the Member's paired
+computers and `cwd` the folder on it
+(`apps/server/src/harness/agent-tools.ts`). A Machine call counts as
+machine-side for the shell allowlist and takes an Approval card; a call
+without `machine` stays inside the sandbox and takes the batch contract.
 
 **SRS-9 — No third executor.**
 The batch workspace executor is removed. Workspace execution belongs to
-persistent agents (`docs/specs/2026-10-18-persistent-agents.md`); plain
+persistent agents; plain
 chats use the server sandbox of SRS-8.
 
 ## 3. Binding model
@@ -417,10 +415,11 @@ Per `apps/server/src/chats/spill.ts`, `crates/guild-core/src/tools/artifacts.rs`
 **SRS-35 — Spill trigger and ceilings.**
 One choke point where a server-side tool outcome becomes a
 `ThreadEvent::ToolResult`: serialized content above 64 KiB spills into an
-artifact; a tool-carried artifact payload spills regardless of size.
-Per-tool caps are storage ceilings, not history protection (the generic
-HTTP tool's 1 MiB ceiling spills instead of truncating). Local tools keep
-inline caps and never spill.
+artifact. A tool that carries bytes (`ToolOutcome.file`) writes them into the
+call's environment at the path the call names, and never spills. Per-tool caps
+are storage ceilings, not history protection (the generic HTTP tool's 1 MiB
+ceiling spills instead of truncating). Local tools keep inline caps and never
+spill.
 
 **SRS-36 — Storage and event shape.**
 A spilled result is a `tool_artifacts` row (id, org_id, chat_id, filename, 
@@ -431,9 +430,10 @@ storage key) and a meta card — `card: "artifact"` with `id`, `filename`,
 which drives the UI download card.
 
 **SRS-37 — Model-facing pointer and path contract.**
-The model-facing content is pointer text naming the workspace-relative path 
-`.guild/artifacts/<chat_id>/<filename>`: text mimes add "First 2 KiB of N
-KiB" with the head excerpt; binary mimes get path + size + mime only.
+An oversized result's model-facing content is pointer text naming the
+workspace-relative path `.guild/artifacts/<chat_id>/<filename>`, with "First
+2 KiB of N KiB" and the head excerpt. A tool that carries bytes names the real
+path it wrote instead; there is no pointer.
 Filename collisions inside a chat take a deterministic id-prefix. The id is
 uuid v5 over chat_id + call_id, the insert is `ON CONFLICT DO NOTHING`, and
 the spill rides the journaled tool-execution run — a replay reuses the same
