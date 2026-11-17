@@ -53,7 +53,7 @@ const plugin: IntegrationPlugin = {
         required: true,
         default: null,
         help: "Workspace admin the connection test acts as",
-        placeholder: "admin@yourorg.com",
+        placeholder: "admin@example.com",
         obtain:
           "A Workspace admin who can read the user directory (a super admin works). Guild acts as " +
           "this user only for **Test connection**; a call without a member identity is refused. " +

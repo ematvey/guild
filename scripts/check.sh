@@ -11,7 +11,7 @@
 #   scripts/check.sh --only <name>   # one check
 #
 # Check names: cargo-test server-test desktop-test clippy fmt biome windows
-#              protocol coherence typecheck
+#              protocol coherence identifiers typecheck
 set -u
 
 cd "$(dirname "$0")/.."
@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ALL_CHECKS="cargo-test server-test desktop-test clippy fmt biome windows protocol coherence typecheck"
+ALL_CHECKS="cargo-test server-test desktop-test clippy fmt biome windows protocol coherence identifiers typecheck"
 
 # 2 means SKIP: the check could not run on this host, which is not a failure.
 check_cargo_test() { cargo nextest run --workspace; }
@@ -51,6 +51,8 @@ check_biome() { ./node_modules/.bin/biome ci . --colors=off; }
 check_windows() { ./scripts/check-windows.sh; }
 check_protocol() { node protocol/check.mjs; }
 check_coherence() { npm run coherence; }
+# No real person, machine or company in a tracked file.
+check_identifiers() { python3 scripts/check-identifiers.py; }
 # Vitest strips types without checking them; this is the only place tsc
 # sees the TypeScript trees.
 check_typecheck() {
@@ -130,7 +132,7 @@ else
   done
 
   RAN=$ALL_CHECKS
-  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy fmt windows protocol coherence typecheck"
+  [ "$FAST" -eq 1 ] && RAN="desktop-test clippy fmt windows protocol coherence identifiers typecheck"
 fi
 
 for name in $RAN; do

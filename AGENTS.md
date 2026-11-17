@@ -97,6 +97,15 @@ you.
   layout and spacing, not just text. `docs/type-scale.md` maps every role —
   prose, chrome, titles, metadata, dense data, micro labels — to a step and
   an icon size; a new element takes a role from that table.
+- **No personal identifier in a document, a comment, a fixture or a test.**
+  A person, a machine, a company or a host is a placeholder: `alice`/`bob`,
+  `user@example.com`, `/home/user`, `C:\Users\alice`, `WORKSTATION-A`,
+  `guild.example.com`. A real address, name, home directory, mount point or
+  hostname lives in the deployment configuration on the host and never in a
+  commit — an example that needs to look real uses the documentation
+  domains (`example.com`, `example.org`, `example.test`).
+  `scripts/check-identifiers.py` fails the gate on a listed identifier or on
+  an email domain outside those.
 - `PLAN.md` is the changelog of decisions. Code comments describe what code
   is and does now — no history narration in comments.
 

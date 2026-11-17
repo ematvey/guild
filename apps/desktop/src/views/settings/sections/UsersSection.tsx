@@ -329,7 +329,7 @@ function UserDetail({
             <Field label="Email">
               <Input
                 type="email"
-                placeholder="user@company.com"
+                placeholder="user@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
