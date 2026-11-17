@@ -69,8 +69,7 @@ cargo run -p guild-app-server -- publish --kind skill   --dir /tmp/demo-skill/de
 cargo run -p guild-app-server -- install --slug deploy-check --project /tmp/demo-project
 ```
 
-(Routines — scheduled/webhook-triggered runs — are deferred, spec decision 8:
-their routes answer 404.)
+Routines — runs on a schedule — are documented in `docs/api.md`.
 
 ## Headless client smoke test
 
