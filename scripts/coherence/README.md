@@ -204,5 +204,5 @@ switched off.
 
 ## History
 
-The one-off sweep that built the model — its plan, lane prompts and reports,
-findings and decisions — is archived in `docs/archive/coherence/`.
+The one-off sweep that built the model ran in its own worktrees; only the
+model it produced lives in the repository.
