@@ -223,6 +223,46 @@ a shipped client does not send. With no tag reachable (a fresh or shallow
 clone: `git fetch --tags`) the comparison is skipped with a warning, and
 fails when `CI` is set.
 
+### Prod release
+A stack serves the clients published to its own release registry. A dev
+release does not reach prod users; prod needs its own run of the script.
+
+```bash
+cd ~/guild-live                      # the prod checkout, on master, clean
+BASE=http://localhost:18081 \
+  TOKEN=<prod admin session token> \
+  VERSION=<version from Cargo.toml> \
+  VITE_DEFAULT_SERVER_URL=https://guild.example.org \
+  NO_PUSH_TAG=1 \
+  scripts/release-clients.sh
+```
+
+Rules this release follows:
+
+- **Same version as the prod server.** The prod server's
+  `/api/v1/health` names the version the client must carry. A client newer
+  than its server reads as a mismatched client.
+- **The tag usually exists already.** The dev release created
+  `client-v<VERSION>` at the same commit, so the script accepts it and
+  only republishes artifacts. `NO_PUSH_TAG=1` keeps the tag local; it is
+  already on `origin`.
+- **The token comes from a password login.** Prod accounts are OIDC, but
+  `admin@example.test` still accepts a password:
+  ```bash
+  curl -sS -X POST http://localhost:18081/api/v1/auth/login \
+    -H 'content-type: application/json' \
+    -d '{"email":"admin@example.test","password":"<password>"}'
+  ```
+  The session lasts 30 days. Do not use `deploy/compose/BOOTSTRAP-ADMIN.txt`:
+  that account does not exist in the prod database, and login fails with
+  `invalid_credentials`.
+- **Verify the manifest, not the log.** After the run:
+  ```bash
+  curl -sS http://localhost:18081/api/v1/updates/latest.json \
+    | jq -r '.version, (.platforms|keys|join(" "))'
+  ```
+  All four platforms must be listed under the new version.
+
 ## 5. Downloading + verifying clients
 
 - No UI view: desktop releases are dev-controlled, not admin-controlled.
