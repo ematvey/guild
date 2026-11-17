@@ -1,5 +1,5 @@
-// Pure logic behind the project surfaces (spec docs/specs/2026-09-17-
-// projects-wsl-design.md §5): sidebar grouping, composer chip label, and
+// Pure logic behind the project surfaces: sidebar grouping, composer chip
+// label, and
 // the WSL path specifier's state machine. No DOM, no I/O — the components
 // drive the effects and feed events into pickerReducer.
 

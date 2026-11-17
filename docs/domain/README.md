@@ -11,4 +11,4 @@ What Guild is made of and the rules it keeps. Read the numbered documents in ord
 | [004 Capabilities](004-capabilities.md) | Models, Tools, Integrations and Skills: what an Agent can use |
 | [005 Live state](005-live-state.md) | How state reaches clients: the member socket, frames, push and addresses |
 
-The documents describe the code as it is. A change to a concept or a rule updates the document in the same commit; `PLAN.md` records why it changed. Terms follow the glossary in 001; the coherence model (`scripts/coherence/models/`) maps each concept to its places in the code.
+The documents describe the code as it is. A change to a concept or a rule updates the document in the same commit. Terms follow the glossary in 001; the coherence model (`scripts/coherence/models/`) maps each concept to its places in the code.

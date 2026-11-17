@@ -51,6 +51,9 @@ EMAIL_DOMAINS_OK = (
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 
+# The list above names the identifiers; this file is the one place they live.
+SKIP = {"scripts/check-identifiers.py"}
+
 BINARY_SUFFIXES = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".icns", ".woff",
     ".woff2", ".ttf", ".otf", ".pdf", ".zip", ".gz", ".so", ".dylib",
@@ -68,7 +71,7 @@ def tracked(paths: list[str]) -> list[str]:
 
 
 def scan(path: str):
-    if path.endswith(BINARY_SUFFIXES):
+    if path in SKIP or path.endswith(BINARY_SUFFIXES):
         return
     try:
         data = open(path, "rb").read()

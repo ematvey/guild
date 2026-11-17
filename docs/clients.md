@@ -436,12 +436,12 @@ already carries it:
 | `<link rel="manifest">`, the three `apple-mobile-web-app-*` metas, `theme-color` | `apps/desktop/index.html` |
 | `application/manifest+json` and `no-cache` on non-hashed files | `apps/server/src/http/web.ts` (`MIME`, `serveFile`) |
 
-No service worker ships. A previous build had one and it was retired on
-purpose: the browser gets pure-network loads, so a deploy can never leave a
-stale shell behind. The cost is that Android and desktop Chrome may not offer
-their own install prompt; their "Add to Home screen" menu item still works.
-Web Push is the one thing that will require a service worker later — when it
-lands, it must not cache the shell, only receive `push` events.
+The service worker (`apps/desktop/public/sw.js`) receives Web Push and
+answers an offline launch from a shell cache. The shell is network-first, so
+an online launch always gets the current bundle and a deploy never leaves a
+stale shell behind. Without a cached shell, Android and desktop Chrome may
+not offer their own install prompt; their "Add to Home screen" menu item
+still works.
 
 **The steps are browser-specific, so the UI detects instead of assuming.**
 `installState()` in `apps/desktop/src/lib/session.ts` (the module that already

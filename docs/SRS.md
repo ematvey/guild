@@ -4,9 +4,8 @@ The system-level contracts that satisfy `docs/PRD.md`. Every claim is
 verified against the code. Present-tense requirements only; identifiers are
 stable (`SRS-n`) for citation.
 
-> **Status (2026-10-22):** the contracts below are current. The cloud server
-> is TypeScript (`apps/server`); `crates/*` paths name the local engine and
-> the shared protocol crates.
+> The cloud server is TypeScript (`apps/server`); `crates/*` paths name the
+> local engine and the shared protocol crates.
 
 Group index:
 
@@ -100,7 +99,7 @@ without `machine` stays inside the sandbox and takes the batch contract.
 
 **SRS-9 — No third executor.**
 The batch workspace executor is removed. Workspace execution belongs to
-persistent agents (`docs/specs/2026-10-18-persistent-agents.md`); plain
+persistent agents; plain
 chats use the server sandbox of SRS-8.
 
 ## 3. Binding model

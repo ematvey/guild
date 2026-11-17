@@ -698,7 +698,7 @@ pub enum ThreadEvent {
         task: String,
     },
     /// A child run ended: the delivery the parent drains at its next
-    /// boundary (docs/specs/2026-10-22-agent-to-agent.md). Log-only: the
+    /// boundary. Log-only: the
     /// delivery reaches the parent as a user message, not as this event.
     ChildResult {
         thread_id: Uuid,

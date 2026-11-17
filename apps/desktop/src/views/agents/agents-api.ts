@@ -1,5 +1,5 @@
-// Client for the persistent-agents API (docs/specs/2026-10-18-persistent-
-// agents.md, "API surface"). Shapes mirror the design's data model; every
+// Client for the persistent-agents API. Shapes mirror the server's data
+// model; every
 // response is the server's keyed envelope (`{agents: [...]}`, `{agent}`).
 
 import type {

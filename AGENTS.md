@@ -14,15 +14,11 @@ you.
   access, execution, capabilities and live state, in numbered documents
   read in order. Its terms are the project's vocabulary; a change to a
   concept or rule updates the matching document in the same commit.
-- **`PLAN.md`** — current state of work and the decisions behind it
-  (approvals, exec policy, skills, thread events…). Newest entries on top;
-  older ones are in `docs/archive/decisions.md`. Read the top entries before
-  changing the areas they cover.
 - **`docs/deploy-nuances.md`** — deploy recipes, the compose stack on
   :18080, and the frontend-embedding model. Read before shipping anything.
 - **`docs/clients.md`** — building, signing, and releasing desktop clients.
-- **`docs/specs/`** — design docs; **`docs/plans/`** — milestone plans.
-  Consult the matching one when working in that area.
+- **`docs/PRD.md`** and **`docs/SRS.md`** — what the product is and the
+  system contracts that satisfy it.
 
 ## Conventions
 
@@ -106,8 +102,11 @@ you.
   domains (`example.com`, `example.org`, `example.test`).
   `scripts/check-identifiers.py` fails the gate on a listed identifier or on
   an email domain outside those.
-- `PLAN.md` is the changelog of decisions. Code comments describe what code
-  is and does now — no history narration in comments.
+- **Documents and comments describe the present.** A document states what
+  the system is and does now. It does not narrate a migration, name a
+  retired component, explain why an earlier design was dropped, or carry a
+  changelog; git history holds that. When a rule changes, rewrite the
+  sentence that states it — do not append a note about the change.
 
 ## Traps
 

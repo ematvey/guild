@@ -13,7 +13,6 @@ level. Orgs own their data and their LLM resources.
   (OpenAI-shaped + Anthropic-shaped), chats/turns (durable conversations),
   hub machine links, org registry, releases, integrations tool API, web UI.
 
-TS-server rebuild design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`.
 
 ## Layout
 
@@ -29,9 +28,7 @@ packages/ui         shared component kit
 packages/genui      Generated UI: OpenUI component library + prompt (server + desktop)
 protocol            wire schemas (the contract), fixtures, check.mjs
 deploy/compose      docker compose bundle
-docs/specs          design docs
-docs/plans          implementation plans
-docs/archive        older decision log
+docs/domain         the domain model, in reading order
 ```
 
 ## Build & test
@@ -124,7 +121,7 @@ curl -X POST localhost:8080/openai/v1/chat/completions \
 ## Persistent agents
 
 Named agents own a durable workspace, threads, and routines. The design is in
-`docs/specs/2026-10-18-persistent-agents.md`.
+`docs/domain/`.
 
 ## Client builds & distribution
 

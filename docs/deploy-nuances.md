@@ -36,11 +36,9 @@ read-only.
   (`test_*` / `t*` names; stale `test_*` databases are reaped on first use).
   Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`,
   `GUILD_TEST_S3_URL` (+ `_USER`/`_PASSWORD`/`_ACCESS_KEY_ID`
-  /`_SECRET_ACCESS_KEY`). There are **no testcontainers anymore**.
+  /`_SECRET_ACCESS_KEY`). There are no testcontainers.
 - `host.docker.internal` (compose `extra_hosts: host-gateway`) is how the
   Guild server container reaches these ports.
-- An older Postgres cluster may still exist on the host after a migration.
-  It is not used by Guild; remove it only after a manual review.
 
 ---
 
@@ -65,9 +63,9 @@ Guild can run on two stacks on one host: a dev stack and a prod stack.
   `host.docker.internal:5432/8123/9950`.
 - Server state lives in the named volume `guild_data` (`/data` inside the
   container — `GUILD_DATA_DIR`, the server-side workspace sessions root).
-  The fullstack fallback volumes (`pgdata`, `chdata`, `miniodata`) still
-  hold the pre-cutover data — keep until confident.
-  `docker compose down -v` destroys all of it.
+  The fullstack fallback volumes (`pgdata`, `chdata`, `miniodata`) hold
+  data from the fallback profile only. `docker compose down -v` destroys
+  all of it.
 
 ### Other stacks on this host
 
@@ -165,9 +163,6 @@ Notes:
   COPYed in every stage).
 - Build context is the repo root (`context: ../..`), so anything new the
   build needs must be COPYed explicitly.
-- The historical Rust server was removed from the repo (2026-10-13); its
-  last state lives in git history. The TS image (`Dockerfile.server-ts`)
-  is the only server image.
 
 ---
 
@@ -188,19 +183,12 @@ Notes:
   `clickhouse-server:24`; the host ClickHouse floats 26.5
   (`pull_policy: always`) — a host CH upgrade can change behavior.
 - Registry bundles live in rustfs bucket `guild` (host :9950).
-- Restate (the Rust-era durable-execution backend) was removed from compose
-  in M3 when the durable engine moved into the TS server on
-  pi-durable; its journals in `restate_data` are historical. The
-  `restate_data` volume on the host still exists — drop it when the
-  pre-cutover confidence window closes.
 - Host port override: `GUILD_HTTP_PORT` (18080 here) in `config.env`.
 - Server-side agent sessions store under `GUILD_DATA_DIR=/data`
   (`workspaces/<org>/<name>`, plain chats `chats/<org>/<id>`); their tools
   run in gVisor sandboxes — see §4a.
 
 ### 4a. Sandboxes (server-side tools)
-
-Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
 
 - **Host prerequisite: the `runsc` runtime.** The runner refuses to start
   without it. Install (once per Docker host): unpack a pinned, checksum-
@@ -240,7 +228,6 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
 
 ### 4b. JuiceFS agent workspaces
 
-Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
 
 - **Each stack owns its filesystem.** `.env` names it with five values and
   no defaults (table in §1): the host directory, the metadata database, the
@@ -312,7 +299,7 @@ Design: `docs/specs/2026-10-18-persistent-agents.md` (decisions 7, 9, 21).
   ```
 
   A fresh `docker compose up` on a stack that has never run is unaffected.
-- Chat/legacy workspaces stay on `guild_data`; the agent volume is separate.
+- Chat workspaces stay on `guild_data`; the agent volume is separate.
 - The object-storage bucket must already exist before the first
   `juicefs format` (for the isolated instance the init script creates it;
   elsewhere `rclone mkdir` with the stack's key). The sidecar writes `127.0.0.1
@@ -364,7 +351,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
 
 ## 6. PWA / service worker (rarely the culprit)
 
-`apps/desktop/public/sw.js`, cache name `guild-shell-v1`:
+`apps/desktop/public/sw.js`, cache name `guild-shell-v2`:
 
 - **Network-first** for all same-origin GETs (except `/api/` — always
   passthrough): fresh response when online, cache only as offline fallback,
@@ -374,7 +361,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
   fine.
 - Known console noise: `/favicon.ico` and `/icon-192.png` return 503 from
   the server on some loads — cosmetic bug in the server's static/asset
-  handling, not a deploy problem (as of 2026-09-10).
+  handling, not a deploy problem.
 
 ---
 
@@ -418,9 +405,9 @@ isolated config file (`GUILD_CONFIG_ENV`).
   - Running the release script from a systemd transient unit needs an explicit
     `-E PATH=...` including `~/.cargo/bin` (cargo-xwin/zigbuild) — the unit's
     default PATH lacks it and the build fails with "cargo-xwin command not
-    found" (hit 2026-09-11). Also pass `-E TAURI_SIGNING_PRIVATE_KEY=` for the
-    bundler to sign updater artifacts.
-- Artifacts land in `/api/v1/releases` (MinIO-backed); the desktop
+    found". Also pass `-E TAURI_SIGNING_PRIVATE_KEY=` for the bundler to sign
+    updater artifacts.
+- Artifacts land in `/api/v1/releases` (S3-backed); the desktop
   updater consumes `latest.json`.
 - A server compose rebuild does not create client releases. For each new
   deployment, run `scripts/release-clients.sh` separately with `BASE` pointing
@@ -431,8 +418,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
 - The release script assumes `node_modules` is current: it does NOT run
   `npm ci`. Any commit that adds/moves a frontend dependency (e.g. a new
   `packages/ui` dep) must be followed by `npm ci` in the release checkout,
-  or the vite build fails on unresolved imports (hit 2026-10-14 with
-  `@fontsource-variable/jetbrains-mono`).
+  or the vite build fails on unresolved imports.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
   `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
   GUI hosts the engine in-process (`guild-app-server` is a library

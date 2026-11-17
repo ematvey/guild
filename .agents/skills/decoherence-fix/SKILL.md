@@ -36,7 +36,7 @@ Do not skip this phase. Do not start with grep.
 
 ```bash
 cat AGENTS.md
-cat PLAN.md docs/PRD.md docs/SRS.md
+cat docs/PRD.md docs/SRS.md
 ls crates/ apps/ packages/
 ```
 

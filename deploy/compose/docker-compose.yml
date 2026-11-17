@@ -195,7 +195,7 @@ services:
     # RPC connections to the agent inside. Never published. Same image as
     # the server, run as root for the socket. Discovers its compose project
     # from its own labels (volume <project>_guild_data, network
-    # <project>_sandbox). Plan: docs/plans/2026-10-14-sandbox-runner-gvisor.md.
+    # <project>_sandbox).
     image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
     restart: unless-stopped
     user: "0:0"
