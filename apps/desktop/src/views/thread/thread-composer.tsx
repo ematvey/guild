@@ -37,6 +37,7 @@ import type { Agent } from "../agents/agents-api";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
 import { remoteMachine, sendButtonState, type ThreadFacts } from "./status";
+import { CHAT_COLUMN_CLASS } from "./blocks";
 import { isImeEnter } from "./route";
 import { chatsStore, projectsStore } from "./chat-stores";
 import type { ComposerHandle } from "./hooks/use-composer";
@@ -254,8 +255,6 @@ export function ThreadComposer({
   access,
   currentProject,
   localMachineId,
-  chatWidth,
-  chatResizing,
   setComposerEl,
   onManageAgents,
 }: {
@@ -288,8 +287,6 @@ export function ThreadComposer({
   };
   currentProject: PickedProject | null;
   localMachineId: string | undefined;
-  chatWidth: number;
-  chatResizing: boolean;
   setComposerEl: (el: HTMLDivElement | null) => void;
   onManageAgents: () => void;
 }) {
@@ -356,8 +353,7 @@ export function ThreadComposer({
     >
       {access.readOnly ? (
         <div
-          className="pointer-events-auto mx-auto flex w-full items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg pointer-coarse:rounded-[1.75rem]"
-          style={{ maxWidth: chatWidth }}
+          className={`${CHAT_COLUMN_CLASS} pointer-events-auto flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg pointer-coarse:rounded-[1.75rem]`}
         >
           <span className="min-w-0 flex-1">{readOnlyNotice(facts, foreign, access.deletingAgent)}</span>
           {facts.type === "user" && facts.archived && !facts.deleted && !foreign && (
@@ -369,8 +365,7 @@ export function ThreadComposer({
       ) : access.unknown ? (
         <div
           aria-label="Loading thread composer"
-          className="pointer-events-auto mx-auto w-full rounded-xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]"
-          style={{ maxWidth: chatWidth }}
+          className={`${CHAT_COLUMN_CLASS} pointer-events-auto rounded-xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]`}
         >
           <div className="px-2 py-1.5">
             <Skeleton className="h-5 w-2/5" />
@@ -382,10 +377,7 @@ export function ThreadComposer({
         </div>
       ) : (
         <div
-          className={`pointer-events-auto mx-auto w-full rounded-xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem] ${
-            chatResizing ? "" : "transition-[max-width] duration-150"
-          }`}
-          style={{ maxWidth: chatWidth }}
+          className={`${CHAT_COLUMN_CLASS} pointer-events-auto rounded-xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]`}
         >
           <input
             ref={fileInput}

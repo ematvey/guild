@@ -71,7 +71,7 @@ describe("HoverStamp", () => {
 
 describe("ThreadSkeleton", () => {
   it("announces the loading state", () => {
-    const html = renderToStaticMarkup(<ThreadSkeleton width={720} />);
+    const html = renderToStaticMarkup(<ThreadSkeleton />);
     expect(html).toContain('role="status"');
     expect(html).toContain("Loading conversation");
     expect(html).toContain("px-4");
