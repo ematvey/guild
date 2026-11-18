@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mcpIntegration, type IntegrationPlugin, type McpIntegrationManifest } from "@guild/integration-sdk";
 import { loadBuiltinMcp, loadBuiltins, validatePluginManifest } from "../integrations/loader.js";
-import { firstSkill } from "../integrations/plugins.js";
+import { firstSkill, indexDescription } from "../integrations/plugins.js";
 
 function plugin(name: string): IntegrationPlugin {
   return {
@@ -117,5 +117,11 @@ describe("validatePluginManifest", () => {
 
   it("has no guide skill when the manifest names none", () => {
     expect(firstSkill(plugin("x").manifest)).toBeNull();
+  });
+
+  it("indexes an integration by its summary, one line", () => {
+    expect(indexDescription({ summary: "HubSpot CRM\nsearch", description: "long prose" })).toBe("HubSpot CRM search");
+    expect(indexDescription({ description: "v1 bundle\nonly prose" })).toBe("v1 bundle only prose");
+    expect(indexDescription({ summary: "  " })).toBe("");
   });
 });
