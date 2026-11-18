@@ -259,9 +259,10 @@ export function PreviewPane(props: PreviewPaneProps) {
       </div>
     );
   }
-  // The pane keeps a real minimum width from `md` up: 22rem holds the icon,
-  // the filename and the four size-9 controls beside the 138 px caption box.
-  // Its share is capped by what the chat column leaves.
+  // The pane keeps a real minimum width from `md` up: 22rem holds the icon
+  // and the four size-9 controls beside the 138 px caption box, and leaves
+  // the filename a few pixels. It takes 46% of the row until the cap stops
+  // it: 900 px, or the row less 28rem.
   return (
     <aside className="flex h-full shrink-0 basis-[46%] flex-col border-l border-border max-w-[min(900px,calc(100%-28rem))] md:min-w-[22rem]">
       {body}

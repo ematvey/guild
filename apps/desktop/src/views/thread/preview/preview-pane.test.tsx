@@ -68,6 +68,10 @@ describe("PreviewPane", () => {
     expect(groups).toHaveLength(1);
     const titles = [...groups[0].querySelectorAll("button")].map((b) => b.getAttribute("title"));
     expect(titles).toEqual(["Download", "Open in a new window", "Full screen", "Close preview"]);
+    // The row stops short of the caption box, which the window draws over it.
+    // This reads the class the header carries, not the emitted CSS: the rule
+    // itself is exercised by every page header that uses the same constant.
+    expect(row.className).toContain("pr-[138px]!");
   });
 
   it("draws no drag region in the web build", async () => {
