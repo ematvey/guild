@@ -9,13 +9,18 @@ import { PayloadPre } from "../payload-pre";
 import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import type { CompactionBlock } from "../../lib/thread-reducer";
 
+/// The conversation column: the transcript, the composer card, the loading
+/// skeleton and the jump-to-bottom row share one cap at every breakpoint and
+/// narrow with the pane below it.
+export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[48rem]";
+
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
 /// new-thread hero would flash for the whole fetch duration.
-export function ThreadSkeleton({ width }: { width: number }) {
+export function ThreadSkeleton() {
   return (
     <div role="status" aria-label="Loading conversation" className="min-h-0 flex-1 overflow-hidden">
-      <div className="mx-auto w-full space-y-8 px-4 py-6" style={{ maxWidth: width }}>
+      <div className={`${CHAT_COLUMN_CLASS} space-y-8 px-4 py-6`}>
         <div className="flex justify-end">
           <Skeleton className="h-4 w-2/5" />
         </div>
