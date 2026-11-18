@@ -1,7 +1,13 @@
 // The preview pane's width and its drag, kept in the one place the pane reads
 // them. The divider sits on the pane's left edge, so the delta is inverted:
 // dragging left widens the pane, dragging right narrows it.
-import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from "react";
 import { trackDrag } from "../../../lib/drag";
 import {
   clampPreviewWidth,
@@ -11,7 +17,10 @@ import {
   storedPreviewWidth,
 } from "../../../lib/preview";
 
-export function usePreviewWidth() {
+/** The pane's width. `pane` is the rendered aside: the cap can make it
+ *  narrower than the stored value, so a drag starts from what the reader
+ *  actually sees, not from the number in storage. */
+export function usePreviewWidth(pane: RefObject<HTMLElement | null>) {
   const [width, setWidth] = useState<number>(storedPreviewWidth);
   const [resizing, setResizing] = useState(false);
 
@@ -25,7 +34,7 @@ export function usePreviewWidth() {
     (e: ReactMouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = width;
+      const startW = pane.current?.getBoundingClientRect().width ?? width;
       setResizing(true);
       trackDrag(
         (x) => setWidth(clampPreviewWidth(startW + startX - x)),
@@ -38,7 +47,7 @@ export function usePreviewWidth() {
         },
       );
     },
-    [width],
+    [pane, width],
   );
 
   const resetWidth = useCallback(() => {
