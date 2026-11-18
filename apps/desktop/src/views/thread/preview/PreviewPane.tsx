@@ -3,13 +3,14 @@
 // sandboxed frame (a hostile page gets an opaque origin, not this app's),
 // PDFs in a frame, images as images, and text as text; anything else offers
 // the download. On a narrow screen the pane is a full-window overlay.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, ExternalLink, FileText, Maximize2, Minimize2, X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { openExternal } from "../../../lib/open-external";
 import { HAS_SHELL } from "../../../lib/session";
 import { CAPTION_BUTTONS_INSET, TITLE_BAR_INSET, TOP_ROW, titleBarDrag, titleBarDragDeep } from "../../../lib/titlebar";
 import type { PreviewRef } from "../route";
+import { usePreviewWidth } from "./use-preview-width";
 import { previewViewOf, usePreviewSource, type PreviewMeta } from "./use-preview-source";
 
 export interface PreviewTab {
@@ -165,6 +166,8 @@ function PreviewTabs({
 
 export function PreviewPane(props: PreviewPaneProps) {
   const { tabs, active, full, isMobile, onSelect, onClose, onCloseAll, onToggleFull } = props;
+  const pane = useRef<HTMLElement | null>(null);
+  const { width, resizing, startDrag, resetWidth } = usePreviewWidth(pane);
   // The address can name a file this session never opened — a deep link, a
   // reload, a link from a teammate. The pane shows it as a tab of its own
   // rather than rendering nothing.
@@ -259,13 +262,29 @@ export function PreviewPane(props: PreviewPaneProps) {
       </div>
     );
   }
-  // The pane keeps a real minimum width from `md` up: 22rem holds the icon
-  // and the four size-9 controls beside the 138 px caption box, and leaves
-  // the filename a few pixels. It takes 46% of the row until the cap stops
-  // it: 900 px, or the row less 28rem.
+  // The pane's width is its own: the drag handle on the left edge sets it, and
+  // the chat column keeps the width it has. The 22rem minimum is what the
+  // header needs for the icon and the four size-9 controls beside the 138 px
+  // caption box; the cap stops the pane at 900 px or at the row less 28rem,
+  // so the chat column never falls below that on a wide window.
   return (
-    <aside className="flex h-full shrink-0 basis-[46%] flex-col border-l border-border max-w-[min(900px,calc(100%-28rem))] md:min-w-[22rem]">
+    <aside
+      ref={pane}
+      className={`relative flex h-full shrink-0 flex-col border-l border-border max-w-[min(900px,calc(100%-28rem))] md:min-w-[22rem] ${
+        resizing ? "" : "transition-[width] duration-150"
+      }`}
+      style={{ width }}
+    >
       {body}
+      {/* The strip starts below the header row, at TOP_ROW's height, so the
+          header keeps its whole drag region and only this 4 px edge resizes
+          the pane. */}
+      <div
+        className="absolute bottom-0 left-0 top-11 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+        title="Drag to resize · double-click to reset"
+        onMouseDown={startDrag}
+        onDoubleClick={resetWidth}
+      />
     </aside>
   );
 }

@@ -2,7 +2,7 @@
 // A file the address names but this session never opened still shows: the
 // pane renders the active ref as a tab of its own. The pane's first row is
 // the window's first row on a shell that draws its own title bar.
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 // The title bar constants are read once, at module load, so the shell flag is
@@ -22,8 +22,27 @@ vi.mock("../../../lib/session", () => ({
 }));
 
 import { PreviewPane } from "./PreviewPane";
+import { PREVIEW_WIDTH_KEY } from "../../../lib/preview";
 
 const ID = "018f2c4e-0000-7000-8000-000000000001";
+
+// Node ships a `localStorage` global that stays undefined without its own
+// flag, and it shadows the one happy-dom would give the window.
+function store(): Storage {
+  const map = new Map<string, string>();
+  return {
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => void map.set(k, v),
+    removeItem: (k) => void map.delete(k),
+    clear: () => map.clear(),
+    key: (i) => Array.from(map.keys())[i] ?? null,
+    get length() {
+      return map.size;
+    },
+  };
+}
+
+beforeEach(() => vi.stubGlobal("localStorage", store()));
 
 const PROPS = {
   tabs: [],
@@ -81,5 +100,26 @@ describe("PreviewPane", () => {
     const doc = parse(WebPane);
     expect(doc.querySelector("[data-tauri-drag-region]")).toBeNull();
     expect(doc.querySelectorAll('[role="group"]')).toHaveLength(1);
+  });
+
+  it("carries its persisted width and a resize handle on the side pane", () => {
+    localStorage.setItem(PREVIEW_WIDTH_KEY, "700");
+    const doc = parse(PreviewPane);
+    const aside = doc.querySelector("aside");
+    expect(aside).not.toBeNull();
+    expect((aside as HTMLElement).style.width).toBe("700px");
+
+    const handle = aside?.querySelector('[title="Drag to resize · double-click to reset"]');
+    expect(handle).not.toBeNull();
+    expect(handle?.className).toContain("cursor-col-resize");
+  });
+
+  it("draws no width and no handle in full screen", () => {
+    localStorage.setItem(PREVIEW_WIDTH_KEY, "700");
+    const doc = new DOMParser().parseFromString(
+      renderToStaticMarkup(<PreviewPane {...PROPS} full />),
+      "text/html",
+    );
+    expect(doc.querySelector('[title="Drag to resize · double-click to reset"]')).toBeNull();
   });
 });
