@@ -1405,26 +1405,55 @@ describe("viewEntries (collapsed work runs)", () => {
   });
   const text = (n: number): RenderBlock => ({ kind: "text", text: `text${n}`, key: `x${n}` });
   const user: RenderBlock = { kind: "user", text: "go", key: "u", ts: "2026-10-15T12:00:00.000Z" };
-  const shape = (blocks: RenderBlock[]) =>
-    viewEntries(blocks).map((e) => (e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key));
+  const user2: RenderBlock = { kind: "user", text: "again", key: "u2", ts: "2026-10-15T12:00:10.000Z" };
+  const shape = (blocks: RenderBlock[], busy = false) =>
+    viewEntries(blocks, busy).map((e) => (e.kind === "work" ? `work(${e.run.map((b) => b.key).join(",")})` : e.b.key));
 
-  it("collapses a contiguous run into one entry sitting where the run was", () => {
+  it("keeps every message of the open turn in the transcript", () => {
     const blocks = [user, tool(1), tool(2), text(3), tool(4), tool(5), text(6)];
-    expect(shape(blocks)).toEqual(["u", "work(t1,t2)", "x3", "work(t4,t5)", "x6"]);
+    expect(shape(blocks, true)).toEqual(["u", "work(t1,t2)", "x3", "work(t4,t5)", "x6"]);
   });
 
   it("never leaves a work entry trailing the text that followed its run", () => {
     const blocks = [user, tool(1), text(2), tool(3), text(4)];
-    const entries = viewEntries(blocks);
+    const entries = viewEntries(blocks, true);
     expect(entries[entries.length - 1]).toMatchObject({ kind: "plain", b: { key: "x4" } });
   });
 
+  it("folds a settled turn's messages into one run under its final message", () => {
+    const blocks = [user, text(1), tool(2), text(3), tool(4), text(5)];
+    expect(shape(blocks, false)).toEqual(["u", "work(x1,t2,x3,t4)", "x5"]);
+  });
+
+  it("folds earlier turns while the last turn still runs", () => {
+    const blocks = [user, text(1), tool(2), text(3), user2, tool(4), text(5)];
+    expect(shape(blocks, true)).toEqual(["u", "work(x1,t2)", "x3", "u2", "work(t4)", "x5"]);
+  });
+
+  it("keeps a settled turn's only message out of the run", () => {
+    const blocks = [user, tool(1), text(2)];
+    expect(shape(blocks, false)).toEqual(["u", "work(t1)", "x2"]);
+  });
+
+  it("passes a queued send through without opening a turn", () => {
+    const queued: RenderBlock = { kind: "user", text: "steer", key: "q", queued: true };
+    const blocks = [user, text(1), queued, tool(2), text(3)];
+    expect(shape(blocks, true)).toEqual(["u", "x1", "work(t2)", "x3"]);
+    expect(shape(blocks, false)).toEqual(["u", "work(x1,t2)", "x3"]);
+  });
+
+  it("keeps the last message with a body, not an empty buffer", () => {
+    const empty: RenderBlock = { kind: "text", text: "", key: "x9" };
+    const blocks = [user, text(1), tool(2), empty];
+    expect(shape(blocks, false)).toEqual(["u", "x1", "work(t2,x9)"]);
+  });
+
   it("anchors every run to the turn's user message", () => {
-    const blocks = [user, tool(1), text(2), tool(3)];
-    const runs = viewEntries(blocks).filter((e) => e.kind === "work");
+    const blocks = [user, tool(1), text(2), user2, tool(3)];
+    const runs = viewEntries(blocks, true).filter((e) => e.kind === "work");
     expect(runs.map((r) => r.kind === "work" && r.turnStart)).toEqual([
       "2026-10-15T12:00:00.000Z",
-      "2026-10-15T12:00:00.000Z",
+      "2026-10-15T12:00:10.000Z",
     ]);
   });
 
@@ -1440,8 +1469,9 @@ describe("viewEntries (collapsed work runs)", () => {
         startedAt: "2026-10-15T12:00:00.000Z",
       },
     };
-    const blocks = [user, tool(1), child, text(2)];
-    expect(shape(blocks)).toEqual(["u", "work(t1,c1)", "x2"]);
+    const blocks = [user, tool(1), child, text(2), tool(3), text(4)];
+    expect(shape(blocks, true)).toEqual(["u", "work(t1,c1)", "x2", "work(t3)", "x4"]);
+    expect(shape(blocks, false)).toEqual(["u", "work(t1,c1,x2,t3)", "x4"]);
   });
 });
 

@@ -13,7 +13,14 @@ import { RunningSubagents } from "../agents/RunningSubagents";
 import { SubagentClosedRecord, SubagentResultRecord, SubagentSpawnRecord } from "../agents/subagent-blocks";
 import type { ChatSubagentNode } from "../../lib/api/chats";
 import type { RenderBlock } from "../../lib/thread-reducer";
-import { ThreadSkeleton, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp, CHAT_COLUMN_CLASS } from "./blocks";
+import {
+  ThreadSkeleton,
+  ThreadProgress,
+  ReasoningFrame,
+  CompactionCard,
+  HoverStamp,
+  CHAT_COLUMN_CLASS,
+} from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
 import { GenuiPlacementContext, answersAfter } from "../genui/actions";
@@ -84,11 +91,12 @@ const TextBlock = memo(function TextBlock({
 });
 
 /** View entries: each contiguous thinking/tool run becomes one
- *  WorkedForBlock; everything else (user, text, errors, compaction cards,
- *  queued-send chips, approvals) stays 1:1. Every agent text block carries
+ *  WorkedForBlock; everything else (user, the turn's final text, errors,
+ *  compaction cards, queued-send chips, approvals) stays 1:1. A settled
+ *  turn's earlier messages fold into its run. Every agent text block carries
  *  the hover stamp with its time and copy button. */
-function useDisplayEntries(blocks: RenderBlock[]) {
-  return useMemo(() => viewEntries(blocks), [blocks]);
+function useDisplayEntries(blocks: RenderBlock[], busy: boolean) {
+  return useMemo(() => viewEntries(blocks, busy), [blocks, busy]);
 }
 
 export interface ThreadPaneScroll {
@@ -138,7 +146,7 @@ export function ThreadPane({
   onOpenChildChat: (chatId: string) => void;
   scroll: ThreadPaneScroll;
 }) {
-  const displayEntries = useDisplayEntries(blocks);
+  const displayEntries = useDisplayEntries(blocks, busy);
   const isStopping = !!(viewChatId && stopping[viewChatId]);
 
   // The transcript is the expensive subtree: every keystroke in the
@@ -154,7 +162,7 @@ export function ThreadPane({
   const transcriptEntries = useMemo(
     () =>
       displayEntries.map((e, i) =>
-        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null : e.kind === "work" ? (
+        e.kind === "work" ? (
           <WorkedForBlock
             key={`work-${e.run[0]!.key}`}
             run={e.run}
@@ -168,6 +176,18 @@ export function ThreadPane({
                   key={b.key}
                   text={b.reasoningText ?? ""}
                   live={busy && b.key === blocks[lastBlockIndex]?.key}
+                />
+              ) : b.kind === "text" ? (
+                // An intermediate message of a settled turn: it sits in the
+                // run, behind the worked-for row, in arrival order.
+                <TextBlock
+                  key={b.key}
+                  b={b}
+                  live={false}
+                  answer={answers.get(b.key) ?? null}
+                  showInterrupted={!busy}
+                  origin={null}
+                  onOpenOrigin={onOpenChat}
                 />
               ) : b.kind === "tool" && b.tool ? (
                 <ToolFrame key={b.key} t={b.tool} />
