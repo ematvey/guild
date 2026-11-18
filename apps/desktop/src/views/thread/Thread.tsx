@@ -841,8 +841,10 @@ function ThreadView(props: ThreadProps) {
         {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* The chat column takes the rest of the row and sets no minimum
-                of its own; the preview pane carries the minimum width. */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                of its own; the preview pane carries the minimum width. It is
+                the positioning box for the composer, so the card stays under
+                the chat and not under the pane. */}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader
                 isMobile={isMobile}
                 onOpenDrawer={openDrawer}
