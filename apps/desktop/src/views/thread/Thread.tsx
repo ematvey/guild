@@ -840,6 +840,8 @@ function ThreadView(props: ThreadProps) {
         )}
         {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
+            {/* The chat column takes the rest of the row and sets no minimum
+                of its own; the preview pane carries the minimum width. */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader
                 isMobile={isMobile}
