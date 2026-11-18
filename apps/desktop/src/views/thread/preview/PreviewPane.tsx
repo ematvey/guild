@@ -212,13 +212,13 @@ export function PreviewPane(props: PreviewPaneProps) {
           aria-label="Preview controls"
           className="mr-2 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/40 p-0.5"
         >
-          <Button variant="ghost" size="sm" className="size-8 px-0" onClick={download} title="Download">
+          <Button variant="ghost" size="sm" className="size-9 px-0" onClick={download} title="Download">
             <Download className="size-4" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="size-8 px-0"
+            className="size-9 px-0"
             title="Open in a new window"
             onClick={() => source?.url !== null && source !== null && openExternal(source.url)}
           >
@@ -227,13 +227,13 @@ export function PreviewPane(props: PreviewPaneProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="size-8 px-0"
+            className="size-9 px-0"
             title={full ? "Leave full screen" : "Full screen"}
             onClick={onToggleFull}
           >
             {full ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </Button>
-          <Button variant="ghost" size="sm" className="size-8 px-0" title="Close preview" onClick={onCloseAll}>
+          <Button variant="ghost" size="sm" className="size-9 px-0" title="Close preview" onClick={onCloseAll}>
             <X className="size-4" />
           </Button>
         </div>
@@ -259,10 +259,11 @@ export function PreviewPane(props: PreviewPaneProps) {
       </div>
     );
   }
-  // The pane yields first: the chat column keeps a readable minimum, and the
-  // pane's share is capped by what that leaves, so the row never overflows.
+  // The pane keeps a real minimum width from `md` up: 22rem holds the icon,
+  // the filename and the four size-9 controls beside the 138 px caption box.
+  // Its share is capped by what the chat column leaves.
   return (
-    <aside className="flex h-full min-w-0 max-w-[min(900px,calc(100%-28rem))] shrink basis-[46%] flex-col border-l border-border">
+    <aside className="flex h-full shrink-0 basis-[46%] flex-col border-l border-border max-w-[min(900px,calc(100%-28rem))] md:min-w-[22rem]">
       {body}
     </aside>
   );

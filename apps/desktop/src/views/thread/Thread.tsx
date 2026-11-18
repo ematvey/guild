@@ -840,9 +840,9 @@ function ThreadView(props: ThreadProps) {
         )}
         {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
-            {/* The chat column keeps a readable width; the preview pane yields
-                first when the window cannot hold both. */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col md:min-w-[28rem]">
+            {/* The chat column takes the rest of the row and sets no minimum
+                of its own; the preview pane carries the minimum width. */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader
                 isMobile={isMobile}
                 onOpenDrawer={openDrawer}
