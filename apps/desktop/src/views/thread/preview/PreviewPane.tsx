@@ -8,7 +8,7 @@ import { Download, ExternalLink, FileText, Maximize2, Minimize2, X } from "lucid
 import { Button } from "@guild/ui/components/button";
 import { openExternal } from "../../../lib/open-external";
 import { HAS_SHELL } from "../../../lib/session";
-import { CAPTION_BUTTONS_INSET, TITLE_BAR_INSET, titleBarDrag } from "../../../lib/titlebar";
+import { CAPTION_BUTTONS_INSET, TITLE_BAR_INSET, TOP_ROW, titleBarDrag, titleBarDragDeep } from "../../../lib/titlebar";
 import type { PreviewRef } from "../route";
 import { previewViewOf, usePreviewSource, type PreviewMeta } from "./use-preview-source";
 
@@ -195,35 +195,48 @@ export function PreviewPane(props: PreviewPaneProps) {
 
   const body = (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className={`flex items-center gap-2 border-b border-border px-3 py-2 ${CAPTION_BUTTONS_INSET}`}>
+      {/* The pane's first row is the window's first row: it drags the window
+          and stops short of the caption buttons. The pane's own controls sit
+          in one bordered group, away from the caption box, so its close
+          cannot be read as the window's. */}
+      <div
+        {...titleBarDragDeep}
+        className={`flex ${TOP_ROW} shrink-0 items-center gap-2 border-b border-border px-3 ${CAPTION_BUTTONS_INSET}`}
+      >
         <FileText className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium" title={source?.filename}>
           {source?.filename ?? "Preview"}
         </span>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={download} title="Download">
-          <Download className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2"
-          title="Open in a new window"
-          onClick={() => source?.url !== null && source !== null && openExternal(source.url)}
+        <div
+          role="group"
+          aria-label="Preview controls"
+          className="mr-2 flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-secondary/40 p-0.5"
         >
-          <ExternalLink className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2"
-          title={full ? "Leave full screen" : "Full screen"}
-          onClick={onToggleFull}
-        >
-          {full ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-        </Button>
-        <Button variant="ghost" size="sm" className="h-7 px-2" title="Close preview" onClick={onCloseAll}>
-          <X className="size-3.5" />
-        </Button>
+          <Button variant="ghost" size="sm" className="size-8 px-0" onClick={download} title="Download">
+            <Download className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="size-8 px-0"
+            title="Open in a new window"
+            onClick={() => source?.url !== null && source !== null && openExternal(source.url)}
+          >
+            <ExternalLink className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="size-8 px-0"
+            title={full ? "Leave full screen" : "Full screen"}
+            onClick={onToggleFull}
+          >
+            {full ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="sm" className="size-8 px-0" title="Close preview" onClick={onCloseAll}>
+            <X className="size-4" />
+          </Button>
+        </div>
       </div>
       {shown.length > 1 && <PreviewTabs tabs={shown} active={tab.ref} onSelect={onSelect} onClose={onClose} />}
       <div className="min-h-0 flex-1">
@@ -246,5 +259,11 @@ export function PreviewPane(props: PreviewPaneProps) {
       </div>
     );
   }
-  return <aside className="flex h-full w-[46%] min-w-[360px] max-w-[900px] shrink-0 flex-col border-l border-border">{body}</aside>;
+  // The pane yields first: the chat column keeps a readable minimum, and the
+  // pane's share is capped by what that leaves, so the row never overflows.
+  return (
+    <aside className="flex h-full min-w-0 max-w-[min(900px,calc(100%-28rem))] shrink basis-[46%] flex-col border-l border-border">
+      {body}
+    </aside>
+  );
 }
