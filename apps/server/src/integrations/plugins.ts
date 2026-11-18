@@ -66,9 +66,21 @@ export interface IntegrationTurn {
   slug: string;
   description: string;
   tools: IntegrationToolInfo[];
+  /** The skill slug that documents this integration, from its manifest's
+   *  `skills` list. `null` when it names none: the Turn then has no guide
+   *  tool at all. */
+  guide: string | null;
   rowConfig: JsonObject;
   secretNames: string[];
   identityKey: string;
+}
+
+/** The first skill slug a manifest names, or null. One resolver for a
+ *  built-in's manifest and a registry bundle's alike. */
+export function firstSkill(manifest: { skills?: unknown }): string | null {
+  const list = manifest.skills;
+  if (!Array.isArray(list)) return null;
+  return list.find((slug): slug is string => typeof slug === "string" && slug !== "") ?? null;
 }
 
 /** Guild-provided tool name for a plugin tool: `<slug>_<tool>`. */
@@ -228,6 +240,7 @@ export async function resolveIntegrations(
         executor: "connector",
         slug: row.name,
         description: resolved.summary,
+        guide: firstSkill(resolved),
         tools: specs.map((spec) => {
           const trait = traitOfTool(resolved, spec.name);
           return {
@@ -285,6 +298,7 @@ export async function resolveIntegrations(
       executor: "mcp",
       slug: row.name,
       description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
+      guide: firstSkill(manifest as { skills?: unknown }),
       tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),
       rowConfig: config,
       secretNames,

@@ -156,6 +156,16 @@ export function validateV2(m: Manifest): void {
       }
     }
   }
+  // `skills`: the skill bundles that document this integration; the first
+  // is what `<slug>_guide` returns. Absent means the Turn gets no guide tool.
+  if (m.skills !== undefined && m.skills !== null) {
+    if (!Array.isArray(m.skills)) throw new Error("skills must be an array of skill slugs");
+    for (const skill of m.skills) {
+      if (typeof skill !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(skill)) {
+        throw new Error(`skill slug ${String(skill)} must be [a-z0-9_-], at most 64 chars`);
+      }
+    }
+  }
   if (Array.isArray(m.triggers)) {
     for (const raw of m.triggers) {
       const t = raw as { kind?: unknown; prompt?: unknown; model?: unknown };

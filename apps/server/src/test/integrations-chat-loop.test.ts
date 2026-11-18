@@ -298,6 +298,11 @@ describe("M8: integrations chat runtime", () => {
         .map((m) => String(m.content))
         .join("\n");
       expect(system).toMatch(/^## atlassian( \(some tools not listed\))?$/m);
+      // The connector's own tools are deferred: the section lists only the
+      // discovery tools, and the rest arrive through list_tools.
+      expect(system).not.toContain("atlassian_jira_search");
+      // The manifest names no skill, so the Turn has no guide tool.
+      expect(system).not.toContain("atlassian_guide");
 
       // Auto tools are not audited; the runtime extension is in the system
       // prompt (the tool result meta carries the guild wiring).

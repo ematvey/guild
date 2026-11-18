@@ -235,7 +235,8 @@ export class IntegrationsRuntime {
     const extension = this.installOrgExtension(orgId, turns, conversationId);
     const tools: ToolRegistration[] = [];
     for (const turn of turns) {
-      tools.push(this.listToolsTool(turn), this.guideTool(turn));
+      tools.push(this.listToolsTool(turn));
+      if (turn.guide !== null) tools.push(this.guideTool(turn));
       for (const info of turn.tools) tools.push(this.integrationTool(info));
     }
     return { extensions: [extension], tools };
@@ -257,9 +258,10 @@ export class IntegrationsRuntime {
   }
 
   /** Installs (or replaces in place) the org's integration extension: the
-   *  Guild-provided disclosure pair per plugin plus every curated-enabled
+   *  Guild-provided disclosure tools per plugin plus every curated-enabled
    *  connector tool. Curated-off tools are not registered at all — not
-   *  declared to the model and not callable. */
+   *  declared to the model and not callable. The guide exists only where the
+   *  manifest names a skill to read. */
   private installOrgExtension(
     orgId: string,
     turns: IntegrationTurn[],
@@ -267,7 +269,8 @@ export class IntegrationsRuntime {
   ): Extension<ToolRegistration> {
     const tools: ToolRegistration[] = [];
     for (const turn of turns) {
-      tools.push(this.listToolsTool(turn), this.guideTool(turn));
+      tools.push(this.listToolsTool(turn));
+      if (turn.guide !== null) tools.push(this.guideTool(turn));
       for (const info of turn.tools) {
         if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
         tools.push(this.integrationTool(info));
@@ -304,12 +307,14 @@ export class IntegrationsRuntime {
       api: ToolExecutionApi,
       context: Context,
     ) => Promise<{ content: string; isError: boolean; meta?: unknown }>,
+    options: { deferred?: boolean } = {},
   ): ToolRegistration {
     const registration = {
       name: spec.name,
       description: spec.description,
       parameters: toolSchema(spec.parameters),
       callers: ["tools"] as const,
+      ...(options.deferred === true ? { deferred: true } : {}),
       replay: "unsafe" as const,
       async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
         context.abortSignal?.throwIfAborted();
@@ -355,8 +360,8 @@ export class IntegrationsRuntime {
     );
   }
 
-  /** `{slug}_guide`: the usage guide (SKILL.md/README.md) of the
-   *  integration's approved cookbook bundle, when one is installed. */
+  /** `{slug}_guide`: the usage guide (SKILL.md) of the skill the
+   *  integration's manifest names. Only registered when it names one. */
   private guideTool(turn: IntegrationTurn): ToolRegistration {
     return IntegrationsRuntime.toolRegistration(
       {
@@ -366,11 +371,9 @@ export class IntegrationsRuntime {
       },
       async (_args, api) => {
         const snapshot = await this.snapshotFor(Number(api.conversationId));
-        const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
-        if (snapshotTurn === undefined || snapshotTurn.executor !== "mcp") {
-          return { content: `integration ${turn.slug} has no guide`, isError: false };
-        }
-        const guide = await this.fetchGuide(snapshot!.orgId, turn.slug).catch(() => null);
+        const skill = snapshot?.turns.find((t) => t.slug === turn.slug)?.guide ?? null;
+        if (skill === null) return { content: `integration ${turn.slug} has no guide`, isError: false };
+        const guide = await this.fetchGuide(snapshot!.orgId, skill).catch(() => null);
         return { content: guide ?? `integration ${turn.slug} has no guide`, isError: false };
       },
     );
@@ -386,16 +389,23 @@ export class IntegrationsRuntime {
       return {
         name: turn.slug,
         description: turn.description,
-        ...(turn.executor === "mcp" ? { instructions: `Usage guide: \`await tools.${guide}()\`.` } : {}),
-        tools: [listTools, guide, ...turn.tools.map((info) => info.spec.name)],
+        ...(turn.guide === null ? {} : { instructions: `Usage guide: \`await tools.${guide}()\`.` }),
+        tools: [listTools, ...(turn.guide === null ? [] : [guide]), ...turn.tools.map((info) => info.spec.name)],
       };
     });
   }
 
   private integrationTool(info: IntegrationToolInfo): ToolRegistration {
-    return IntegrationsRuntime.toolRegistration(info.spec, async (args, api, context) => {
-      return this.executeToolCall(api, info.spec.name, args, context);
-    });
+    // Deferred: a plugin's tools stay callable from scripts but out of the
+    // codemode section until the Turn reads them from `list_tools`, so an
+    // integration nobody uses costs no prompt space.
+    return IntegrationsRuntime.toolRegistration(
+      info.spec,
+      async (args, api, context) => {
+        return this.executeToolCall(api, info.spec.name, args, context);
+      },
+      { deferred: true },
+    );
   }
 
   /** The conversation's turn snapshot: the turn-start cache, or a live
@@ -559,24 +569,18 @@ export class IntegrationsRuntime {
    *  README.md) of one cookbook bundle through the approval gate
    *  (approved version + bundle hash) — unapproved content never reaches
    *  model context. */
-  private async fetchGuide(orgId: string, slug: string): Promise<string | null> {
+  /** The text of one skill's approved bundle: the guide an integration's
+   *  manifest points at. Both hashes must still match, so the guide cannot
+   *  drift from what an admin approved. */
+  private async fetchGuide(orgId: string, skill: string): Promise<string | null> {
     const { objects, gateway } = this.deps;
     if (objects === undefined) return null;
-    const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
+    const approved = await gateway.registry.approvedBundle(orgId, "skill", skill);
     if (approved === null) return null;
     const [version, bundleSha256] = approved;
-    const stored = await gateway.registry.getVersion(orgId, "integration", slug, version);
+    const stored = await gateway.registry.getVersion(orgId, "skill", skill, version);
     if (stored.bundle_sha256 !== bundleSha256) return null;
-    const skills = (stored.manifest ?? {}) as JsonObject;
-    const skillList = skills["skills"];
-    const first = Array.isArray(skillList) ? skillList.find((s): s is string => typeof s === "string") : undefined;
-    if (first === undefined) return null;
-    const skillApproved = await gateway.registry.approvedBundle(orgId, "skill", first);
-    if (skillApproved === null) return null;
-    const [skillVersion, skillSha256] = skillApproved;
-    const skillStored = await gateway.registry.getVersion(orgId, "skill", first, skillVersion);
-    if (skillStored.bundle_sha256 !== skillSha256) return null;
-    const bytes = await objects.get(skillStored.object_key);
+    const bytes = await objects.get(stored.object_key);
     return readGuideText(bytes);
   }
 }
