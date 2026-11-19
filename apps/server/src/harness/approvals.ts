@@ -439,7 +439,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       if (call.name === CODEMODE_TOOL_NAME) {
         const code = call.arguments?.code;
         if (typeof code === "string") {
-          const lint = codemodeScriptLint(code);
+          const lint = codemodeScriptLint(
+            code,
+            (name, args) => deps.integrations?.isReadCall(Number(runtime.conversationId), name, args) ?? false,
+          );
           if (lint !== undefined) return { block: lint };
         }
         return undefined;

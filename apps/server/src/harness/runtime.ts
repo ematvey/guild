@@ -490,6 +490,8 @@ export class GuildRuntime {
         });
       },
       integrations: {
+        isReadCall: (conversationId, callName, args) =>
+          this.integrationsRuntime.isReadCall(conversationId, callName, args),
         gateDecision: async (conversationId, callName) => {
           const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
           if (userDecision !== undefined) return userDecision;

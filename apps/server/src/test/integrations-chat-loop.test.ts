@@ -24,7 +24,7 @@ const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-m8-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-m8-data-"));
 
 const toolCallSse = (name: string, args: string): string => {
-  args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
+  if (name !== "codemode") args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
   name = "codemode";
   return (
     'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
@@ -49,9 +49,15 @@ const finalSse =
 
 let vendor: Server;
 let vendorBase = "";
+let issueReads = 0;
+let hubspotReads = 0;
 
 function route(_req: IncomingMessage, url: URL): { status: number; body: string } {
   const p = url.pathname;
+  if (p === "/crm/v3/objects/contacts/search" || /^\/crm\/v3\/lists\/\d+$/.test(p)) {
+    hubspotReads++;
+    return { status: 200, body: JSON.stringify({ results: [], name: "Example list" }) };
+  }
   if (p === "/rest/api/3/search/jql") {
     return {
       status: 200,
@@ -71,6 +77,7 @@ function route(_req: IncomingMessage, url: URL): { status: number; body: string 
     };
   }
   if (p === "/rest/api/3/issue/PROJ-1") {
+    issueReads++;
     return {
       status: 200,
       body: JSON.stringify({
@@ -156,10 +163,21 @@ beforeAll(async () => {
     "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
     [orgId, encryptSecret(master, "xoxb-1")],
   );
+  await stack.env.db.query(
+    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'hubspot', $2, true, 'org')",
+    [orgId, JSON.stringify({ base_url: vendorBase })],
+  );
+  await stack.env.db.query(
+    "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'hubspot', 'token', $2)",
+    [orgId, encryptSecret(master, "test-hubspot-token")],
+  );
   // A chat runs on its Member's personal Agent, which reaches no
   // Integration until someone adds it.
   await giveIntegrations(memberToken, [{ slug: "atlassian", ceiling: "read" }]);
-  await giveIntegrations(stack.adminToken, [{ slug: "slack", ceiling: "write" }]);
+  await giveIntegrations(stack.adminToken, [
+    { slug: "slack", ceiling: "write" },
+    { slug: "hubspot", ceiling: "write" },
+  ]);
 }, 60_000);
 
 /** Sets the Integration list of the caller's personal Agent. */
@@ -251,6 +269,67 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
 }
 
 describe("M8: integrations chat runtime", () => {
+  it.each(["GET", "POST"])(
+    "recognizes read operations behind the HubSpot API's write ceiling (%s)",
+    async (method) => {
+      const before = hubspotReads;
+      const request =
+        method === "GET"
+          ? '{path: "/crm/v3/lists/" + id}'
+          : '{method:"POST",path:"/crm/v3/objects/contacts/search",body:{query:String(id)}}';
+      const chatId = await createChat("hubspot-read-static-check", stack.adminToken);
+      const code = `for (const id of [1,2,3,4]) { const r=await tools.hubspot_api(${request}); text(r); }`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "read these records", stack.adminToken);
+      await turnSettled(chatId, stack.adminToken);
+      const result = toolResults(await threadEvents(chatId, stack.adminToken))[0]!.event as {
+        is_error: boolean;
+        content: string;
+      };
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain("Promise.all");
+      expect(hubspotReads).toBe(before);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "blocks independent read loops before any vendor call and accepts the parallel rewrite",
+    async () => {
+      const before = issueReads;
+      const chatId = await createChat("independent-read-lint");
+      const code = `text("sandbox started");
+        for (const key of ["PROJ-1","PROJ-1","PROJ-1","PROJ-1"]) {
+          const result = await tools.atlassian_jira_get_issue({issue_key:key});
+          text(result);
+        }`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "read these issues");
+      await turnSettled(chatId);
+      const result = toolResults(await threadEvents(chatId))[0]!.event as { is_error: boolean; content: string };
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain("Promise.all");
+      expect(result.content).not.toContain("sandbox started");
+      expect(issueReads).toBe(before);
+
+      const fixedChatId = await createChat("independent-read-parallel");
+      const fixed = `const results = await Promise.all(["PROJ-1","PROJ-1","PROJ-1","PROJ-1"].map(
+        (key) => tools.atlassian_jira_get_issue({issue_key:key})
+      )); text(results);`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code: fixed })) }, { body: finalSse });
+      await submitTurn(fixedChatId, "read these issues together");
+      await turnSettled(fixedChatId);
+      const fixedResult = toolResults(await threadEvents(fixedChatId))[0]!.event as {
+        is_error: boolean;
+        content: string;
+      };
+      expect(fixedResult.is_error).toBe(false);
+      expect(fixedResult.content).toContain("PROJ-1");
+      expect(issueReads).toBe(before + 4);
+    },
+    TEST_TIMEOUT,
+  );
+
   it(
     "registers list_tools + guide + connector tools; discovery returns the member-visible specs",
     async () => {

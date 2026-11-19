@@ -165,6 +165,8 @@ export type IntegrationGateClassification = "skip" | "ask" | "policy" | undefine
  *  IntegrationsRuntime implements it). */
 export interface IntegrationGate {
   gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification>;
+  /** Performance lint only; an approval exemption does not establish a read. */
+  isReadCall(conversationId: number, callName: string, args: Record<string, unknown>): boolean;
 }
 
 /** The turn-start preparation a conversation is configured with. */
@@ -460,6 +462,26 @@ export class IntegrationsRuntime {
     if (curation.alwaysAsk) return "ask";
     if (curation.alwaysAllow) return "skip";
     return info.class === "read" ? "skip" : "policy";
+  }
+
+  /** The admitted tool declaration supplies effects for the script lint.
+   * Actual nested execution still rechecks access and approvals. */
+  isReadCall(conversationId: number, callName: string, args: Record<string, unknown>): boolean {
+    const snapshot = this.snapshots.get(conversationId);
+    if (!snapshot) return false;
+    const target = integrationTarget(snapshot.turns, callName);
+    if (!target) return false;
+    if (target.info.class === "read") return true;
+    // The generic HubSpot tool has a write ceiling, but these operations
+    // only read. Unknown or dynamic methods and POST paths stay unclassified.
+    if (target.turn.slug !== "hubspot" || target.info.raw !== "api") return false;
+    if (args.method === undefined && !("method" in args)) return true;
+    if (args.method === "GET") return true;
+    return (
+      args.method === "POST" &&
+      typeof args.path === "string" &&
+      /^\/crm\/v3\/objects\/[A-Za-z0-9_-]+\/search$/.test(args.path)
+    );
   }
 
   /** Executes one integration tool call: the policy filter, the plugin dispatch, the artifact spill, and the audit
