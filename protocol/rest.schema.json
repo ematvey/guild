@@ -168,6 +168,10 @@
         "error": {
           "type": "string",
           "description": "Omitted when absent. The human-readable provider error."
+        },
+        "posted": {
+          "type": "boolean",
+          "description": "Omitted when absent. True when the message was posted into the thread outside a run (a Routine's send_message): a message of its own, not a step of a turn."
         }
       }
     },

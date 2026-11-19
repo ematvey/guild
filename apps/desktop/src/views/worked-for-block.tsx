@@ -13,9 +13,11 @@ export type ViewEntry =
 /// The pending run is flushed when a non-run block arrives, so a work entry
 /// sits where its run was and never trails the text that followed it.
 ///
-/// A turn's messages fold into the run only once the turn is settled. While
-/// the turn runs, every message stays in the transcript as it arrives; when
-/// it ends, all but the turn's final message move under the worked-for row.
+/// A turn's own messages fold into the run only once the turn is settled.
+/// While the turn runs, every message stays in the transcript as it arrives;
+/// when it ends, all but the turn's final message move under the worked-for
+/// row. A posted message — a Routine's `send_message`, an agent's message to
+/// another thread — belongs to no turn: it stays where it landed.
 ///
 /// The live "Agent is working Ns" clock anchors to the TURN's user message,
 /// not the run's own open-time: the turn is what the user is waiting on, so
@@ -42,11 +44,12 @@ export function viewEntries(blocks: RenderBlock[], busy = false): ViewEntry[] {
     if (b.kind === "user" && !b.queued) turn += 1;
     turns.push(turn);
   });
-  // The last message with a body in every turn: the one a settled turn
-  // keeps in the transcript.
+  // The last turn message with a body: the one a settled turn keeps in the
+  // transcript. A posted message is never that message — it is not a step
+  // of the turn.
   const finalText = new Map<number, number>();
   blocks.forEach((b, i) => {
-    if (b.kind === "text" && hasBody(b)) finalText.set(turns[i]!, i);
+    if (b.kind === "text" && !b.posted && hasBody(b)) finalText.set(turns[i]!, i);
   });
   const lastTurn = turns[turns.length - 1] ?? -1;
   blocks.forEach((b, i) => {
@@ -58,7 +61,8 @@ export function viewEntries(blocks: RenderBlock[], busy = false): ViewEntry[] {
     // The open turn shows every message as it arrives; a settled turn keeps
     // only its last message and folds the earlier ones into the run.
     const settled = t !== lastTurn || !busy;
-    if (isWorkBlock(b) || (settled && b.kind === "text" && finalText.get(t) !== i)) {
+    const folds = settled && b.kind === "text" && !b.posted && finalText.get(t) !== i;
+    if (isWorkBlock(b) || folds) {
       run.push(b);
       return;
     }

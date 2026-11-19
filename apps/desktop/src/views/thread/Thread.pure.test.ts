@@ -1448,6 +1448,24 @@ describe("viewEntries (collapsed work runs)", () => {
     expect(shape(blocks, false)).toEqual(["u", "x1", "work(t2,x9)"]);
   });
 
+  it("never folds a posted message into a turn", () => {
+    // A Routine's send_message lands as a message of its own, mid-turn.
+    const posted = (n: number): RenderBlock => ({
+      kind: "text",
+      text: `posted${n}`,
+      key: `p${n}`,
+      posted: true,
+    });
+    const blocks = [user, text(1), tool(2), posted(3), text(4), tool(5), text(6)];
+    expect(shape(blocks, false)).toEqual(["u", "work(x1,t2)", "p3", "work(x4,t5)", "x6"]);
+    expect(shape(blocks, true)).toEqual(["u", "x1", "work(t2)", "p3", "x4", "work(t5)", "x6"]);
+  });
+
+  it("a posted message is never the turn's final message", () => {
+    const blocks: RenderBlock[] = [user, text(1), tool(2), { kind: "text", text: "posted", key: "p", posted: true }];
+    expect(shape(blocks, false)).toEqual(["u", "x1", "work(t2)", "p"]);
+  });
+
   it("anchors every run to the turn's user message", () => {
     const blocks = [user, tool(1), text(2), user2, tool(3)];
     const runs = viewEntries(blocks, true).filter((e) => e.kind === "work");

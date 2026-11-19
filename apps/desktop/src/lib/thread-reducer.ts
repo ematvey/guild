@@ -210,6 +210,11 @@ export interface RenderBlock {
   /// the working card's timeline anchor. Stream-built blocks stamp the
   /// frame's arrival instead (kept across the re-stamp, never reset).
   ts?: string;
+  /// kind === "text": the message was posted into the thread outside a run
+  /// (a Routine's `send_message`, an agent's message to another thread). It
+  /// is a message of its own, not a step of a turn, so a settled turn never
+  /// folds it.
+  posted?: boolean;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
@@ -463,7 +468,7 @@ export function foldEvent(acc: ThreadFold, row: ThreadEventRow): void {
           });
           reasoningSeen = true;
         } else if (b.type === "text") {
-          append(blocks, { kind: "text", text: b.text, ts: row.created_at, key: nextKey() });
+          append(blocks, { kind: "text", text: b.text, ts: row.created_at, posted: ev.posted, key: nextKey() });
         } else {
           const executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
           // A live tool_started frame may have provisioned this row before

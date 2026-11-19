@@ -373,8 +373,20 @@ describe("durable integration contracts", () => {
       );
       const rows = (await threads.listEvents(stack.orgId, id)).filter((r) => r.event.type === "assistant_message");
       expect(rows.map((r) => r.event)).toMatchObject([
-        { turn: 1, step: 1, model: "GLM-Test", blocks: [{ type: "text", text: "Hourly check: all green." }] },
-        { turn: 2, step: 1, model: "GLM-Test", blocks: [{ type: "text", text: "Hourly check: one pod pending." }] },
+        {
+          turn: 1,
+          step: 1,
+          model: "GLM-Test",
+          posted: true,
+          blocks: [{ type: "text", text: "Hourly check: all green." }],
+        },
+        {
+          turn: 2,
+          step: 1,
+          model: "GLM-Test",
+          posted: true,
+          blocks: [{ type: "text", text: "Hourly check: one pod pending." }],
+        },
       ]);
       // The model's context holds both, as the agent's own replies.
       const conversation = await runtime.conversationForChat(id);
