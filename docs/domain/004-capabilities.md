@@ -44,6 +44,12 @@ A Turn's tool set is assembled at admission, in this order:
 
 File and shell tools are called directly. Integration and MCP tools are called through code mode: the model writes a short script that calls `tools.<name>`, and each nested call is gated on its own.
 
+Before a code-mode script executes, its static check refuses straight-line loops of independent Integration reads and batches of four consecutive independent reads, with a correction asking for `Promise.all`. Read effects come from the admitted Integration declarations; known HubSpot GET and CRM search requests also qualify. Pagination, ordered writes and uncertain dependencies remain sequential. A post-execution timing hint covers serial batches the static check cannot establish.
+
+Each conversation has at most eight tool operations in flight. Installed tool implementations and the approval classifier's Integration discovery share this limit, including dynamically installed tools. A queued operation cancelled before execution is removed; authorization is checked when its classification runs. The timing hint is conditional because combined durations do not establish whether calls overlapped, and its batching advice preserves dependencies on both results and side effects.
+
+Integration calls compare their approval classification with fresh policy when execution begins. A stricter policy ends the call with a retry instruction so it can pass the approval gate again; it never opens an interactive approval while holding an execution slot. The static check declines scripts with shadowed capabilities, duplicate function declarations or unknown object mutations, and excludes file-producing reads from batching advice.
+
 Code mode lists the tools a script can call grouped into namespaces: groups of Guild's own tools, one per Integration (named by its slug), and one per MCP server. A namespace only groups tools for discovery; a script still calls each tool as `tools.<name>`.
 
 ### The allowlist

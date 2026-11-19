@@ -146,13 +146,7 @@ export class TurnTools {
     await conversation.configure(
       {
         extensions: [...base.extensions, ...scoped, ...prepared.extensions, ...userPrepared.extensions],
-        tools: [
-          ...baseTools,
-          ...machineTools,
-          ...prepared.tools,
-          ...userPrepared.tools,
-          ...agentTools,
-        ],
+        tools: [...baseTools, ...machineTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
         ...(agent === null
           ? {}
           : {

@@ -10,7 +10,8 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { IntegrationsRuntime } from "../harness/integrations.js";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
@@ -24,7 +25,7 @@ const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-m8-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-m8-data-"));
 
 const toolCallSse = (name: string, args: string): string => {
-  args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
+  if (name !== "codemode") args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
   name = "codemode";
   return (
     'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
@@ -49,9 +50,19 @@ const finalSse =
 
 let vendor: Server;
 let vendorBase = "";
+let issueReads = 0;
+let hubspotReads = 0;
+let slackPosts = 0;
+let issueDelayMs = 0;
+let activeIssueReads = 0;
+let peakIssueReads = 0;
 
 function route(_req: IncomingMessage, url: URL): { status: number; body: string } {
   const p = url.pathname;
+  if (p === "/crm/v3/objects/contacts/search" || /^\/crm\/v3\/lists\/\d+$/.test(p)) {
+    hubspotReads++;
+    return { status: 200, body: JSON.stringify({ results: [], name: "Example list" }) };
+  }
   if (p === "/rest/api/3/search/jql") {
     return {
       status: 200,
@@ -71,6 +82,7 @@ function route(_req: IncomingMessage, url: URL): { status: number; body: string 
     };
   }
   if (p === "/rest/api/3/issue/PROJ-1") {
+    issueReads++;
     return {
       status: 200,
       body: JSON.stringify({
@@ -85,6 +97,7 @@ function route(_req: IncomingMessage, url: URL): { status: number; body: string 
     };
   }
   if (p === "/api/chat.postMessage") {
+    slackPosts++;
     return { status: 200, body: JSON.stringify({ ok: true, channel: "C1", ts: "1760000000.000100" }) };
   }
   return { status: 404, body: "{}" };
@@ -94,8 +107,14 @@ beforeAll(async () => {
   vendor = createServer((req: IncomingMessage, res: ServerResponse) => {
     let body = "";
     req.on("data", (c: Buffer) => (body += c));
-    req.on("end", () => {
+    req.on("end", async () => {
       const url = new URL(req.url ?? "/", "http://vendor.test");
+      if (url.pathname === "/rest/api/3/issue/PROJ-1") {
+        activeIssueReads++;
+        peakIssueReads = Math.max(peakIssueReads, activeIssueReads);
+        if (issueDelayMs) await new Promise((resolve) => setTimeout(resolve, issueDelayMs));
+        activeIssueReads--;
+      }
       const out = route(req, url);
       res.writeHead(out.status, { "content-type": "application/json" });
       res.end(out.body);
@@ -156,10 +175,21 @@ beforeAll(async () => {
     "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
     [orgId, encryptSecret(master, "xoxb-1")],
   );
+  await stack.env.db.query(
+    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'hubspot', $2, true, 'org')",
+    [orgId, JSON.stringify({ base_url: vendorBase })],
+  );
+  await stack.env.db.query(
+    "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'hubspot', 'token', $2)",
+    [orgId, encryptSecret(master, "test-hubspot-token")],
+  );
   // A chat runs on its Member's personal Agent, which reaches no
   // Integration until someone adds it.
   await giveIntegrations(memberToken, [{ slug: "atlassian", ceiling: "read" }]);
-  await giveIntegrations(stack.adminToken, [{ slug: "slack", ceiling: "write" }]);
+  await giveIntegrations(stack.adminToken, [
+    { slug: "slack", ceiling: "write" },
+    { slug: "hubspot", ceiling: "write" },
+  ]);
 }, 60_000);
 
 /** Sets the Integration list of the caller's personal Agent. */
@@ -251,6 +281,155 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
 }
 
 describe("M8: integrations chat runtime", () => {
+  it(
+    "refuses a write when approval policy tightens after classification",
+    async () => {
+      const integration = (
+        stack.env.app as unknown as { platform: { runtime: { integrationsRuntime: IntegrationsRuntime } } }
+      ).platform.runtime.integrationsRuntime;
+      const original = integration.gateDecision.bind(integration);
+      const before = slackPosts;
+      const spy = vi.spyOn(integration, "gateDecision").mockImplementation(async (...args) => {
+        const result = await original(...args);
+        if (args[1] === "slack_post_message")
+          await stack.env.db.query(
+            "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_ask\"') WHERE org_id=$1 AND name='slack'",
+            [orgId],
+          );
+        return result;
+      });
+      try {
+        const chatId = await createChat("changed-queued-approval", stack.adminToken);
+        scriptFor(
+          { body: toolCallSse("slack_post_message", JSON.stringify({ channel: "C1", text: "approval test" })) },
+          { body: finalSse },
+        );
+        await submitTurn(chatId, "post this", stack.adminToken);
+        await turnSettled(chatId, stack.adminToken);
+        const result = toolResults(await threadEvents(chatId, stack.adminToken))[0]!.event as {
+          is_error: boolean;
+          content: string;
+        };
+        expect(result.is_error).toBe(true);
+        expect(result.content).toContain("approval policy changed");
+        expect(slackPosts).toBe(before);
+      } finally {
+        spy.mockRestore();
+        await stack.env.db.query(
+          "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_allow\"') WHERE org_id=$1 AND name='slack'",
+          [orgId],
+        );
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "caps discovery and execution through a configured conversation's dynamic integration extension",
+    async () => {
+      const runtime = (
+        stack.env.app as unknown as { platform: { runtime: { integrationsRuntime: IntegrationsRuntime } } }
+      ).platform.runtime;
+      const integration = runtime.integrationsRuntime;
+      const original = integration.gateDecision.bind(integration);
+      let activeDiscovery = 0;
+      let peakDiscovery = 0;
+      const spy = vi.spyOn(integration, "gateDecision").mockImplementation(async (...args) => {
+        activeDiscovery++;
+        peakDiscovery = Math.max(peakDiscovery, activeDiscovery);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return await original(...args);
+        } finally {
+          activeDiscovery--;
+        }
+      });
+      const before = issueReads;
+      issueDelayMs = 50;
+      peakIssueReads = 0;
+      try {
+        const chatId = await createChat("configured-concurrency-cap");
+        const code = `text(await Promise.all(Array.from({length:24}, () => tools.atlassian_jira_get_issue({issue_key:"PROJ-1"}))));`;
+        scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+        await submitTurn(chatId, "read these issues together");
+        await turnSettled(chatId);
+        const result = toolResults(await threadEvents(chatId))[0]!.event as { is_error: boolean };
+        expect(result.is_error).toBe(false);
+        expect(issueReads - before).toBe(24);
+        expect(spy).toHaveBeenCalledTimes(24);
+        expect(peakDiscovery).toBeGreaterThan(1);
+        expect(peakDiscovery).toBeLessThanOrEqual(8);
+        expect(peakIssueReads).toBeGreaterThan(1);
+        expect(peakIssueReads).toBeLessThanOrEqual(8);
+      } finally {
+        issueDelayMs = 0;
+        spy.mockRestore();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  it.each(["GET", "POST"])(
+    "recognizes read operations behind the HubSpot API's write ceiling (%s)",
+    async (method) => {
+      const before = hubspotReads;
+      const request =
+        method === "GET"
+          ? '{path: "/crm/v3/lists/" + id}'
+          : '{method:"POST",path:"/crm/v3/objects/contacts/search",body:{query:String(id)}}';
+      const chatId = await createChat("hubspot-read-static-check", stack.adminToken);
+      const code = `for (const id of [1,2,3,4]) { const r=await tools.hubspot_api(${request}); text(r); }`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "read these records", stack.adminToken);
+      await turnSettled(chatId, stack.adminToken);
+      const result = toolResults(await threadEvents(chatId, stack.adminToken))[0]!.event as {
+        is_error: boolean;
+        content: string;
+      };
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain("Promise.all");
+      expect(hubspotReads).toBe(before);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "blocks independent read loops before any vendor call and accepts the parallel rewrite",
+    async () => {
+      const before = issueReads;
+      const chatId = await createChat("independent-read-lint");
+      const code = `text("sandbox started");
+        for (const key of ["PROJ-1","PROJ-1","PROJ-1","PROJ-1"]) {
+          const result = await tools.atlassian_jira_get_issue({issue_key:key});
+          text(result);
+        }`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "read these issues");
+      await turnSettled(chatId);
+      const result = toolResults(await threadEvents(chatId))[0]!.event as { is_error: boolean; content: string };
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain("Promise.all");
+      expect(result.content).not.toContain("sandbox started");
+      expect(issueReads).toBe(before);
+
+      const fixedChatId = await createChat("independent-read-parallel");
+      const fixed = `const results = await Promise.all(["PROJ-1","PROJ-1","PROJ-1","PROJ-1"].map(
+        (key) => tools.atlassian_jira_get_issue({issue_key:key})
+      )); text(results);`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code: fixed })) }, { body: finalSse });
+      await submitTurn(fixedChatId, "read these issues together");
+      await turnSettled(fixedChatId);
+      const fixedResult = toolResults(await threadEvents(fixedChatId))[0]!.event as {
+        is_error: boolean;
+        content: string;
+      };
+      expect(fixedResult.is_error).toBe(false);
+      expect(fixedResult.content).toContain("PROJ-1");
+      expect(issueReads).toBe(before + 4);
+    },
+    TEST_TIMEOUT,
+  );
+
   it(
     "registers list_tools + guide + connector tools; discovery returns the member-visible specs",
     async () => {
