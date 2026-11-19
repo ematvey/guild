@@ -1,13 +1,7 @@
 // The preview pane's width and its drag, kept in the one place the pane reads
 // them. The divider sits on the pane's left edge, so the delta is inverted:
 // dragging left widens the pane, dragging right narrows it.
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import { trackDrag } from "../../../lib/drag";
 import {
   clampPreviewWidth,

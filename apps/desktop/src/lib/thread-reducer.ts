@@ -181,6 +181,9 @@ export interface RenderBlock {
   /// Stable React key. Derived blocks use the source event's seq (plus an
   /// in-event index); streaming-built blocks use a live counter.
   key: string;
+  /// The server's Turn identity on committed assistant blocks. Steers share
+  /// it; a child result waking an idle parent starts a different Turn.
+  turn?: number;
   /// kind === "user": the backing thread-event id (the turn command id —
   /// delivery/withdrawal reconcile matches blocks by it, not by key: a
   /// delivered queued send MOVES to a fresh seq).
@@ -256,6 +259,8 @@ function stampFiles(
   attachments: readonly MessageAttachmentMeta[] | undefined,
   ts: string,
   key: () => string,
+  turn: number,
+  posted?: boolean,
 ): void {
   if (attachments === undefined || attachments.length === 0) return;
   for (let j = blocks.length - 1; j >= start; j--) {
@@ -264,7 +269,7 @@ function stampFiles(
       return;
     }
   }
-  append(blocks, { kind: "text", text: "", attachments: [...attachments], ts, key: key() });
+  append(blocks, { kind: "text", text: "", attachments: [...attachments], ts, key: key(), turn, posted });
 }
 
 function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
@@ -468,7 +473,14 @@ export function foldEvent(acc: ThreadFold, row: ThreadEventRow): void {
           });
           reasoningSeen = true;
         } else if (b.type === "text") {
-          append(blocks, { kind: "text", text: b.text, ts: row.created_at, posted: ev.posted, key: nextKey() });
+          append(blocks, {
+            kind: "text",
+            text: b.text,
+            ts: row.created_at,
+            turn: ev.turn,
+            posted: ev.posted,
+            key: nextKey(),
+          });
         } else {
           const executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
           // A live tool_started frame may have provisioned this row before
@@ -508,7 +520,7 @@ export function foldEvent(acc: ThreadFold, row: ThreadEventRow): void {
         }
       }
       // Files before the error: the error stays the step's last block.
-      stampFiles(blocks, start, ev.attachments, row.created_at, nextKey);
+      stampFiles(blocks, start, ev.attachments, row.created_at, nextKey, ev.turn, ev.posted);
       if (ev.error) append(blocks, { kind: "error", text: ev.error, key: nextKey() });
       break;
     }
