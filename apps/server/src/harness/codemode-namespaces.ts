@@ -19,6 +19,7 @@ import {
   type CodemodeToolOptions,
 } from "@earendil-works/pi-durable/codemode";
 import type { Extension, PromptSection, ToolRegistration } from "@earendil-works/pi-durable";
+import { withSerialCallsHint } from "./codemode-hint.js";
 
 /** A named set of tools that one namespace lists. */
 export interface ToolGroup {
@@ -151,7 +152,9 @@ export function createNamespacedCodemodeExtension(
       async execute(args, api, context) {
         const agent = await api.agent(context);
         const namespaced = createCodemodeTool(await resolved(Number(api.conversationId), agent.callable));
-        return namespaced.execute(args as never, api, context);
+        const started = Date.now();
+        const result = await namespaced.execute(args as never, api, context);
+        return withSerialCallsHint(result, Date.now() - started);
       },
     };
   });

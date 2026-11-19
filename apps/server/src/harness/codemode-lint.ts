@@ -13,12 +13,12 @@ const RULES: readonly { pattern: RegExp; message: string }[] = [
   {
     pattern: /\b(setTimeout|setInterval|setImmediate|queueMicrotask)\s*\(/,
     message:
-      'the sandbox has NO timers ("no Node, file system, network, or timers") — setTimeout/setInterval are not defined. There is no way to sleep or delay inside a script. Pace calls with sequential awaits (each nested call takes real time) and split long work across several codemode calls.',
+      'the sandbox has NO timers ("no Node, file system, network, or timers") — setTimeout/setInterval are not defined. There is no way to sleep or delay inside a script. Independent nested calls run together in one `Promise.all`; split long work across several codemode calls.',
   },
   {
     pattern: /while\s*\(\s*(Date\.now\(\)|performance\.now\(\))/,
     message:
-      "busy-waiting on a clock does not work: the script holds the CPU and burns the script timeout with no effect. There is no way to sleep in the sandbox — use sequential awaits instead.",
+      "busy-waiting on a clock does not work: the script holds the CPU and burns the script timeout with no effect. There is no way to sleep in the sandbox — batch independent calls with `Promise.all` instead.",
   },
   {
     pattern: /tools\.(searchTools|ALL_TOOLS|describeTool|describeNamespace|store|load|text|image|exit)\b/,
