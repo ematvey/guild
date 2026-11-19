@@ -26,6 +26,18 @@ describe("serialCallsHint", () => {
     expect(hint).toContain("Promise.all");
   });
 
+  it("hints at thirty percent tool time, but not below it", () => {
+    expect(serialCallsHint(calls(750, 750, 750, 750), 10000)).toContain("Promise.all");
+    expect(serialCallsHint(calls(750, 750, 750, 750), 10001)).toBeUndefined();
+  });
+
+  it("hints on the recorded list lookup and retry batches", () => {
+    const lookups = Array.from({ length: 61 }, () => ({ durationMs: 88711 / 61 }));
+    const retries = Array.from({ length: 34 }, () => ({ durationMs: 49097 / 34 }));
+    expect(serialCallsHint(lookups, 147289)).toContain("61 tool calls");
+    expect(serialCallsHint(retries, 81329)).toContain("34 tool calls");
+  });
+
   it("ignores calls with no duration", () => {
     expect(serialCallsHint([{}, {}, {}, {}], 9000)).toBeUndefined();
   });

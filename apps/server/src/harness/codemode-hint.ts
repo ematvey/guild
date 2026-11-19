@@ -13,7 +13,7 @@ const MIN_CALLS = 4;
 const MIN_TOOL_MS = 2_000;
 /** Tool time over wall time. A serial chain sits just under 1; calls that
  *  overlap push it above, and the script's own work pushes it below. */
-const SERIAL_MIN_SHARE = 0.7;
+const SERIAL_MIN_SHARE = 0.3;
 const SERIAL_MAX_SHARE = 1.15;
 
 /** One nested call as the codemode result lists it. */
