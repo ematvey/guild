@@ -42,6 +42,9 @@ export type ThreadEvent =
       attachments?: MessageAttachment[];
       interrupted?: boolean;
       error?: string;
+      /** The message was posted into the thread outside a run (a Routine's
+       *  `send_message`): a message of its own, not a step of a turn. */
+      posted?: boolean;
     }
   | {
       type: "tool_result";

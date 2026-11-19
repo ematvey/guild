@@ -1,6 +1,6 @@
 // The transcript pane: the scrolling message column of the open chat, its
-// empty and loading states, the older-page button, the running subagents,
-// the column resize handles and the jump-to-bottom button.
+// empty and loading states, the older-page button, the running subagents and
+// the jump-to-bottom button.
 import { memo, useMemo, type RefObject, type UIEvent } from "react";
 import Markdown from "react-markdown";
 import { ArrowDown, CornerUpLeft, Loader2 } from "lucide-react";
@@ -13,7 +13,14 @@ import { RunningSubagents } from "../agents/RunningSubagents";
 import { SubagentClosedRecord, SubagentResultRecord, SubagentSpawnRecord } from "../agents/subagent-blocks";
 import type { ChatSubagentNode } from "../../lib/api/chats";
 import type { RenderBlock } from "../../lib/thread-reducer";
-import { ThreadSkeleton, ThreadProgress, ReasoningFrame, CompactionCard, HoverStamp } from "./blocks";
+import {
+  ThreadSkeleton,
+  ThreadProgress,
+  ReasoningFrame,
+  CompactionCard,
+  HoverStamp,
+  CHAT_COLUMN_CLASS,
+} from "./blocks";
 import { ToolFrame } from "./tool-blocks";
 import { ApprovalCard } from "./approval-card";
 import { GenuiPlacementContext, answersAfter } from "../genui/actions";
@@ -84,11 +91,12 @@ const TextBlock = memo(function TextBlock({
 });
 
 /** View entries: each contiguous thinking/tool run becomes one
- *  WorkedForBlock; everything else (user, text, errors, compaction cards,
- *  queued-send chips, approvals) stays 1:1. Every agent text block carries
+ *  WorkedForBlock; everything else (user, the turn's final text, errors,
+ *  compaction cards, queued-send chips, approvals) stays 1:1. A settled
+ *  turn's earlier messages fold into its run. Every agent text block carries
  *  the hover stamp with its time and copy button. */
-function useDisplayEntries(blocks: RenderBlock[]) {
-  return useMemo(() => viewEntries(blocks), [blocks]);
+function useDisplayEntries(blocks: RenderBlock[], busy: boolean) {
+  return useMemo(() => viewEntries(blocks, busy), [blocks, busy]);
 }
 
 export interface ThreadPaneScroll {
@@ -99,14 +107,6 @@ export interface ThreadPaneScroll {
   onFrameToggle: () => void;
   atBottom: boolean;
   scrollToBottom: () => void;
-}
-
-export interface ThreadPaneColumn {
-  chatWidth: number;
-  chatResizing: boolean;
-  startChatDrag: (e: React.MouseEvent, side: "left" | "right") => void;
-  resetChatWidth: () => void;
-  nudgeChatWidth: (key: "ArrowLeft" | "ArrowRight", side: "left" | "right") => void;
 }
 
 export function ThreadPane({
@@ -126,8 +126,6 @@ export function ThreadPane({
   onOpenChat,
   onOpenChildChat,
   scroll,
-  column,
-  isMobile,
 }: {
   blocks: RenderBlock[];
   loading: boolean;
@@ -147,11 +145,8 @@ export function ThreadPane({
   onOpenChat: (chatId: string) => void;
   onOpenChildChat: (chatId: string) => void;
   scroll: ThreadPaneScroll;
-  column: ThreadPaneColumn;
-  isMobile: boolean;
 }) {
-  const displayEntries = useDisplayEntries(blocks);
-  const { chatWidth, chatResizing, startChatDrag, resetChatWidth, nudgeChatWidth } = column;
+  const displayEntries = useDisplayEntries(blocks, busy);
   const isStopping = !!(viewChatId && stopping[viewChatId]);
 
   // The transcript is the expensive subtree: every keystroke in the
@@ -167,7 +162,7 @@ export function ThreadPane({
   const transcriptEntries = useMemo(
     () =>
       displayEntries.map((e, i) =>
-        e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null : e.kind === "work" ? (
+        e.kind === "work" ? (
           <WorkedForBlock
             key={`work-${e.run[0]!.key}`}
             run={e.run}
@@ -181,6 +176,18 @@ export function ThreadPane({
                   key={b.key}
                   text={b.reasoningText ?? ""}
                   live={busy && b.key === blocks[lastBlockIndex]?.key}
+                />
+              ) : b.kind === "text" ? (
+                // An intermediate message of a settled turn: it sits in the
+                // run, behind the worked-for row, in arrival order.
+                <TextBlock
+                  key={b.key}
+                  b={b}
+                  live={false}
+                  answer={answers.get(b.key) ?? null}
+                  showInterrupted={!busy}
+                  origin={null}
+                  onOpenOrigin={onOpenChat}
                 />
               ) : b.kind === "tool" && b.tool ? (
                 <ToolFrame key={b.key} t={b.tool} />
@@ -253,7 +260,7 @@ export function ThreadPane({
   );
 
   if (blocks.length === 0) {
-    if (loading) return <ThreadSkeleton width={chatWidth} />;
+    if (loading) return <ThreadSkeleton />;
     if (!viewChatId) {
       return (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
@@ -284,10 +291,8 @@ export function ThreadPane({
         >
           <div
             ref={scroll.setContentEl}
-            className={`mx-auto w-full space-y-5 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground ${
-              chatResizing ? "" : "transition-[max-width] duration-150"
-            }`}
-            style={{ paddingBottom: scroll.composerH + 48, maxWidth: chatWidth }}
+            className={`${CHAT_COLUMN_CLASS} space-y-5 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground`}
+            style={{ paddingBottom: scroll.composerH + 48 }}
           >
             {hasMore && (
               <div className="flex justify-center">
@@ -333,41 +338,6 @@ export function ThreadPane({
           </div>
         </div>
       </FrameToggleContext.Provider>
-      {/* Column resize handles: one on each edge, so either side can be
-          dragged. Each sits at 50% ± half the width, capped at the pane edge
-          when the column fills it. */}
-      {!isMobile &&
-        (["left", "right"] as const).map((side) => (
-          <div
-            key={side}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={`Resize conversation column (${side} edge)`}
-            aria-valuenow={chatWidth}
-            tabIndex={0}
-            title="Drag to resize · double-click to reset"
-            className="group absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize focus:outline-none"
-            style={{
-              left:
-                side === "right"
-                  ? `min(calc(50% + ${chatWidth / 2}px), calc(100% - 4px))`
-                  : `max(calc(50% - ${chatWidth / 2}px), 4px)`,
-            }}
-            onMouseDown={(e) => startChatDrag(e, side)}
-            onDoubleClick={resetChatWidth}
-            onKeyDown={(e) => {
-              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-              e.preventDefault();
-              nudgeChatWidth(e.key, side);
-            }}
-          >
-            <div
-              className={`mx-auto h-full w-px transition-colors ${
-                chatResizing ? "bg-ring" : "bg-transparent group-hover:bg-ring group-focus-visible:bg-ring"
-              }`}
-            />
-          </div>
-        ))}
       {/* Floating jump-to-bottom: only while the user reads above the tail,
           above the composer so it never covers it. */}
       {!scroll.atBottom && (
@@ -375,7 +345,7 @@ export function ThreadPane({
           className="pointer-events-none absolute inset-x-0 z-20 px-3 sm:px-4"
           style={{ bottom: scroll.composerH - 12 }}
         >
-          <div className="mx-auto flex w-full justify-end" style={{ maxWidth: chatWidth }}>
+          <div className={`${CHAT_COLUMN_CLASS} flex justify-end`}>
             <button
               type="button"
               onClick={scroll.scrollToBottom}

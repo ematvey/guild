@@ -400,10 +400,6 @@
       "reason": "infrastructure"
     },
     {
-      "where": "apps/desktop/src/views/thread/hooks/use-column-resize.ts",
-      "reason": "presentational"
-    },
-    {
       "where": "apps/desktop/src/views/thread/hooks/use-mobile-gestures.ts",
       "reason": "presentational"
     },

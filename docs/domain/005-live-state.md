@@ -100,6 +100,8 @@ The client keeps server state in stores that only frames write. Seeds from HTTP 
 
 The only state the client owns is a pending send and the Member's drafts. A pending send retires when a frame speaks for that Thread. `busy` is derived from `generating` and the pending send; it is never stored.
 
+The transcript keeps the server's Turn identity on committed assistant blocks. A settled Turn keeps its final message visible and folds its intermediate messages into the work row. A steer does not split a Turn, and a child result waking an idle parent does not fold the preceding Turn's final message. Posted messages remain visible outside that grouping.
+
 On every reconnect the client clears its watermarks and syncs again. When it wakes or becomes visible, it checks the socket and syncs; it never calls HTTP.
 
 ## Rejected

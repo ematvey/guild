@@ -343,7 +343,11 @@
       "reason": "infrastructure"
     },
     {
-      "where": "apps/desktop/src/lib/chat-width.ts",
+      "where": "apps/desktop/src/lib/preview.ts",
+      "reason": "infrastructure"
+    },
+    {
+      "where": "apps/desktop/src/views/thread/preview/use-preview-width.ts",
       "reason": "infrastructure"
     },
     {

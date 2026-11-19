@@ -4,9 +4,9 @@ Self-hosted org-level Codex/Cowork replacement: a TypeScript cloud server,
 a Rust local engine with shared protocol/core crates, plus a Tauri desktop
 client.
 
-Layout, build/test commands, and API examples live in `README.md` — it is the
-source of truth for them; this file carries only what the repo cannot tell
-you.
+Layout and build/test commands live in `README.md`; API examples live in
+`docs/api.md`. Those files are the source of truth for them; this file carries
+only what the repo cannot tell you.
 
 ## Read before touching the code
 

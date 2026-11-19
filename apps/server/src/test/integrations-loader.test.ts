@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mcpIntegration, type IntegrationPlugin, type McpIntegrationManifest } from "@guild/integration-sdk";
 import { loadBuiltinMcp, loadBuiltins, validatePluginManifest } from "../integrations/loader.js";
+import { firstSkill, indexDescription } from "../integrations/plugins.js";
 
 function plugin(name: string): IntegrationPlugin {
   return {
@@ -77,6 +78,11 @@ describe("loadBuiltinMcp", () => {
     expect(() => loadBuiltinMcp([bad])).toThrow(/names \{nope\}, which is no secret field/);
   });
 
+  it("carries the skill slugs into the registry manifest", () => {
+    const [remote] = loadBuiltinMcp([mcpPlugin("remote", { skills: ["remote-guide"] })]);
+    expect(remote!.manifest["skills"]).toEqual(["remote-guide"]);
+  });
+
   it("refuses a non-http server URL and a slug shared with a code plugin", () => {
     expect(() => loadBuiltinMcp([mcpPlugin("ftp", { mcp: { url: "ftp://x" } })])).toThrow(/mcp.url/);
     expect(() => loadBuiltinMcp([plugin("dup"), mcpPlugin("dup")])).toThrow(/two plugins declare this slug/);
@@ -94,5 +100,28 @@ describe("validatePluginManifest", () => {
     const p = plugin("x");
     p.manifest.traits = { teleport: "ping" };
     expect(() => validatePluginManifest(p.manifest)).toThrow(/unknown trait teleport/);
+  });
+
+  it("accepts the skill slugs that document an integration", () => {
+    const p = plugin("x");
+    p.manifest.skills = ["hubspot-analytics", "hubspot"];
+    expect(() => validatePluginManifest(p.manifest)).not.toThrow();
+    expect(firstSkill(p.manifest)).toBe("hubspot-analytics");
+  });
+
+  it("refuses a skill slug the registry could not hold", () => {
+    const p = plugin("x");
+    p.manifest.skills = ["Hubspot Analytics"];
+    expect(() => validatePluginManifest(p.manifest)).toThrow(/skill slug/);
+  });
+
+  it("has no guide skill when the manifest names none", () => {
+    expect(firstSkill(plugin("x").manifest)).toBeNull();
+  });
+
+  it("indexes an integration by its summary, one line", () => {
+    expect(indexDescription({ summary: "HubSpot CRM\nsearch", description: "long prose" })).toBe("HubSpot CRM search");
+    expect(indexDescription({ description: "v1 bundle\nonly prose" })).toBe("v1 bundle only prose");
+    expect(indexDescription({ summary: "  " })).toBe("");
   });
 });

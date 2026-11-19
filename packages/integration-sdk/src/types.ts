@@ -57,6 +57,9 @@ export interface IntegrationManifest {
   identity_key: string;
   fields: IntegrationField[];
   tools: IntegrationToolDecl[];
+  /** Skill slugs that document this integration. The first one is what
+   *  `<slug>_guide` returns; with none, the Turn has no guide tool. */
+  skills?: readonly string[];
 }
 
 /** A plugin as its folder exports it. */
@@ -106,6 +109,9 @@ export interface McpIntegrationManifest {
    *  not named here takes the admin's choice, else the class its read-only
    *  and destructive hints and its name suggest. */
   tool_classes?: Record<string, "read" | "write" | "admin">;
+  /** Skill slugs that document this server. The first one is what
+   *  `<slug>_guide` returns; with none, the Turn has no guide tool. */
+  skills?: readonly string[];
 }
 
 /** A plugin that wraps a remote MCP server. */

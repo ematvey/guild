@@ -8,10 +8,16 @@ export type ViewEntry =
   | { kind: "work"; run: RenderBlock[]; turnStart?: string };
 
 /// Transcript entries. Each CONTIGUOUS agent-work run — thinking, tool
-/// calls and subagent lifecycle records — collapses into one work entry;
-/// every other block stays 1:1. The pending run is flushed when a non-run
-/// block arrives, so a work entry sits where its run was and never trails
-/// the text that followed it.
+/// calls, subagent lifecycle records and the agent's own intermediate
+/// messages — collapses into one work entry; every other block stays 1:1.
+/// The pending run is flushed when a non-run block arrives, so a work entry
+/// sits where its run was and never trails the text that followed it.
+///
+/// A turn's own messages fold into the run only once the turn is settled.
+/// While the turn runs, every message stays in the transcript as it arrives;
+/// when it ends, all but the turn's final message move under the worked-for
+/// row. A posted message — a Routine's `send_message`, an agent's message to
+/// another thread — belongs to no turn: it stays where it landed.
 ///
 /// The live "Agent is working Ns" clock anchors to the TURN's user message,
 /// not the run's own open-time: the turn is what the user is waiting on, so
@@ -20,7 +26,7 @@ export type ViewEntry =
 /// the next step's buffer can arrive before the previous step's commit,
 /// making the new live block inherit the old open-time). Settled runs keep
 /// their own per-run duration.
-export function viewEntries(blocks: RenderBlock[]): ViewEntry[] {
+export function viewEntries(blocks: RenderBlock[], busy = false): ViewEntry[] {
   const entries: ViewEntry[] = [];
   let run: RenderBlock[] = [];
   let turnStart: string | undefined;
@@ -28,9 +34,36 @@ export function viewEntries(blocks: RenderBlock[]): ViewEntry[] {
     if (run.length) entries.push({ kind: "work", run, turnStart });
     run = [];
   };
+  // Committed assistant blocks carry the server's Turn identity. User
+  // messages only anchor buffers without one; a steer can share a Turn,
+  // and a child result can start one without a user message.
+  const turns: string[] = [];
+  let turn = -1;
+  let current = "input:-1";
+  blocks.forEach((b) => {
+    if (b.kind === "user" && !b.queued) current = `input:${++turn}`;
+    if (b.turn !== undefined && !b.posted) current = `turn:${b.turn}`;
+    turns.push(current);
+  });
+  // The last turn message with a body: the one a settled turn keeps in the
+  // transcript. A posted message is never that message — it is not a step
+  // of the turn.
+  const finalText = new Map<string, number>();
   blocks.forEach((b, i) => {
-    if (b.kind === "user") turnStart = b.ts;
-    if (isWorkBlock(b)) {
+    if (b.kind === "text" && !b.posted && hasBody(b)) finalText.set(turns[i]!, i);
+  });
+  const lastTurn = turns[turns.length - 1];
+  blocks.forEach((b, i) => {
+    const t = turns[i]!;
+    if (b.kind === "user" && !b.queued) turnStart = b.ts;
+    // A queued send is a chip above the composer, not a transcript entry:
+    // it never opens a turn and never breaks the run it sits in.
+    if (b.kind === "user" && b.queued) return;
+    // The open turn shows every message as it arrives; a settled turn keeps
+    // only its last message and folds the earlier ones into the run.
+    const settled = t !== lastTurn || !busy;
+    const folds = settled && b.kind === "text" && !b.posted && finalText.get(t) !== i;
+    if (isWorkBlock(b) || folds) {
       run.push(b);
       return;
     }
@@ -41,8 +74,13 @@ export function viewEntries(blocks: RenderBlock[]): ViewEntry[] {
   return entries;
 }
 
-/** The blocks that belong to the agent's work row: its thinking, tool calls,
- *  and subagent lifecycle records. */
+/** A message that shows something: text, attachments, or both. */
+function hasBody(b: RenderBlock): boolean {
+  return b.text.trim() !== "" || (b.attachments?.length ?? 0) > 0;
+}
+
+/** The blocks that always belong to the agent's work row: its thinking, tool
+ *  calls, and subagent lifecycle records. */
 function isWorkBlock(b: RenderBlock): boolean {
   return (
     b.kind === "reasoning" ||
@@ -53,6 +91,28 @@ function isWorkBlock(b: RenderBlock): boolean {
   );
 }
 
+/** The first wall-clock stamp in the run: a tool's issue time, or another
+ *  record's own time. Blocks without a stamp are skipped, so a run that
+ *  opens on an intermediate message still times from its first real step. */
+function stampOf(run: RenderBlock[]): string | undefined {
+  for (const b of run) {
+    const ts = b.kind === "tool" ? b.tool?.ts : b.ts;
+    if (ts) return ts;
+  }
+  return undefined;
+}
+
+/** The last wall-clock stamp in the run: a tool's result time when it has
+ *  one, otherwise its issue time. */
+function endStampOf(run: RenderBlock[]): string | undefined {
+  for (let i = run.length - 1; i >= 0; i -= 1) {
+    const b = run[i]!;
+    const ts = b.kind === "tool" ? (b.tool?.endTs ?? b.tool?.ts) : b.ts;
+    if (ts) return ts;
+  }
+  return undefined;
+}
+
 export function workRunLabel(
   run: RenderBlock[],
   active: boolean,
@@ -60,12 +120,11 @@ export function workRunLabel(
   nowMs: number,
   turnStart?: string,
 ): string {
-  const ownStart = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
+  const ownStart = stampOf(run);
   // Live counting anchors to the turn start (starts at 0, no per-step
   // resets); a settled run keeps its own open-to-end duration.
   const start = (active && turnStart) || ownStart;
-  const last = run[run.length - 1];
-  const end = last.kind === "tool" ? (last.tool?.endTs ?? last.tool?.ts) : last.ts;
+  const end = endStampOf(run);
   const secs = (() => {
     if (!start) return null;
     const to = active ? nowMs : end ? Date.parse(end) : null;
@@ -108,10 +167,7 @@ export const WorkedForBlock = memo(function WorkedForBlock({
   // collapse into the list's own 20px rhythm, so only padding moves the
   // label. It keeps the timestamp's gaps equal above and below.
   return (
-    <Frame
-      className="mt-0! mb-2.5! pt-2! pb-0"
-      title={<span className={active ? "animate-pulse" : ""}>{label}</span>}
-    >
+    <Frame className="mt-0! mb-2.5! pt-2! pb-0" title={<span className={active ? "animate-pulse" : ""}>{label}</span>}>
       <div className="flex flex-col">{children}</div>
     </Frame>
   );

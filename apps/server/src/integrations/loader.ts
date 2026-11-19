@@ -106,6 +106,14 @@ export function validatePluginManifest(m: IntegrationManifest): void {
     if (traitSpec(trait) === undefined) fail(m.name, `unknown trait ${trait}`);
     if (!tools.has(tool)) fail(m.name, `trait ${trait} names undeclared tool ${tool}`);
   }
+  // `skills` names the skill bundles that document this integration; the
+  // first is what `<slug>_guide` returns. Same slug shape as a skill.
+  if (m.skills !== undefined && !Array.isArray(m.skills)) fail(m.name, "skills must be an array of skill slugs");
+  for (const skill of m.skills ?? []) {
+    if (typeof skill !== "string" || !SLUG.test(skill)) {
+      fail(m.name, `skill slug ${String(skill)} must be [a-z0-9_-], at most 64 chars`);
+    }
+  }
 }
 
 /** The connector over a validated manifest and the plugin's functions. */

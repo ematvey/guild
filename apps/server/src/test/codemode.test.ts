@@ -129,6 +129,10 @@ async function turnSettled(chatId: string): Promise<void> {
     const last = events[events.length - 1];
     if (last === undefined) return false;
     const ev = last.event as { type?: string; blocks?: { type: string }[] };
+    // Final text can precede run completion. Replacing the mock response
+    // script before that boundary races the next turn in this suite.
+    const chat = await stack.env.db.query("SELECT generating FROM chats WHERE id=$1", [chatId]);
+    if (chat.rows[0]?.generating !== false) return false;
     return ev.type === "assistant_message" && (ev.blocks?.some((b) => b.type === "text") ?? false);
   });
 }

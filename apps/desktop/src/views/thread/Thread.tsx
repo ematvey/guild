@@ -55,7 +55,6 @@ import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
 import { useAgentPick } from "./hooks/use-agent-pick";
 import { useChatActions } from "./hooks/use-chat-actions";
-import { useChatColumnWidth } from "./hooks/use-column-resize";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { useMobileGestures } from "./hooks/use-mobile-gestures";
 import { useScrollPin } from "./hooks/use-scroll-pin";
@@ -283,7 +282,6 @@ function ThreadView(props: ThreadProps) {
   // Desktop sidebar: one shared width and collapse flag, persisted, so the
   // chat, project, settings, apps and integrations lists behave alike.
   const sidebarState = useSidebar();
-  const column = useChatColumnWidth(pane);
   const shell = useRef<HTMLDivElement>(null);
   const openDrawer = useCallback(() => setOpen(true), []);
   useMobileGestures({ isMobile, shell, onEdgeSwipe: openDrawer });
@@ -840,7 +838,11 @@ function ThreadView(props: ThreadProps) {
         )}
         {routePage ?? (
           <div className="flex min-h-0 min-w-0 flex-1">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* The chat column takes the rest of the row and sets no minimum
+                of its own; the preview pane carries the minimum width. It is
+                the positioning box for the composer, so the card stays under
+                the chat and not under the pane. */}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <ThreadHeader
                 isMobile={isMobile}
                 onOpenDrawer={openDrawer}
@@ -895,8 +897,6 @@ function ThreadView(props: ThreadProps) {
                       atBottom,
                       scrollToBottom: scroll.scrollToBottom,
                     }}
-                    column={column}
-                    isMobile={isMobile}
                   />
                 </GenuiHostContext.Provider>
               </PreviewProvider>
@@ -925,8 +925,6 @@ function ThreadView(props: ThreadProps) {
                 }}
                 currentProject={currentProject}
                 localMachineId={localMachineId}
-                chatWidth={column.chatWidth}
-                chatResizing={column.chatResizing}
                 setComposerEl={scroll.setComposerEl}
                 onManageAgents={() =>
                   pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })

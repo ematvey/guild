@@ -11,6 +11,7 @@ import { connectorFor, readTraitBindings, type ConnectorSource, type TraitBindin
 import type { OrgKvStore } from "../platform/store/org-kv.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
 import { connectorToolClass, mcpToolClass } from "./policy.js";
+import { singleLineDescription } from "../platform/registry-manifest.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
 
@@ -66,9 +67,31 @@ export interface IntegrationTurn {
   slug: string;
   description: string;
   tools: IntegrationToolInfo[];
+  /** The skill slug that documents this integration, from its manifest's
+   *  `skills` list. `null` when it names none: the Turn then has no guide
+   *  tool at all. */
+  guide: string | null;
   rowConfig: JsonObject;
   secretNames: string[];
   identityKey: string;
+}
+
+/** The first skill slug a manifest names, or null. One resolver for a
+ *  built-in's manifest and a registry bundle's alike. */
+export function firstSkill(manifest: { skills?: unknown }): string | null {
+  const list = manifest.skills;
+  if (!Array.isArray(list)) return null;
+  return list.find((slug): slug is string => typeof slug === "string" && slug !== "") ?? null;
+}
+
+/** The one line the prompt index shows for an integration: the manifest's
+ *  summary when it has one, else its description collapsed to one line. The
+ *  full prose belongs in the guide, not the prompt. */
+export function indexDescription(manifest: JsonObject): string {
+  const summary = manifest["summary"];
+  if (typeof summary === "string" && summary.trim() !== "") return singleLineDescription(summary);
+  const description = manifest["description"];
+  return typeof description === "string" ? singleLineDescription(description) : "";
 }
 
 /** Guild-provided tool name for a plugin tool: `<slug>_<tool>`. */
@@ -228,6 +251,7 @@ export async function resolveIntegrations(
         executor: "connector",
         slug: row.name,
         description: resolved.summary,
+        guide: firstSkill(resolved),
         tools: specs.map((spec) => {
           const trait = traitOfTool(resolved, spec.name);
           return {
@@ -284,7 +308,8 @@ export async function resolveIntegrations(
     out.push({
       executor: "mcp",
       slug: row.name,
-      description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
+      description: indexDescription(manifest),
+      guide: firstSkill(manifest as { skills?: unknown }),
       tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),
       rowConfig: config,
       secretNames,

@@ -9,6 +9,7 @@ import { canonicalJson } from "../platform/domain/json.js";
 import {
   assistantMessageEvent,
   compactionEvent,
+  postedMessageEvent,
   toolResultEvent,
   unwrapCompactionSummary,
   userMessageEvent,
@@ -238,13 +239,7 @@ export class TranscriptProjection {
         if (message === null) return;
         const text = message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
         const turn = Math.max(state.turn, await this.deps.threads.latestTurn(state.chatId)) + 1;
-        const ev = assistantMessageEvent(
-          turn,
-          1,
-          [{ type: "text", text }],
-          { tokens_in: 0, tokens_out: 0, cost_usd: 0 },
-          message.model,
-        );
+        const ev = postedMessageEvent(turn, text, message.model);
         const row = await this.append(state, entry, ev);
         if (row.event.type === "assistant_message") {
           state.turn = row.event.turn;

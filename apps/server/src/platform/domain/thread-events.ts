@@ -63,6 +63,21 @@ export function assistantMessageEvent(
   return ev;
 }
 
+/** A message posted into a thread outside a run (a Routine's `send_message`,
+ *  an agent's message to another thread). It is a message of its own, not a
+ *  step of the thread's turn, so a settled turn never folds it. */
+export function postedMessageEvent(turn: number, text: string, model: string): ThreadEvent {
+  return {
+    type: "assistant_message",
+    turn,
+    step: 1,
+    blocks: [{ type: "text", text }],
+    usage: { tokens_in: 0, tokens_out: 0, cost_usd: 0 },
+    model,
+    posted: true,
+  };
+}
+
 export function toolResultEvent(
   turn: number,
   step: number,
@@ -157,6 +172,7 @@ export function threadEventObject(event: ThreadEvent): ThreadEvent {
         ...(event.attachments !== undefined && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
         interrupted: event.interrupted,
         error: event.error ?? undefined,
+        ...(event.posted ? { posted: true } : {}),
       };
     case "tool_result":
       return {
@@ -280,6 +296,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
           : {}),
         ...(payload["interrupted"] === undefined ? {} : { interrupted: Boolean(payload["interrupted"]) }),
         ...(payload["error"] === undefined || payload["error"] === null ? {} : { error: String(payload["error"]) }),
+        ...(payload["posted"] === true ? { posted: true } : {}),
       };
     case "tool_result":
       return {

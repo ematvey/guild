@@ -44,6 +44,12 @@ A Turn's tool set is assembled at admission, in this order:
 
 File and shell tools are called directly. Integration and MCP tools are called through code mode: the model writes a short script that calls `tools.<name>`, and each nested call is gated on its own.
 
+Before a code-mode script executes, its static check refuses straight-line loops of independent Integration reads and batches of four consecutive independent reads, with a correction asking for `Promise.all`. Read effects come from the admitted Integration declarations; known HubSpot GET and CRM search requests also qualify. Pagination, ordered writes and uncertain dependencies remain sequential. A post-execution timing hint covers serial batches the static check cannot establish.
+
+Each conversation has at most eight tool operations in flight. Installed tool implementations and the approval classifier's Integration discovery share this limit, including dynamically installed tools. A queued operation cancelled before execution is removed; authorization is checked when its classification runs. The timing hint is conditional because combined durations do not establish whether calls overlapped, and its batching advice preserves dependencies on both results and side effects.
+
+Integration calls compare their approval classification with fresh policy when execution begins. A stricter policy ends the call with a retry instruction so it can pass the approval gate again; it never opens an interactive approval while holding an execution slot. The static check declines scripts with shadowed capabilities, duplicate function declarations or unknown object mutations, and excludes file-producing reads from batching advice.
+
 Code mode lists the tools a script can call grouped into namespaces: groups of Guild's own tools, one per Integration (named by its slug), and one per MCP server. A namespace only groups tools for discovery; a script still calls each tool as `tools.<name>`.
 
 ### The allowlist
@@ -88,7 +94,7 @@ Each Trait has one provider per Turn: the Integration the Org bound to it when t
 
 An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. Every Tool the server serves, including one it starts serving later, is on until an admin turns it off; its class (the admin's, the manifest's, else the one the server's hints and the tool name suggest, `write` when unsure) and the reach ceilings decide who gets it.
 
-Each Integration adds its Tools as `<slug>_<tool>`, plus a `list_tools` and `guide` pair. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). Curation is per Tool: on or off, the approval rule, and the class. The admin sets the class on any Tool, not only an MCP one, because the class states what the credential behind the Tool can do: a key that cannot write marks its raw API Tool `read`. The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
+Each Integration adds its Tools as `<slug>_<tool>` and one `<slug>_list_tools` tool, which answers the JSON schema of every Tool the Turn may call. The Tools themselves are deferred: they are callable from a script, and the prompt carries the Integration's one-line index entry rather than their declarations. A `<slug>_guide` tool joins them only when the Integration's manifest names a skill in `skills`; the first slug is the guide, and the tool returns that skill's `SKILL.md`. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). Curation is per Tool: on or off, the approval rule, and the class. The admin sets the class on any Tool, not only an MCP one, because the class states what the credential behind the Tool can do: a key that cannot write marks its raw API Tool `read`. The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
 
 A Member can add their own MCP servers. Those servers are discovered at every Turn of that Member's Threads, and their headers are decrypted only at call time.
 

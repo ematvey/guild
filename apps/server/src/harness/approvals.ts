@@ -439,7 +439,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       if (call.name === CODEMODE_TOOL_NAME) {
         const code = call.arguments?.code;
         if (typeof code === "string") {
-          const lint = codemodeScriptLint(code);
+          const lint = codemodeScriptLint(
+            code,
+            (name, args) => deps.integrations?.isReadCall(Number(runtime.conversationId), name, args) ?? false,
+          );
           if (lint !== undefined) return { block: lint };
         }
         return undefined;
@@ -481,7 +484,12 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       //     workspace sessions) skips the interactive gate like every
       //     server tool.
       if (deps.integrations !== undefined) {
-        const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
+        const decision = await deps.integrations.gateDecision(
+          Number(runtime.conversationId),
+          call.name,
+          context.abortSignal,
+          call.id,
+        );
         // An agent's own thread runs unattended: its integration calls take
         // the batch contract instead of a card.
         if (decision === "ask" && (await agentThreadForChat(deps.pool, chatId)) === null) {

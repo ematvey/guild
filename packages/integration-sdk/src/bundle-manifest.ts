@@ -31,6 +31,7 @@ export function registryManifest(m: IntegrationManifest): Record<string, unknown
       classes: Object.fromEntries(m.tools.map((t) => [t.name, t.class])),
       declared: m.tools.map((t) => ({ name: t.name, class: t.class, description: t.description })),
     },
+    ...(m.skills === undefined ? {} : { skills: [...m.skills] }),
   };
 }
 
@@ -55,5 +56,6 @@ export function mcpRegistryManifest(m: McpIntegrationManifest): Record<string, u
     },
     settings: { fields: m.fields },
     tools: { classes: { ...(m.tool_classes ?? {}) } },
+    ...(m.skills === undefined ? {} : { skills: [...m.skills] }),
   };
 }

@@ -613,6 +613,10 @@ pub enum ThreadEvent {
         /// retry that produced content supersedes it).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Posted into the thread outside a run (a Routine's `send_message`):
+        /// a message of its own, not a step of a turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        posted: Option<bool>,
     },
     ToolResult {
         turn: u32,

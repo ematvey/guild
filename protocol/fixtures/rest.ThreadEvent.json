@@ -62,6 +62,20 @@
     "error": "provider stream closed"
   },
   {
+    "type": "assistant_message",
+    "turn": 2,
+    "step": 1,
+    "blocks": [
+      {
+        "type": "text",
+        "text": "The nightly import finished."
+      }
+    ],
+    "usage": {},
+    "model": "gpt-5",
+    "posted": true
+  },
+  {
     "type": "tool_result",
     "turn": 1,
     "step": 1,

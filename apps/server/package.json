@@ -1,7 +1,7 @@
 {
   "name": "@guild/server",
   "private": true,
-  "version": "0.6.117",
+  "version": "0.6.125",
   "type": "module",
   "description": "Guild cloud server (TypeScript, on pi-durable).",
   "scripts": {
@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
+    "@babel/parser": "^7.29.9",
+    "@babel/types": "^7.29.8",
     "@earendil-works/chord": "1.5.0",
     "@earendil-works/pi-ai": "1.5.0",
     "@earendil-works/pi-codemode": "1.5.0",

@@ -82,6 +82,7 @@ function genLog(seed: number, len: number): ThreadEventRow[] {
           ...(r() < 0.3 ? { error: `boom ${seq}` } : {}),
           ...(r() < 0.3 ? { attachments: [file(`a${seq}`)] } : {}),
           ...(r() < 0.2 ? { interrupted: true } : {}),
+          ...(r() < 0.15 ? { posted: true } : {}),
         } as ThreadEvent;
         break;
       }
