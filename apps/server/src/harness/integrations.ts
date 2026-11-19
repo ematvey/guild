@@ -161,10 +161,39 @@ function toolMatches(slug: string, info: IntegrationToolInfo, callName: string):
  *  gates). */
 export type IntegrationGateClassification = "skip" | "ask" | "policy" | undefined;
 
+function approvalClass(turn: IntegrationTurn, info: IntegrationToolInfo): IntegrationGateClassification {
+  const curation = toolCurate(turn.rowConfig, info.raw);
+  return curation.alwaysAsk ? "ask" : curation.alwaysAllow || info.class === "read" ? "skip" : "policy";
+}
+
+/** External read classes do not promise that a download's local file
+ * effects are independent. Raw API semantics belong to the connector. */
+export function independentIntegrationRead(
+  turn: Pick<IntegrationTurn, "slug" | "executor">,
+  info: Pick<IntegrationToolInfo, "raw" | "class">,
+  args: Record<string, unknown>,
+): boolean {
+  if (turn.slug === "google_workspace" && ["drive_get_file", "gmail_get_attachment"].includes(info.raw)) return false;
+  if (info.class === "read") return true;
+  if (turn.executor !== "connector" || turn.slug !== "hubspot" || info.raw !== "api") return false;
+  if (args.method === undefined && !("method" in args)) return true;
+  if (args.method === "GET") return true;
+  return (
+    args.method === "POST" &&
+    typeof args.path === "string" &&
+    /^\/crm\/v3\/objects\/[A-Za-z0-9_-]+\/search$/.test(args.path)
+  );
+}
+
 /** The approval-gate consultation surface (harness/integrations.ts
  *  IntegrationsRuntime implements it). */
 export interface IntegrationGate {
-  gateDecision(conversationId: number, callName: string, signal?: AbortSignal): Promise<IntegrationGateClassification>;
+  gateDecision(
+    conversationId: number,
+    callName: string,
+    signal?: AbortSignal,
+    callId?: string,
+  ): Promise<IntegrationGateClassification>;
   /** Performance lint only; an approval exemption does not establish a read. */
   isReadCall(conversationId: number, callName: string, args: Record<string, unknown>): boolean;
 }
@@ -179,6 +208,7 @@ export interface TurnPreparation {
 }
 
 export class IntegrationsRuntime {
+  private readonly approvalClassifications = new Map<number, Map<string, IntegrationGateClassification>>();
   /** Declarations remain stable until the next explicit provisioning. */
   private readonly snapshots = new Map<number, TurnSnapshot>();
   /** Every integration tool name this runtime has ever registered — the
@@ -199,6 +229,7 @@ export class IntegrationsRuntime {
   }
 
   forget(conversationId: number): void {
+    this.approvalClassifications.delete(conversationId);
     const snapshot = this.snapshots.get(conversationId);
     if (snapshot) {
       const extension = this.registry.snapshot().extension(this.extensionName(snapshot.orgId, conversationId));
@@ -217,6 +248,7 @@ export class IntegrationsRuntime {
    * offered tool, disappears entirely, and an Integration's discovery list
    * shows only the tools the Turn may call. */
   async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
+    this.approvalClassifications.delete(conversationId);
     let resolved: IntegrationTurn[] = [];
     try {
       resolved = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
@@ -445,7 +477,11 @@ export class IntegrationsRuntime {
    *  the chat's approval mode — org governance wins over the chat's
    *  approval mode in both directions. `undefined` = not an integration
    *  tool (the generic policy applies). */
-  async gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification> {
+  async gateDecision(
+    conversationId: number,
+    callName: string,
+    callId?: string,
+  ): Promise<IntegrationGateClassification> {
     // Cheap path: a name this runtime never registered and no auto-tool
     // shape cannot be an integration tool — coding tools pay no resolve.
     // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
@@ -458,10 +494,16 @@ export class IntegrationsRuntime {
     const target = integrationTarget(snapshot.turns, callName);
     if (target === undefined) return undefined;
     const { turn, info } = target;
-    const curation = toolCurate(turn.rowConfig, info.raw);
-    if (curation.alwaysAsk) return "ask";
-    if (curation.alwaysAllow) return "skip";
-    return info.class === "read" ? "skip" : "policy";
+    const decision = approvalClass(turn, info);
+    if (callId) {
+      let classifications = this.approvalClassifications.get(conversationId);
+      if (!classifications) {
+        classifications = new Map();
+        this.approvalClassifications.set(conversationId, classifications);
+      }
+      classifications.set(callId, decision);
+    }
+    return decision;
   }
 
   /** The admitted tool declaration supplies effects for the script lint.
@@ -471,17 +513,7 @@ export class IntegrationsRuntime {
     if (!snapshot) return false;
     const target = integrationTarget(snapshot.turns, callName);
     if (!target) return false;
-    if (target.info.class === "read") return true;
-    // The generic HubSpot tool has a write ceiling, but these operations
-    // only read. Unknown or dynamic methods and POST paths stay unclassified.
-    if (target.turn.slug !== "hubspot" || target.info.raw !== "api") return false;
-    if (args.method === undefined && !("method" in args)) return true;
-    if (args.method === "GET") return true;
-    return (
-      args.method === "POST" &&
-      typeof args.path === "string" &&
-      /^\/crm\/v3\/objects\/[A-Za-z0-9_-]+\/search$/.test(args.path)
-    );
+    return independentIntegrationRead(target.turn, target.info, args);
   }
 
   /** Executes one integration tool call: the policy filter, the plugin dispatch, the artifact spill, and the audit
@@ -495,6 +527,8 @@ export class IntegrationsRuntime {
   ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
     const conversationId = Number(api.conversationId);
     const callId = api.callId;
+    const priorApproval = this.approvalClassifications.get(conversationId)?.get(callId);
+    this.approvalClassifications.get(conversationId)?.delete(callId);
     const signal = context.abortSignal;
     const snapshot = await this.authorizedSnapshot(conversationId);
     const turns = snapshot?.turns ?? [];
@@ -511,6 +545,13 @@ export class IntegrationsRuntime {
     const { turn, info } = target;
     if (!offered(snapshot, turn, info)) {
       return { content: "not permitted by integration policy", isError: true };
+    }
+    const currentApproval = approvalClass(turn, info);
+    if (currentApproval !== "skip" && currentApproval !== priorApproval) {
+      return {
+        content: "integration approval policy changed while this call was queued; retry the call for fresh approval",
+        isError: true,
+      };
     }
     const raw = info.raw;
     const started = Date.now();

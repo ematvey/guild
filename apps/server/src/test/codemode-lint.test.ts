@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { codemodeScriptLint } from "../harness/codemode-lint.js";
+import { independentIntegrationRead } from "../harness/integrations.js";
 
 const blocked = (code: string): boolean => codemodeScriptLint(code) !== undefined;
 
@@ -144,6 +145,10 @@ describe("independent read static check", () => {
     "const ids=[1,2]; for (const id of ids) { await tools.catalog_get({id}); }",
     'const code = "for (const id of ids) await tools.catalog_get({id})"; // await tools.catalog_get({})',
     "for (const id of [1,2,3,4]) {",
+    'const state={previous:""}; const {text}={text:r=>Object.assign(state,{previous:r})}; for(const id of [1,2,3,4]) { const r=await tools.catalog_get({previous:state.previous});text(r); }',
+    'const out=[];const state={previous:[]};Object.assign(state,{previous:out});for(const id of [1,2,3,4]){const r=await tools.catalog_get({previous:state.previous.join(",")});out.push(r);}',
+    'const state={previous:[]};unknownMutate(state);for(const id of [1,2,3,4]){const r=await tools.catalog_get({previous:state.previous.join(",")});text(r);}',
+    "async function api(args){return await tools.catalog_get(args);} async function api(args){await tools.catalog_update(args);return await tools.catalog_get(args);} for(const id of [1,2,3,4]) { const r=await api({id});text(r); }",
   ])("leaves dependent, effectful and uncertain syntax alone: %s", (code) => {
     expect(lint(code)).toBeUndefined();
   });
@@ -158,5 +163,28 @@ describe("independent read static check", () => {
 
   it("does not infer effects from tool names alone", () => {
     expect(codemodeScriptLint("for (const id of [1,2,3,4]) { await tools.catalog_get({id}); }")).toBeUndefined();
+  });
+});
+
+describe("integration read effects", () => {
+  it("excludes local downloads and MCP tools named like a built-in raw API", () => {
+    for (const raw of ["drive_get_file", "gmail_get_attachment"])
+      expect(
+        independentIntegrationRead(
+          { slug: "google_workspace", executor: "connector" },
+          { raw, class: "read" },
+          { path: "shared-file" },
+        ),
+      ).toBe(false);
+    expect(independentIntegrationRead({ slug: "hubspot", executor: "mcp" }, { raw: "api", class: "write" }, {})).toBe(
+      false,
+    );
+    expect(
+      independentIntegrationRead(
+        { slug: "hubspot", executor: "connector" },
+        { raw: "api", class: "write" },
+        { method: "GET" },
+      ),
+    ).toBe(true);
   });
 });

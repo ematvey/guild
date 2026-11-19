@@ -496,13 +496,13 @@ export class GuildRuntime {
       integrations: {
         isReadCall: (conversationId, callName, args) =>
           this.integrationsRuntime.isReadCall(conversationId, callName, args),
-        gateDecision: (conversationId, callName, signal) =>
+        gateDecision: (conversationId, callName, signal, callId) =>
           this.toolLimiter.run(
             conversationId,
             async () => {
               const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
               if (userDecision !== undefined) return userDecision;
-              return this.integrationsRuntime.gateDecision(conversationId, callName);
+              return this.integrationsRuntime.gateDecision(conversationId, callName, callId);
             },
             signal,
           ),

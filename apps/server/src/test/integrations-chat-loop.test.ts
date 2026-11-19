@@ -52,6 +52,7 @@ let vendor: Server;
 let vendorBase = "";
 let issueReads = 0;
 let hubspotReads = 0;
+let slackPosts = 0;
 let issueDelayMs = 0;
 let activeIssueReads = 0;
 let peakIssueReads = 0;
@@ -96,6 +97,7 @@ function route(_req: IncomingMessage, url: URL): { status: number; body: string 
     };
   }
   if (p === "/api/chat.postMessage") {
+    slackPosts++;
     return { status: 200, body: JSON.stringify({ ok: true, channel: "C1", ts: "1760000000.000100" }) };
   }
   return { status: 404, body: "{}" };
@@ -279,6 +281,49 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
 }
 
 describe("M8: integrations chat runtime", () => {
+  it(
+    "refuses a write when approval policy tightens after classification",
+    async () => {
+      const integration = (
+        stack.env.app as unknown as { platform: { runtime: { integrationsRuntime: IntegrationsRuntime } } }
+      ).platform.runtime.integrationsRuntime;
+      const original = integration.gateDecision.bind(integration);
+      const before = slackPosts;
+      const spy = vi.spyOn(integration, "gateDecision").mockImplementation(async (...args) => {
+        const result = await original(...args);
+        if (args[1] === "slack_post_message")
+          await stack.env.db.query(
+            "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_ask\"') WHERE org_id=$1 AND name='slack'",
+            [orgId],
+          );
+        return result;
+      });
+      try {
+        const chatId = await createChat("changed-queued-approval", stack.adminToken);
+        scriptFor(
+          { body: toolCallSse("slack_post_message", JSON.stringify({ channel: "C1", text: "approval test" })) },
+          { body: finalSse },
+        );
+        await submitTurn(chatId, "post this", stack.adminToken);
+        await turnSettled(chatId, stack.adminToken);
+        const result = toolResults(await threadEvents(chatId, stack.adminToken))[0]!.event as {
+          is_error: boolean;
+          content: string;
+        };
+        expect(result.is_error).toBe(true);
+        expect(result.content).toContain("approval policy changed");
+        expect(slackPosts).toBe(before);
+      } finally {
+        spy.mockRestore();
+        await stack.env.db.query(
+          "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_allow\"') WHERE org_id=$1 AND name='slack'",
+          [orgId],
+        );
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
   it(
     "caps discovery and execution through a configured conversation's dynamic integration extension",
     async () => {

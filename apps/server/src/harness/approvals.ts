@@ -488,6 +488,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           Number(runtime.conversationId),
           call.name,
           context.abortSignal,
+          call.id,
         );
         // An agent's own thread runs unattended: its integration calls take
         // the batch contract instead of a card.

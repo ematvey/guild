@@ -84,7 +84,7 @@ function serialReadsLint(code: string, isReadCall: (name: string, args: Record<s
     contains(
       program,
       (n) =>
-        (n.type === "VariableDeclarator" && n.id.type === "Identifier" && hostNames.has(n.id.name)) ||
+        (n.type === "VariableDeclarator" && contains(n.id, (x) => x.type === "Identifier" && hostNames.has(x.name))) ||
         (n.type === "FunctionDeclaration" && n.id != null && hostNames.has(n.id.name)) ||
         ((n.type === "FunctionDeclaration" ||
           n.type === "FunctionExpression" ||
@@ -94,6 +94,16 @@ function serialReadsLint(code: string, isReadCall: (name: string, args: Record<s
         n.type === "UpdateExpression" ||
         n.type === "WithStatement",
     )
+  )
+    return undefined;
+  const declaredFunctions = new Set<string>();
+  if (
+    contains(program, (n) => {
+      if (n.type !== "FunctionDeclaration" || !n.id) return false;
+      if (declaredFunctions.has(n.id.name)) return true;
+      declaredFunctions.add(n.id.name);
+      return false;
+    })
   )
     return undefined;
 
@@ -271,6 +281,21 @@ function serialReadsLint(code: string, isReadCall: (name: string, args: Record<s
         : undefined;
     const expression =
       declaration?.init ?? (statement.type === "ExpressionStatement" ? statement.expression : undefined);
+    // Unknown calls can mutate or retain previously tracked objects. Stop
+    // proving independence rather than assuming const makes their data immutable.
+    if (
+      statement.type === "ExpressionStatement" &&
+      expression &&
+      !pure(expression, names) &&
+      !read(expression, names) &&
+      !(
+        expression.type === "CallExpression" &&
+        expression.callee.type === "Identifier" &&
+        expression.callee.name === "text" &&
+        expression.arguments.every((x) => pure(x, names))
+      )
+    )
+      return undefined;
     // Adjacent reads qualify only when no call consumes the preceding
     // reads' results. The minimum avoids a correction round for tiny pairs.
     if (
@@ -350,9 +375,10 @@ function serialReadsLint(code: string, isReadCall: (name: string, args: Record<s
           sizes.set(variable.id.name, variable.init.elements.length);
         if (variable.init.type === "ArrayExpression" && variable.init.elements.length === 0)
           collectors.add(variable.id.name);
-        else if (contains(variable.init, (n) => n.type === "Identifier" && collectors.has(n.name)))
+        else if (variable.init.type === "Identifier" && collectors.has(variable.init.name))
           collectors.add(variable.id.name);
         else if (pure(variable.init, names) || read(variable.init, names)) names.add(variable.id.name);
+        else return undefined;
       }
     }
   }
