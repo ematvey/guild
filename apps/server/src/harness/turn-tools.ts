@@ -43,7 +43,6 @@ import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import type { MachineTargets } from "../machines/targets.js";
 import { createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
-import { createToolCallLimiter, withToolCallLimit } from "./tool-concurrency.js";
 import { composeAgentInstructions, type MachineContext } from "./instructions.js";
 import { shellOf } from "../machines/targets.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
@@ -101,10 +100,6 @@ export function chatExtensionNames(chatId: string): [string, string] {
 }
 
 export class TurnTools {
-  /** One cap for the process: a conversation runs one Turn at a time, so a
-   *  per-conversation slot count is a per-script slot count. */
-  private readonly limiter = createToolCallLimiter();
-
   constructor(private readonly deps: TurnToolDeps) {}
 
   /** Resolves the turn's tool surface and configures the conversation with
@@ -151,9 +146,7 @@ export class TurnTools {
     await conversation.configure(
       {
         extensions: [...base.extensions, ...scoped, ...prepared.extensions, ...userPrepared.extensions],
-        tools: [...baseTools, ...machineTools, ...prepared.tools, ...userPrepared.tools, ...agentTools].map((tool) =>
-          withToolCallLimit(tool, this.limiter),
-        ),
+        tools: [...baseTools, ...machineTools, ...prepared.tools, ...userPrepared.tools, ...agentTools],
         ...(agent === null
           ? {}
           : {

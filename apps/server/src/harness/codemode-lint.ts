@@ -256,7 +256,7 @@ function serialReadsLint(code: string, isReadCall: (name: string, args: Record<s
   const hint = (node: Node): string =>
     `blocked by the codemode script check: independent read calls at line ${node.loc?.start.line ?? 1} run sequentially. ` +
     "Submit them with `await Promise.all(items.map(async (item) => { ... }))`; collect results in input order. " +
-    `At most ${MAX_TOOL_CALLS_IN_FLIGHT} tool calls execute concurrently. Keep pagination and calls that need a previous result sequential.`;
+    `At most ${MAX_TOOL_CALLS_IN_FLIGHT} tool calls execute concurrently. Keep pagination and calls that depend on earlier results or side effects sequential.`;
 
   const names = new Set<string>();
   const collectors = new Set<string>();

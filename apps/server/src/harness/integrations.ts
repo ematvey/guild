@@ -164,7 +164,7 @@ export type IntegrationGateClassification = "skip" | "ask" | "policy" | undefine
 /** The approval-gate consultation surface (harness/integrations.ts
  *  IntegrationsRuntime implements it). */
 export interface IntegrationGate {
-  gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification>;
+  gateDecision(conversationId: number, callName: string, signal?: AbortSignal): Promise<IntegrationGateClassification>;
   /** Performance lint only; an approval exemption does not establish a read. */
   isReadCall(conversationId: number, callName: string, args: Record<string, unknown>): boolean;
 }

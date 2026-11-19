@@ -10,7 +10,8 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { IntegrationsRuntime } from "../harness/integrations.js";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
@@ -51,6 +52,9 @@ let vendor: Server;
 let vendorBase = "";
 let issueReads = 0;
 let hubspotReads = 0;
+let issueDelayMs = 0;
+let activeIssueReads = 0;
+let peakIssueReads = 0;
 
 function route(_req: IncomingMessage, url: URL): { status: number; body: string } {
   const p = url.pathname;
@@ -101,8 +105,14 @@ beforeAll(async () => {
   vendor = createServer((req: IncomingMessage, res: ServerResponse) => {
     let body = "";
     req.on("data", (c: Buffer) => (body += c));
-    req.on("end", () => {
+    req.on("end", async () => {
       const url = new URL(req.url ?? "/", "http://vendor.test");
+      if (url.pathname === "/rest/api/3/issue/PROJ-1") {
+        activeIssueReads++;
+        peakIssueReads = Math.max(peakIssueReads, activeIssueReads);
+        if (issueDelayMs) await new Promise((resolve) => setTimeout(resolve, issueDelayMs));
+        activeIssueReads--;
+      }
       const out = route(req, url);
       res.writeHead(out.status, { "content-type": "application/json" });
       res.end(out.body);
@@ -269,6 +279,51 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
 }
 
 describe("M8: integrations chat runtime", () => {
+  it(
+    "caps discovery and execution through a configured conversation's dynamic integration extension",
+    async () => {
+      const runtime = (
+        stack.env.app as unknown as { platform: { runtime: { integrationsRuntime: IntegrationsRuntime } } }
+      ).platform.runtime;
+      const integration = runtime.integrationsRuntime;
+      const original = integration.gateDecision.bind(integration);
+      let activeDiscovery = 0;
+      let peakDiscovery = 0;
+      const spy = vi.spyOn(integration, "gateDecision").mockImplementation(async (...args) => {
+        activeDiscovery++;
+        peakDiscovery = Math.max(peakDiscovery, activeDiscovery);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return await original(...args);
+        } finally {
+          activeDiscovery--;
+        }
+      });
+      const before = issueReads;
+      issueDelayMs = 50;
+      peakIssueReads = 0;
+      try {
+        const chatId = await createChat("configured-concurrency-cap");
+        const code = `text(await Promise.all(Array.from({length:24}, () => tools.atlassian_jira_get_issue({issue_key:"PROJ-1"}))));`;
+        scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+        await submitTurn(chatId, "read these issues together");
+        await turnSettled(chatId);
+        const result = toolResults(await threadEvents(chatId))[0]!.event as { is_error: boolean };
+        expect(result.is_error).toBe(false);
+        expect(issueReads - before).toBe(24);
+        expect(spy).toHaveBeenCalledTimes(24);
+        expect(peakDiscovery).toBeGreaterThan(1);
+        expect(peakDiscovery).toBeLessThanOrEqual(8);
+        expect(peakIssueReads).toBeGreaterThan(1);
+        expect(peakIssueReads).toBeLessThanOrEqual(8);
+      } finally {
+        issueDelayMs = 0;
+        spy.mockRestore();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
   it.each(["GET", "POST"])(
     "recognizes read operations behind the HubSpot API's write ceiling (%s)",
     async (method) => {

@@ -14,16 +14,24 @@ describe("serialCallsHint", () => {
     expect(serialCallsHint(calls(100, 100, 100, 100), 450)).toBeUndefined();
   });
 
-  it("says nothing when the calls overlapped", () => {
+  it("says nothing when combined tool time clearly exceeds wall time", () => {
     // Four 2s calls in a 2.5s script: they ran together.
     expect(serialCallsHint(calls(2000, 2000, 2000, 2000), 2500)).toBeUndefined();
   });
 
-  it("names the serial chain and the batching pattern", () => {
+  it("suggests batching conditionally and preserves side-effect ordering", () => {
     const hint = serialCallsHint(calls(2000, 2000, 2000, 2000), 8500);
-    expect(hint).toContain("4 tool calls ran one after another");
-    expect(hint).toContain("8.0s of 8.5s");
+    expect(hint).toContain("4 tool calls used 8.0s combined in 8.5s wall time");
+    expect(hint).toContain("If independent reads ran sequentially");
+    expect(hint).toContain("tools.x({ item })");
+    expect(hint).toContain("side effects");
     expect(hint).toContain("Promise.all");
+  });
+
+  it("does not label an uneven parallel batch as measured serial work", () => {
+    const hint = serialCallsHint(calls(4000, 100, 100, 100), 4000);
+    expect(hint).toContain("If independent reads ran sequentially");
+    expect(hint).not.toContain("ran one after another");
   });
 
   it("hints at thirty percent tool time, but not below it", () => {

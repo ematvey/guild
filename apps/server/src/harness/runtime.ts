@@ -95,6 +95,7 @@ import { appFunctionCall, appFunctionGate, createAppCallGate, renderAppsIndex } 
 import type { IntegrationGateway } from "../integrations/plugins.js";
 import { IntegrationAccessStore } from "../platform/store/integration-access.js";
 import { mediaSpillingRegistry } from "./media-registry.js";
+import { createToolCallLimiter, toolLimitedRegistry } from "./tool-concurrency.js";
 import { turnBackend, type SubmitTurnInput, type TurnBackend, type TurnPlacement } from "./turn-backend.js";
 
 export { ThreadAgentLocked } from "../agents/thread-binding.js";
@@ -159,6 +160,7 @@ export class GuildRuntime {
   private readonly log: Logger;
   private readonly stores: RuntimeDeps["stores"];
   private readonly registry: Registry;
+  private readonly toolLimiter = createToolCallLimiter();
   /** The process's one agent store: routes, the scheduler and the agent
    *  feed read through it. */
   readonly agents: AgentStore;
@@ -242,7 +244,7 @@ export class GuildRuntime {
     // Every installed extension's tools spill their image parts before the
     // result is recorded (see media-registry.ts). Without object storage
     // there is nowhere to put the bytes, so the registry stays plain.
-    this.registry =
+    this.registry = toolLimitedRegistry(
       objects === undefined
         ? createRegistry()
         : mediaSpillingRegistry(createRegistry(), {
@@ -253,7 +255,9 @@ export class GuildRuntime {
               const identity = await stores.chats.identityOf(chatId);
               return identity === null ? null : { orgId: identity.org_id, chatId };
             },
-          });
+          }),
+      this.toolLimiter,
+    );
     this.durableDb = new SharedPoolDatabase(pool);
     this.host = new ConversationHost((step, error) => log.warn({ err: error, step }, "harness teardown step failed"));
     this.turns = turnBackend(deps.placement, {
@@ -492,11 +496,16 @@ export class GuildRuntime {
       integrations: {
         isReadCall: (conversationId, callName, args) =>
           this.integrationsRuntime.isReadCall(conversationId, callName, args),
-        gateDecision: async (conversationId, callName) => {
-          const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
-          if (userDecision !== undefined) return userDecision;
-          return this.integrationsRuntime.gateDecision(conversationId, callName);
-        },
+        gateDecision: (conversationId, callName, signal) =>
+          this.toolLimiter.run(
+            conversationId,
+            async () => {
+              const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
+              if (userDecision !== undefined) return userDecision;
+              return this.integrationsRuntime.gateDecision(conversationId, callName);
+            },
+            signal,
+          ),
       },
       appCallGate,
       appsIndex: async (orgId, userId) => {

@@ -1,9 +1,5 @@
-// Post-run hint on a codemode result: a script that made its tool calls one
-// after another gets one line saying that independent calls run together.
-// A hint, not a block: a chain whose next call needs the last result is
-// correct, and the harness cannot prove independence from the source. The
-// runtime launches nested calls concurrently, so the model only has to write
-// them that way.
+// Post-run timing heuristic. Durations alone cannot establish overlap or
+// independence, so the hint is conditional and preserves ordered effects.
 
 import type { ToolExecutionResult } from "@earendil-works/pi-durable";
 
@@ -11,8 +7,8 @@ import type { ToolExecutionResult } from "@earendil-works/pi-durable";
 const MIN_CALLS = 4;
 /** Below this much tool time the chain is not worth a hint. */
 const MIN_TOOL_MS = 2_000;
-/** Tool time over wall time. A serial chain sits just under 1; calls that
- *  overlap push it above, and the script's own work pushes it below. */
+/** Tool time over wall time screens possible batching opportunities, not
+ * proof of serial execution: uneven parallel calls can also qualify. */
 const SERIAL_MIN_SHARE = 0.3;
 const SERIAL_MAX_SHARE = 1.15;
 
@@ -21,7 +17,7 @@ export interface NestedCallTiming {
   readonly durationMs?: number;
 }
 
-/** The hint for a script's calls, or undefined when they did not run serially. */
+/** Conditional advice for a qualifying batch, without asserting overlap. */
 export function serialCallsHint(calls: readonly NestedCallTiming[], wallMs: number): string | undefined {
   if (calls.length < MIN_CALLS || wallMs <= 0) return undefined;
   let total = 0;
@@ -29,9 +25,9 @@ export function serialCallsHint(calls: readonly NestedCallTiming[], wallMs: numb
   const share = total / wallMs;
   if (total < MIN_TOOL_MS || share < SERIAL_MIN_SHARE || share > SERIAL_MAX_SHARE) return undefined;
   return (
-    `[codemode] ${calls.length} tool calls ran one after another ` +
-    `(${seconds(total)} of ${seconds(wallMs)}). Independent calls run together: ` +
-    "`await Promise.all(items.map((item) => tools.x(item)))`. Keep a call sequential only when it needs the last result."
+    `[codemode] ${calls.length} tool calls used ${seconds(total)} combined in ${seconds(wallMs)} wall time. ` +
+    "If independent reads ran sequentially, batch them with `await Promise.all(items.map((item) => tools.x({ item })))`. " +
+    "Preserve ordering when calls depend on earlier results or side effects, including writes followed by reads."
   );
 }
 

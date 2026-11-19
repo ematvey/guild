@@ -66,6 +66,47 @@ describe("createToolCallLimiter", () => {
     ).rejects.toThrow("boom");
     await expect(limiter.run(1, async () => "next")).resolves.toBe("next");
   });
+
+  it("removes cancelled waiters without consuming a slot or running their work", async () => {
+    const limiter = createToolCallLimiter(1);
+    const hold = gate();
+    const busy = limiter.run(1, () => hold.promise);
+    const controller = new AbortController();
+    let effects = 0;
+    const queued = limiter.run(
+      1,
+      async () => {
+        effects++;
+      },
+      controller.signal,
+    );
+    const rejected = expect(queued).rejects.toThrow("cancelled");
+    controller.abort(new Error("cancelled"));
+    await rejected;
+    const next = limiter.run(1, async () => "next");
+    hold.open();
+    await busy;
+    expect(await next).toBe("next");
+    expect(effects).toBe(0);
+  });
+
+  it("does not start an already cancelled call on an idle conversation", async () => {
+    const limiter = createToolCallLimiter(1);
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    let effects = 0;
+    await expect(
+      limiter.run(
+        1,
+        async () => {
+          effects++;
+        },
+        controller.signal,
+      ),
+    ).rejects.toThrow("cancelled");
+    expect(effects).toBe(0);
+    expect(await limiter.run(1, async () => "available")).toBe("available");
+  });
 });
 
 describe("withToolCallLimit", () => {
@@ -101,6 +142,28 @@ describe("withToolCallLimit", () => {
     );
     expect(tool.execute).not.toBe(undefined);
     await expect(tool.execute({}, api(1), {} as never)).resolves.toBe("ok");
+  });
+
+  it("passes tool cancellation into the queue", async () => {
+    const limiter = createToolCallLimiter(1);
+    const hold = gate();
+    const busy = limiter.run(1, () => hold.promise);
+    let effects = 0;
+    const tool = withToolCallLimit(
+      fake("send_message", async () => {
+        effects++;
+        return { output: [] };
+      }),
+      limiter,
+    );
+    const controller = new AbortController();
+    const queued = tool.execute({}, api(1), { abortSignal: controller.signal } as never);
+    const rejected = expect(queued).rejects.toThrow("stopped");
+    controller.abort(new Error("stopped"));
+    await rejected;
+    hold.open();
+    await busy;
+    expect(effects).toBe(0);
   });
 
   it("uses eight calls in flight by default", () => {

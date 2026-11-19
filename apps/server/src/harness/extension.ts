@@ -87,7 +87,7 @@ export const CODEMODE_NOTES_SECTION_TEXT = [
   "- Coding tools are called directly. Integration, MCP and thread-history tools are script-only: reach them through `codemode` scripts, never as direct calls.",
   "- The `code` parameter is the raw script body: pure JavaScript only, never wrapped in a code fence or quotes, and no prose or explanations inside it.",
   '- Tool arguments are always ONE object per the tool\'s declaration: `await tools.bash({ command: "pwd" })`, never a bare string or number.',
-  '- Independent nested calls run together: `await Promise.all(items.map((item) => tools.x({ item })))`. Await calls in order only when a call needs the previous result. There is NO sleep, timer, or delay mechanism in the sandbox — never busy-wait on a clock; a script that would run past ~60s should raise the timeout via the first line `// @options: {"timeout_ms": 300000}` or be split.',
+  '- Independent reads run together: `await Promise.all(items.map((item) => tools.x({ item })))`. Preserve ordering when calls depend on earlier results or side effects: ordered writes and a read after a write stay sequential even when the read does not use the write\'s returned value. There is NO sleep, timer, or delay mechanism in the sandbox — never busy-wait on a clock; a script that would run past ~60s should raise the timeout via the first line `// @options: {"timeout_ms": 300000}` or be split.',
   "- `store(key, value)` persists only if the script ENDS successfully: a script that throws or times out keeps its tool-call effects but loses its store writes. Re-verify with `load()` instead of assuming.",
   "- No Node and no network: require, process, Buffer, fetch, timers do not exist. All I/O goes through nested tool calls.",
 ].join("\n");

@@ -46,6 +46,8 @@ File and shell tools are called directly. Integration and MCP tools are called t
 
 Before a code-mode script executes, its static check refuses straight-line loops of independent Integration reads and batches of four consecutive independent reads, with a correction asking for `Promise.all`. Read effects come from the admitted Integration declarations; known HubSpot GET and CRM search requests also qualify. Pagination, ordered writes and uncertain dependencies remain sequential. A post-execution timing hint covers serial batches the static check cannot establish.
 
+Each conversation has at most eight tool operations in flight. Installed tool implementations and the approval classifier's Integration discovery share this limit, including dynamically installed tools. A queued operation cancelled before execution is removed; authorization is checked when its classification runs. The timing hint is conditional because combined durations do not establish whether calls overlapped, and its batching advice preserves dependencies on both results and side effects.
+
 Code mode lists the tools a script can call grouped into namespaces: groups of Guild's own tools, one per Integration (named by its slug), and one per MCP server. A namespace only groups tools for discovery; a script still calls each tool as `tools.<name>`.
 
 ### The allowlist

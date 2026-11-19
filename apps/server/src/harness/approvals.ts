@@ -484,7 +484,11 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       //     workspace sessions) skips the interactive gate like every
       //     server tool.
       if (deps.integrations !== undefined) {
-        const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
+        const decision = await deps.integrations.gateDecision(
+          Number(runtime.conversationId),
+          call.name,
+          context.abortSignal,
+        );
         // An agent's own thread runs unattended: its integration calls take
         // the batch contract instead of a card.
         if (decision === "ask" && (await agentThreadForChat(deps.pool, chatId)) === null) {
