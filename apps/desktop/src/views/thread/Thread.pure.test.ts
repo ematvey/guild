@@ -1435,6 +1435,54 @@ describe("viewEntries (collapsed work runs)", () => {
     expect(shape(blocks, false)).toEqual(["u", "work(t1)", "x2"]);
   });
 
+  it("keeps each final answer when a child result starts another turn", () => {
+    const blocks = eventsToBlocks([
+      row(1, { type: "user_message", content: "go", attachments: [] }),
+      row(2, {
+        type: "assistant_message",
+        turn: 1,
+        step: 1,
+        blocks: [{ type: "text", text: "First final" }],
+        usage,
+        model: "test",
+      }),
+      row(3, {
+        type: "child_result",
+        thread_id: "child",
+        run_id: "run",
+        chat_id: "child-chat",
+        agent_name: "Worker",
+        title: "Task",
+        status: "succeeded",
+        final_text: "Done",
+        attachments: [],
+      }),
+      row(4, {
+        type: "assistant_message",
+        turn: 2,
+        step: 1,
+        blocks: [{ type: "text", text: "Progress" }],
+        usage,
+        model: "test",
+      }),
+      row(5, {
+        type: "assistant_message",
+        turn: 2,
+        step: 2,
+        blocks: [{ type: "text", text: "Second final" }],
+        usage,
+        model: "test",
+      }),
+    ]);
+    expect(shape(blocks)).toEqual(["1:0", "2:0", "work(3:0,4:0)", "5:0"]);
+    expect(shape(blocks, true)).toEqual(["1:0", "2:0", "work(3:0)", "4:0", "5:0"]);
+  });
+
+  it("folds messages across a steer within the same server turn", () => {
+    const blocks: RenderBlock[] = [user, { ...text(1), turn: 1 }, user2, { ...text(2), turn: 1 }];
+    expect(shape(blocks)).toEqual(["u", "work(x1)", "u2", "x2"]);
+  });
+
   it("passes a queued send through without opening a turn", () => {
     const queued: RenderBlock = { kind: "user", text: "steer", key: "q", queued: true };
     const blocks = [user, text(1), queued, tool(2), text(3)];

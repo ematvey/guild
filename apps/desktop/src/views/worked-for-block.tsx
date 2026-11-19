@@ -34,24 +34,25 @@ export function viewEntries(blocks: RenderBlock[], busy = false): ViewEntry[] {
     if (run.length) entries.push({ kind: "work", run, turnStart });
     run = [];
   };
-  // The turn each block belongs to: one more than the member's messages
-  // above it, so blocks before the first member message share turn -1. A
-  // queued send is a chip above the composer, not a transcript entry: it
-  // never opens a turn.
-  const turns: number[] = [];
+  // Committed assistant blocks carry the server's Turn identity. User
+  // messages only anchor buffers without one; a steer can share a Turn,
+  // and a child result can start one without a user message.
+  const turns: string[] = [];
   let turn = -1;
+  let current = "input:-1";
   blocks.forEach((b) => {
-    if (b.kind === "user" && !b.queued) turn += 1;
-    turns.push(turn);
+    if (b.kind === "user" && !b.queued) current = `input:${++turn}`;
+    if (b.turn !== undefined && !b.posted) current = `turn:${b.turn}`;
+    turns.push(current);
   });
   // The last turn message with a body: the one a settled turn keeps in the
   // transcript. A posted message is never that message — it is not a step
   // of the turn.
-  const finalText = new Map<number, number>();
+  const finalText = new Map<string, number>();
   blocks.forEach((b, i) => {
     if (b.kind === "text" && !b.posted && hasBody(b)) finalText.set(turns[i]!, i);
   });
-  const lastTurn = turns[turns.length - 1] ?? -1;
+  const lastTurn = turns[turns.length - 1];
   blocks.forEach((b, i) => {
     const t = turns[i]!;
     if (b.kind === "user" && !b.queued) turnStart = b.ts;

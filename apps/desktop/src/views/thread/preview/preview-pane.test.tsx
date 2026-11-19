@@ -116,10 +116,7 @@ describe("PreviewPane", () => {
 
   it("draws no width and no handle in full screen", () => {
     localStorage.setItem(PREVIEW_WIDTH_KEY, "700");
-    const doc = new DOMParser().parseFromString(
-      renderToStaticMarkup(<PreviewPane {...PROPS} full />),
-      "text/html",
-    );
+    const doc = new DOMParser().parseFromString(renderToStaticMarkup(<PreviewPane {...PROPS} full />), "text/html");
     expect(doc.querySelector('[title="Drag to resize · double-click to reset"]')).toBeNull();
   });
 });
