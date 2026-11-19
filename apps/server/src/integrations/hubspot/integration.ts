@@ -86,13 +86,19 @@ const objectTypeParameter = (description: string) => ({
   required: ["object_type"],
 });
 
+const MARKETING_ID = { type: "string", minLength: 1, description: "HubSpot resource id" };
+const MARKETING_PAGE = {
+  limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+  after: { type: "string", description: "Opaque paging.next.after from the previous page" },
+};
+
 const plugin: IntegrationPlugin = {
   manifest: {
     name: "hubspot",
     title: "HubSpot",
-    version: "2.1.0",
+    version: "2.2.0",
     publisher: "Guild",
-    summary: "HubSpot CRM: search, read, create, update and delete any object, plus Analytics",
+    summary: "HubSpot CRM, marketing emails, audiences, campaigns, workflows and Analytics",
     description:
       "Adds the CRM to chats. Search contacts, companies, deals, tickets and any " +
       "other object type with the HubSpot v3 search API — free text, property " +
@@ -134,7 +140,9 @@ const plugin: IntegrationPlugin = {
           "Under **Scopes** grant the objects the chat must reach — " +
           "`crm.objects.contacts.read`, `crm.objects.companies.read`, " +
           "`crm.objects.deals.read`, `crm.objects.deals.write`, " +
-          "`tickets`, and a custom object's own scope — create the app, and copy its " +
+          "`tickets`, and a custom object's own scope. Marketing investigations also need " +
+          "`content` (email details/events), `marketing.campaigns.read`, `crm.lists.read`, " +
+          "and `automation` (workflows). Save the scopes, then copy the " +
           "access token (`pat-…`). See [HubSpot private " +
           "apps](https://developers.hubspot.com/docs/api/private-apps).",
       },
@@ -161,18 +169,22 @@ const plugin: IntegrationPlugin = {
       {
         name: "get_object",
         class: "read" as const,
-        description:
-          "Read one HubSpot record by id, with the properties and associations the call names. Reads only.",
+        description: "Read one HubSpot record by id, with the properties and associations the call names. Reads only.",
         parameters: {
           type: "object",
           properties: {
             object_type: OBJECT_TYPE("contacts, companies, deals, tickets, or another object type id"),
             id: { type: "string", description: "The record's internal id" },
             properties: { type: "array", items: { type: "string" }, description: "Properties to return" },
+            propertiesWithHistory: {
+              type: "array",
+              items: { type: "string" },
+              description: "Properties whose historical values and sources to return, e.g. region",
+            },
             associations: {
               type: "array",
               items: { type: "string" },
-              description: "Object types whose associated ids to return, e.g. [\"deals\"]",
+              description: 'Object types whose associated ids to return, e.g. ["deals"]',
             },
           },
           required: ["object_type", "id"],
@@ -282,7 +294,7 @@ const plugin: IntegrationPlugin = {
             filter: {
               type: "array",
               items: { type: "string" },
-              description: "Keep only these breakdown values, e.g. [\"/pricing\"]",
+              description: 'Keep only these breakdown values, e.g. ["/pricing"]',
             },
             exclude: {
               type: "array",
@@ -313,8 +325,7 @@ const plugin: IntegrationPlugin = {
         name: "analytics_exists",
         class: "read" as const,
         description:
-          "Check whether HubSpot has analytics data for one object type, e.g. a custom object. " +
-          "Reads only.",
+          "Check whether HubSpot has analytics data for one object type, e.g. a custom object. " + "Reads only.",
         parameters: objectTypeParameter("The object type id, e.g. pages or p148247336_subscriptions"),
       },
       {
@@ -357,6 +368,130 @@ const plugin: IntegrationPlugin = {
           required: ["object_type", "id"],
         },
       },
+      ...[
+        {
+          name: "list_marketing_emails",
+          description:
+            "Page through marketing emails. Returns complete JSON with paging.next.after; inspect names on each page. Needs content or an accepted granular email scope.",
+          properties: {
+            ...MARKETING_PAGE,
+            createdAfter: { type: "string", description: "ISO8601 creation time lower bound" },
+            createdBefore: { type: "string", description: "ISO8601 creation time upper bound" },
+          },
+        },
+        {
+          name: "get_marketing_email",
+          description:
+            "Read the complete marketing email, including content, audience settings, statistics and attribution. publishedByEmail/Id/Name identify its publisher/sender; createdById identifies its creator; from is the visible sender address. A list owner is not proof of who sent an email.",
+          properties: { id: MARKETING_ID },
+          required: ["id"],
+        },
+        {
+          name: "get_email_events",
+          description:
+            "Page actual email events: SENT, DELIVERED, BOUNCE, OPEN, CLICK. Use campaignId from the email's primaryEmailCampaignId, not its content id or a marketing campaign UUID. Follow offset while hasMore is true. Counts from contact last-email properties are not full send history.",
+          properties: {
+            limit: MARKETING_PAGE.limit,
+            offset: { type: "string", description: "Opaque offset from the previous response" },
+            campaignId: { type: "string" },
+            recipient: { type: "string" },
+            eventType: {
+              type: "string",
+              enum: [
+                "SENT",
+                "DELIVERED",
+                "BOUNCE",
+                "OPEN",
+                "CLICK",
+                "DEFERRED",
+                "DROPPED",
+                "SPAMREPORT",
+                "STATUSCHANGE",
+                "SUPPRESSION",
+                "UNBOUNCE",
+              ],
+            },
+            startTimestamp: { type: "number", description: "Range start, Unix milliseconds" },
+            endTimestamp: { type: "number", description: "Range end, Unix milliseconds" },
+          },
+        },
+        {
+          name: "search_lists",
+          description:
+            "Search audience lists by name or enumerate them. Returns complete lists and offset; repeat with that offset while hasMore. Uses read-only POST search, never creates or edits a list.",
+          properties: {
+            query: { type: "string" },
+            objectTypeId: { type: "string", description: "e.g. 0-1 for contacts" },
+            count: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+            offset: { type: "integer", minimum: 0, default: 0 },
+          },
+        },
+        {
+          name: "get_list",
+          description:
+            "Read one audience list with filters, processing type and creator/updater ids. These identify list maintainers, not the publisher of an email. Current membership does not prove send-time membership.",
+          properties: { id: MARKETING_ID },
+          required: ["id"],
+        },
+        {
+          name: "get_list_members",
+          description:
+            "Page current member record ids of a list. Follow paging.next.after. Read properties with batch_read; this is current membership, not an email's historical recipient list.",
+          properties: { id: MARKETING_ID, ...MARKETING_PAGE },
+          required: ["id"],
+        },
+        {
+          name: "get_list_memberships",
+          description:
+            "Read the lists a CRM record currently belongs to. object_type_id is a numeric object type such as 0-1 for contacts. This does not prove historical membership or receipt of an email.",
+          properties: { object_type_id: { type: "string" }, id: MARKETING_ID },
+          required: ["object_type_id", "id"],
+        },
+        {
+          name: "list_campaigns",
+          description:
+            "Page marketing campaigns (broader groups of assets, not individual email sends). Needs marketing.campaigns.read; follow paging.next.after.",
+          properties: MARKETING_PAGE,
+        },
+        {
+          name: "get_campaign",
+          description:
+            "Read one marketing campaign by UUID. To inspect its associated emails or other assets, use list_campaign_assets.",
+          properties: { id: MARKETING_ID },
+          required: ["id"],
+        },
+        {
+          name: "list_campaign_assets",
+          description:
+            "Page assets of one marketing campaign and one asset type, e.g. MARKETING_EMAIL. Follow paging.next.after.",
+          properties: { id: MARKETING_ID, asset_type: { type: "string" }, ...MARKETING_PAGE },
+          required: ["id", "asset_type"],
+        },
+        {
+          name: "list_workflows",
+          description:
+            "Page v4 workflows. Needs automation; follow paging.next.after. This endpoint does not list classic v3 workflows; an empty page is not proof no automation exists.",
+          properties: MARKETING_PAGE,
+        },
+        {
+          name: "get_workflow",
+          description:
+            "Read a v4 workflow's full definition, triggers, actions and enabled state. Needs automation. A definition alone does not prove an individual contact received an email.",
+          properties: { id: MARKETING_ID },
+          required: ["id"],
+        },
+        {
+          name: "check_capabilities",
+          description:
+            "Probe effective access to CRM, marketing emails, delivery events, lists, campaigns and workflows separately. Reports each result and API error; a successful contacts connection test does not prove marketing access.",
+          properties: {},
+        },
+      ].map(({ name, description, properties, ...rest }) => ({
+        name,
+        description,
+        class: "read" as const,
+        parameters: { type: "object", properties, ...rest },
+      })),
       apiTool("HubSpot"),
     ],
   },
