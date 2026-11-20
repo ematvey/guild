@@ -240,7 +240,8 @@ test("preview pruning defaults to a dry run and never deletes stable or pinned r
       `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path');
 const dir=process.env.RELEASE_TEST_DIR,args=process.argv.slice(2),releases=JSON.parse(fs.readFileSync(path.join(dir,'releases.json')));
-fs.appendFileSync(path.join(dir,'calls'),JSON.stringify(args)+'\\n');
+const body=args.includes('--input')?JSON.parse(fs.readFileSync(0,'utf8')):null;
+fs.appendFileSync(path.join(dir,'calls'),JSON.stringify([...args,body])+'\\n');
 if(args.includes('--slurp'))console.log(JSON.stringify([releases]));
 else if(args.includes('DELETE')){}
 else if(args[1].endsWith('/git/ref/heads/master'))console.log(JSON.stringify({object:{sha:'master'}}));
@@ -248,6 +249,9 @@ else if(args[1].endsWith('/git/tags') && args.includes('POST'))console.log(JSON.
 else if(args[1].endsWith('/git/refs') && args.includes('POST'))console.log('{}');
 else if(args[1].endsWith('/git/ref/tags/guild-preview-retention-lock'))console.log(JSON.stringify({object:{sha:process.env.RELEASE_TEST_LOST_LOCK?'other-owner':'lock-object'}}));
 else if(args[1].endsWith('/git/matching-refs/tags/guild-pin-'))console.log(JSON.stringify([{ref:'refs/tags/guild-pin-dev',object:{type:'tag',sha:'pin'}}]));
+else if(args[1].includes('/releases/tags/'))console.log(JSON.stringify(releases[11]));
+else if(args[1].includes('/git/ref/tags/client-v'))console.log(JSON.stringify({object:{type:'commit',sha:'source'}}));
+else if(args[1].endsWith('/git/matching-refs/tags/guild-pin-dev'))console.log(JSON.stringify([{ref:'refs/tags/guild-pin-dev'},{ref:'refs/tags/guild-pin-dev-pending-11111111-1111-1111-1111-111111111111'}]));
 else if(args[1].endsWith('/git/tags/pin'))console.log(JSON.stringify({message:JSON.stringify({release:'client-v1.2.4-dev.12'})}));
 else {
  const release=releases.find(r=>args[1].endsWith('/releases/'+r.id));
@@ -293,6 +297,17 @@ else {
       }),
     );
     assert.ok(!readFileSync(path.join(directory, "calls"), "utf8").includes("DELETE"));
+    writeFileSync(path.join(directory, "calls"), "");
+    execFileSync(process.execPath, [command[0], "pin", "dev", "client-v1.2.4-dev.12"], options);
+    const pinCalls = readFileSync(path.join(directory, "calls"), "utf8").trim().split("\n").map(JSON.parse);
+    const appended = pinCalls.findIndex(
+      (args) => args.includes("POST") && args.at(-1)?.ref?.startsWith("refs/tags/guild-pin-dev-"),
+    );
+    const retired = pinCalls.findIndex(
+      (args) => args.includes("DELETE") && args[1].endsWith("/git/refs/tags/guild-pin-dev"),
+    );
+    assert.ok(appended >= 0 && retired > appended);
+    assert.ok(!pinCalls.some((args) => args.includes("DELETE") && args[1].includes("guild-pin-dev-pending")));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

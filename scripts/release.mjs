@@ -516,35 +516,44 @@ function pinName(installation, pending = false) {
   return `guild-pin-${installation.toLowerCase()}${pending ? "-pending" : ""}`;
 }
 
+function installationPins(repository, installation, pending = false) {
+  const base = `refs/tags/${pinName(installation, pending)}`;
+  return githubApi(repository, `git/matching-refs/tags/${pinName(installation, pending)}`).filter(
+    (r) => r.ref === base || /^-[0-9a-f-]{36}$/.test(r.ref.slice(base.length)),
+  );
+}
+
 async function pinRelease(repository, installation, tag, pending = false) {
-  const name = pinName(installation, pending);
+  const name = `${pinName(installation, pending)}-${randomUUID()}`;
   releasePins({ [name]: tag });
   await withRetentionLock(repository, (assertLock) => {
     const release = githubApi(repository, `releases/tags/${tag}`);
     assert(release.prerelease === true && release.draft === false, "pin a published develop release");
-    let object = githubApi(repository, `git/ref/tags/${tag}`).object;
-    for (let depth = 0; object.type === "tag" && depth < 10; depth++)
-      object = githubApi(repository, `git/tags/${object.sha}`).object;
-    assert(object.type === "commit", "release tag must resolve to a commit");
+    const master = githubApi(repository, "git/ref/heads/master").object.sha;
     const annotation = githubApi(repository, "git/tags", "POST", {
       tag: name,
-      object: object.sha,
+      object: master,
       type: "commit",
       message: JSON.stringify({ release: tag }),
     });
-    const existing = githubApi(repository, `git/ref/tags/${name}`, "GET", undefined, true);
+    const existing = installationPins(repository, installation, pending);
     assertLock();
-    if (existing) githubApi(repository, `git/refs/tags/${name}`, "PATCH", { sha: annotation.sha, force: true });
-    else githubApi(repository, "git/refs", "POST", { ref: `refs/tags/${name}`, sha: annotation.sha });
+    // Append protection first; interruption can retain extra pins, never lose one.
+    githubApi(repository, "git/refs", "POST", { ref: `refs/tags/${name}`, sha: annotation.sha });
+    for (const ref of existing) {
+      assertLock();
+      githubApi(repository, `git/refs/${ref.ref.slice(5)}`, "DELETE");
+    }
   });
   console.log(`Pinned ${tag} for ${installation}${pending ? " (pending deployment)" : ""}`);
 }
 
 async function unpinRelease(repository, installation, pending = false) {
-  const name = pinName(installation, pending);
   await withRetentionLock(repository, (assertLock) => {
-    assertLock();
-    githubApi(repository, `git/refs/tags/${name}`, "DELETE", undefined, true);
+    for (const ref of installationPins(repository, installation, pending)) {
+      assertLock();
+      githubApi(repository, `git/refs/${ref.ref.slice(5)}`, "DELETE");
+    }
   });
 }
 

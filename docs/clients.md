@@ -140,6 +140,9 @@ The field stays editable, so any URL can always be typed at login.
 | dmg2img | DMG round-trip verification | `dmg2img` on `PATH` |
 | webkit2gtk-4.1 | Linux GUI build | `pacman -S webkit2gtk-4.1` |
 
+The Tauri bundle configuration names the shared PNG, ICNS and ICO icons explicitly.
+Linux AppImage packaging requires a square PNG in that list.
+
 ## 4. Release process
 
 GitHub Releases holds desktop installers, updater bundles, minisign signatures,
@@ -255,16 +258,17 @@ Expired develop releases and their tags are deleted together; deleted immutable
 tag names are not reused. Intermediate Actions build artifacts expire after three
 days. Release workflows queue independently per branch without cancelling builds.
 
-Each installation has an annotated `guild-pin-<name>` Git tag whose message
+Each installation has annotated `guild-pin-<name>-<id>` Git tags whose message
 records the published develop release tag. Installation names use letters,
 numbers and underscores and are case-insensitive. Deployment pins its target
-under `guild-pin-<name>-pending` before changing the server, preserves the previous
+under `guild-pin-<name>-pending-<id>` before changing the server, preserves the previous
 running pin, then updates the running pin and removes the pending pin after
 health matches. A failed deployment leaves its pending pin for retry or removal.
 Other stacks pin their approved release before it ages out. The cleanup cannot
 discover independently hosted servers.
 
-Pinning, unpinning and destructive cleanup share an atomic Git ref lock and read
+Pin updates append the replacement record before removing previous records; an
+interruption preserves protection. Pinning, unpinning and destructive cleanup share an atomic Git ref lock and read
 live pin tags while holding it. Use the commands below for pin changes. If an
 interrupted operation leaves `guild-preview-retention-lock`, an operator verifies
 that operation is inactive before removing the lock tag. Cleanup fails closed
