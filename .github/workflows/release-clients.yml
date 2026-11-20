@@ -1,0 +1,155 @@
+name: Release clients
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Stable releases run on master; previews run on any branch
+        type: choice
+        options: [preview, stable]
+        default: preview
+      version:
+        description: Stable version (for example 0.6.127); empty for previews
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: release-clients
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+      commit: ${{ steps.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare release version
+        id: prepare
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          node --test scripts/release.test.mjs
+          if [ "$CHANNEL" = stable ]; then
+            node scripts/release.mjs check-stable "$RELEASE_VERSION"
+            git switch master
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            before=$(git rev-parse HEAD)
+            scripts/bump-version.sh "$RELEASE_VERSION"
+            git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/server/package.json packages/ui/package.json package-lock.json
+            if ! git diff --cached --quiet; then
+              git commit -m "release: version $RELEASE_VERSION"
+              node scripts/release.mjs check-policy "$before" HEAD origin/master master
+              git push origin HEAD:master
+            fi
+          else
+            RELEASE_VERSION=$(node scripts/release.mjs preview-version "$BUILD_NUMBER")
+          fi
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+          - platform: darwin-aarch64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - platform: darwin-x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Linux bundle dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev lld
+      - name: Install dependencies and stamp preview
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          npm ci
+          rustup target add '${{ matrix.target }}'
+          if [[ "$VERSION" == *-dev.* ]]; then bash scripts/bump-version.sh --build "$VERSION"; fi
+          node protocol/check.mjs
+      - name: Build signed client
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_DEFAULT_SERVER_URL: ''
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo 'Configure the existing updater signing key in repository secrets'; exit 1; }
+          npm run tauri build -- --target '${{ matrix.target }}' --bundles '${{ matrix.bundles }}'
+          while IFS= read -r file; do
+            npm run tauri signer sign -- --app-version "$VERSION" "$file"
+          done < <(find '../../target/${{ matrix.target }}/release/bundle' -name '*.dmg')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/**/*.exe
+            target/${{ matrix.target }}/release/bundle/**/*.exe.sig
+            target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            target/${{ matrix.target }}/release/bundle/**/*.AppImage.sig
+            target/${{ matrix.target }}/release/bundle/**/*.dmg
+            target/${{ matrix.target }}/release/bundle/**/*.dmg.sig
+            target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz.sig
+          if-no-files-found: error
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+      - name: Publish complete release
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release.mjs collect bundles artifacts "$VERSION"
+          node scripts/release.mjs assemble artifacts "$VERSION" "$GITHUB_REPOSITORY" "$COMMIT"
+          node scripts/release.mjs publish artifacts

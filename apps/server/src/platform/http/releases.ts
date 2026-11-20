@@ -17,9 +17,110 @@ import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser, requireAdminUser, queryParam, sendJson, bodyBytes } from "./error.js";
-import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
+import {
+  sha256Hex,
+  safeFilename,
+  validPlatform,
+  APPROVED_RELEASE_VERSION_KV,
+  type ReleaseRow,
+  type GithubReleaseArtifact,
+} from "../store/releases.js";
 import { SIGNING_SEED_KV } from "../store/org-kv.js";
 import { uuidv7 } from "../time.js";
+
+async function githubJson(url: string): Promise<unknown> {
+  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw ApiError.badRequest(`GitHub release request failed (${response.status})`);
+  return response.json();
+}
+
+/** Release metadata is accepted only from the configured public repository;
+ * each artifact must match GitHub's own digest and size. */
+async function githubArtifacts(repository: string, tag: string, previews: boolean): Promise<GithubReleaseArtifact[]> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository))
+    throw ApiError.badRequest("configure GUILD_RELEASE_REPOSITORY as owner/repository");
+  if (!/^client-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-dev\.[1-9]\d*)?$/.test(tag))
+    throw ApiError.badRequest("invalid client release tag");
+  const version = tag.slice("client-v".length);
+  if (version.includes("-") && !previews)
+    throw ApiError.badRequest("preview releases require GUILD_RELEASE_CHANNEL=preview");
+  const release = (await githubJson(`https://api.github.com/repos/${repository}/releases/tags/${tag}`)) as {
+    tag_name?: string;
+    draft?: boolean;
+    prerelease?: boolean;
+    body?: string;
+    assets?: { name: string; size: number; digest: string; browser_download_url: string }[];
+  };
+  if (
+    release.tag_name !== tag ||
+    release.draft !== false ||
+    release.prerelease !== version.includes("-") ||
+    !Array.isArray(release.assets)
+  ) {
+    throw ApiError.badRequest("GitHub release is unpublished or its channel does not match the version");
+  }
+  const base = `https://github.com/${repository}/releases/download/${tag}`;
+  if (!release.assets.some((a) => a.name === "release.json" && a.browser_download_url === `${base}/release.json`)) {
+    throw ApiError.badRequest("GitHub release is missing release.json");
+  }
+  const metadata = (await githubJson(`${base}/release.json`)) as {
+    version?: string;
+    repository?: string;
+    tag?: string;
+    artifacts?: { platform: string; filename: string; size_bytes: number; sha256: string; updater_signature: string }[];
+  };
+  if (
+    metadata.version !== version ||
+    metadata.repository !== repository ||
+    metadata.tag !== tag ||
+    !Array.isArray(metadata.artifacts) ||
+    metadata.artifacts.length !== 6
+  ) {
+    throw ApiError.badRequest("invalid GitHub release metadata");
+  }
+  const result: GithubReleaseArtifact[] = [];
+  for (const platform of ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"]) {
+    const filenames =
+      platform === "windows-x86_64"
+        ? [`Guild_${version}_x64-setup.exe`]
+        : platform === "linux-x86_64"
+          ? [`Guild-${version}-x86_64.AppImage`]
+          : [
+              `Guild-${version}-macos-${platform.slice(7)}.dmg`,
+              `Guild-${version}-macos-${platform.slice(7)}.app.tar.gz`,
+            ];
+    for (const filename of filenames) {
+      const artifact = metadata.artifacts.find((a) => a.platform === platform && a.filename === filename);
+      const asset = release.assets.find((a) => a.name === filename);
+      const signatureAsset = release.assets.find((a) => a.name === `${filename}.sig`);
+      if (
+        !artifact ||
+        !asset ||
+        !signatureAsset ||
+        asset.browser_download_url !== `${base}/${filename}` ||
+        signatureAsset.browser_download_url !== `${base}/${filename}.sig` ||
+        !Number.isSafeInteger(artifact.size_bytes) ||
+        artifact.size_bytes <= 0 ||
+        asset.size !== artifact.size_bytes ||
+        !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+        asset.digest !== `sha256:${artifact.sha256}` ||
+        typeof artifact.updater_signature !== "string" ||
+        artifact.updater_signature.trim() === ""
+      ) {
+        throw ApiError.badRequest(`missing or unverified GitHub artifact: ${filename}`);
+      }
+      result.push({
+        ...artifact,
+        version,
+        id: uuidv7(),
+        signature: "",
+        download_url: `${base}/${filename}`,
+        notes: release.body ?? "",
+      });
+    }
+  }
+  return result;
+}
 
 const MASTER_KEY_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
@@ -170,6 +271,23 @@ export function registerReleaseRoutes(
   ctx: IdentityCtx,
   objects: ObjectStore,
 ): void {
+  app.post("/api/v1/admin/releases/github", async (req, reply) => {
+    await requireAdminUser(ctx, req);
+    if (ctx.config.releaseRepository === null) throw ApiError.badRequest("GUILD_RELEASE_REPOSITORY is not configured");
+    const body = req.body as { tag?: unknown } | null;
+    if (typeof body?.tag !== "string") throw ApiError.badRequest("tag is required");
+    const artifacts = await githubArtifacts(
+      ctx.config.releaseRepository,
+      body.tag,
+      ctx.config.releaseChannel === "preview",
+    );
+    const seed = await signingSeed(ctx);
+    for (const artifact of artifacts) artifact.signature = signDigest(seed, Buffer.from(artifact.sha256, "hex"));
+    await gateway.releases.importGithub(artifacts);
+    sendJson(reply, { version: artifacts[0]!.version, artifacts: artifacts.length });
+    return reply;
+  });
+
   app.post("/api/v1/admin/releases", { bodyLimit: 512 * 1024 * 1024 }, async (req, reply) => {
     await requireAdminUser(ctx, req);
     const version = queryParam(req, "version");
@@ -237,10 +355,11 @@ export function registerReleaseRoutes(
   app.delete("/api/v1/admin/releases/:id", async (req, reply) => {
     await requireAdminUser(ctx, req);
     const id = parseUuidParam(req, "id");
+    const githubUrl = await gateway.releases.downloadUrl(id);
     const deleted = await gateway.releases.delete(id);
     const key = objectKey(deleted.version, deleted.kind, deleted.platform, deleted.id, deleted.filename);
     try {
-      await objects.delete(key);
+      if (githubUrl === null) await objects.delete(key);
     } catch {
       // best-effort
     }
@@ -270,7 +389,7 @@ export function registerReleaseRoutes(
     const id = parseUuidParam(req, "id");
     await gateway.releases.get(id);
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    sendJson(reply, { url: signDownload(ctx, id, exp), expires_at: exp });
+    sendJson(reply, { url: (await gateway.releases.downloadUrl(id)) ?? signDownload(ctx, id, exp), expires_at: exp });
     return reply;
   });
 
@@ -297,6 +416,8 @@ export function registerReleaseRoutes(
       await ctx.identity.validateSession(header.slice("Bearer ".length));
     }
     const releaseRow: ReleaseRow = await gateway.releases.get(id);
+    const githubUrl = await gateway.releases.downloadUrl(id);
+    if (githubUrl !== null) return reply.redirect(githubUrl);
     const key = objectKey(releaseRow.version, releaseRow.kind, releaseRow.platform, releaseRow.id, releaseRow.filename);
     let bytes: Readable;
     try {
@@ -317,9 +438,12 @@ export function registerReleaseRoutes(
   // are listed.
   app.get("/api/v1/updates/latest.json", async (_req, reply) => {
     const rows = await gateway.releases.list();
+    const approved = await ctx.kv.get(APPROVED_RELEASE_VERSION_KV);
     let latest: { version: string; created_at: string } | null = null;
     for (const r of rows) {
       if (r.kind !== "desktop" || r.updater_signature === "") continue;
+      if (approved !== null && r.version !== approved) continue;
+      if (ctx.config.releaseChannel === "stable" && r.version.includes("-")) continue;
       if (latest === null || versionGt(r.version, latest.version)) {
         latest = { version: r.version, created_at: r.created_at };
       }
@@ -343,10 +467,11 @@ export function registerReleaseRoutes(
       if (row === undefined) continue;
       platforms[target] = {
         signature: row.updater_signature,
-        url: `${base}${signDownload(ctx, row.id, exp)}`,
+        url: (await gateway.releases.downloadUrl(row.id)) ?? `${base}${signDownload(ctx, row.id, exp)}`,
       };
     }
     if (Object.keys(platforms).length === 0) return reply.status(204).send();
+    if (approved !== null && Object.keys(platforms).length !== 4) return reply.status(204).send();
     const notes = rows.find((r) => r.version === latest!.version && r.notes !== "")?.notes ?? "";
     // The manifest object keys are sorted like every json!-built body;
     // pub_date renders with chrono's to_rfc3339 (+00:00 offset).

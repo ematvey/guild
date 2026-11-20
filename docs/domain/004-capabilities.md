@@ -202,3 +202,17 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 
 - **Skill scope.** Installs and pins are per Member, so two Members using one shared Agent may get different Skills from it. The alternative is a per-Agent skill set (`selected` or `all`), like the tool allowlist.
 - **Bundle trust.** Registry bundles are content-addressed but not signed. Only desktop releases are signed.
+
+## Desktop releases
+
+A Release names signed desktop artifacts for one product version. GitHub hosts
+six artifacts for four platforms; a server imports their checked metadata and
+approves one complete version for its paired clients. A stable stack accepts
+stable versions; a preview stack may also accept `-dev.<build-number>` versions.
+The approved version and all artifact rows become visible together. The updater
+manifest is absent if an approved updater artifact is missing. Object-storage
+artifacts use the existing signed-download path.
+
+Only a stable release on master changes the committed product version. Branch
+and local builds stamp a temporary preview version in their build checkout.
+The source commit is release provenance, separate from the version identifier.

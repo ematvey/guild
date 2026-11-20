@@ -1,0 +1,26 @@
+{
+  "name": "Release version policy",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    { "actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always" }
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/master", "refs/heads/develop"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          { "context": "Version policy", "integration_id": 15368 }
+        ],
+        "do_not_enforce_on_create": false
+      }
+    }
+  ]
+}

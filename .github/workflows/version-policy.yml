@@ -1,0 +1,32 @@
+name: Version policy
+on:
+  pull_request:
+  push:
+    branches: ['**']
+permissions:
+  contents: read
+jobs:
+  version-policy:
+    name: Version policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test release policy
+        run: node --test scripts/release.test.mjs
+      - name: Enforce committed product versions
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
+        run: |
+          git fetch origin master
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE=$(git merge-base origin/master "$HEAD")
+          fi
+          node scripts/release.mjs check-policy "$BASE" "$HEAD" origin/master "$BRANCH"

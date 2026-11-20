@@ -6,12 +6,25 @@
 # Usage: scripts/bump-version.sh <semver>   e.g. scripts/bump-version.sh 0.5.38
 set -euo pipefail
 
-V="${1:?usage: scripts/bump-version.sh <semver>}"
-if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "not a semver triple: $V" >&2
+BUILD=0
+if [[ "${1:-}" == "--build" ]]; then BUILD=1; shift; fi
+V="${1:?usage: scripts/bump-version.sh [--build] <semver>}"
+if ! [[ "$V" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*)?$ ]]; then
+  echo "not a product version: $V" >&2
   exit 1
 fi
 cd "$(dirname "$0")/.."
+if [[ "$BUILD" == 1 ]]; then
+  [[ "$V" == *-dev.* ]] || { echo "build stamping requires a dev version" >&2; exit 1; }
+else
+  [[ "$V" != *-* ]] || { echo "committed versions must be stable" >&2; exit 1; }
+  [[ "$(git branch --show-current)" == master ]] || { echo "stable versions are bumped on master" >&2; exit 1; }
+  if [[ -n "${CI:-}" ]]; then
+    [[ "${GITHUB_WORKFLOW:-}" == "Release clients" && "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/master ]] || {
+      echo "only the master release workflow may bump a version in CI" >&2; exit 1;
+    }
+  fi
+fi
 
 FILES=(
   Cargo.toml                            # [workspace.package] version — every crate, the Tauri app included (version.workspace)

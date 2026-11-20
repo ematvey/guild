@@ -1,65 +1,18 @@
 #!/usr/bin/env bash
-# Builds ONE Guild client binary (GUI + engine in the same executable) per OS
-# and publishes production-format artifacts:
-#
-#   windows-x86_64  Guild_0.1.0_x64-setup.exe      NSIS installer (tauri bundler
-#                   from Linux via cargo-xwin; requires makensis + llvm)
-#   linux-x86_64    Guild-0.1.0-x86_64.AppImage    self-contained AppImage
-#                   (linuxdeploy; bundles webkit2gtk libs; built against the
-#                   host glibc — modern distros)
-#   darwin-aarch64  Guild-0.1.0-macos-aarch64.dmg  drag-and-drop DMG (HFS+
-#   darwin-x86_64   Guild-0.1.0-macos-x86_64.dmg   image via hfsprogs + libdmg)
-#
-# The macOS DMGs are unsigned (Apple signing needs a Mac + Developer cert);
-# Gatekeeper: right-click -> Open on first run.
-#
-# Build-host requirements, all on PATH: zig, cargo-zigbuild, cargo-xwin,
-# rustup (with the apple + windows targets), the macOS SDK at $SDKROOT,
-# makensis, llvm-rc, linuxdeploy, libdmg-hfsplus's dmg, hfsprogs, 7z, jq.
-#
-# Each updater-capable artifact is minisign-signed with the tauri updater key
-# (~/.tauri/guild.key; override with UPDATER_KEY) and published with its
-# signature so /api/v1/updates/latest.json can serve the auto-updater.
-#
-# Before building, the script refuses a dirty tree, runs protocol/check.mjs
-# (the compatibility gate against the last shipped client) and refuses a
-# `client-v<VERSION>` tag that already marks another commit. After
-# publishing, HEAD gets the annotated tag `client-v<VERSION>` (the next
-# baseline for protocol/check.mjs), pushed to `origin` when that remote
-# exists; NO_PUSH_TAG=1 keeps it local.
-#
-# Usage:
-#   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
-#     VITE_DEFAULT_SERVER_URL=https://guild.example.com \
-#     scripts/release-clients.sh
+# Cross-build all six signed desktop artifacts into OUTPUT_DIR.
+# Local entry point: node scripts/release.mjs preview [build-number].
+# The preview orchestrator stamps versions in a disposable worktree.
 set -euo pipefail
-
-BASE="${BASE:-https://guild.example.com}"
-TOKEN="${TOKEN:?set TOKEN to an admin session token}"
-VERSION="${VERSION:?set VERSION, e.g. 0.1.0}"
-VITE_DEFAULT_SERVER_URL="${VITE_DEFAULT_SERVER_URL:?set VITE_DEFAULT_SERVER_URL to the public deployment URL}"
-export VITE_DEFAULT_SERVER_URL
+cd "$(dirname "$0")/.."
+[[ "${GUILD_RELEASE_STAGED:-}" == 1 ]] || { exec node scripts/release.mjs preview "$@"; }
+VERSION="${VERSION:?set VERSION}"
+OUTPUT_DIR="${OUTPUT_DIR:?set OUTPUT_DIR}"
+export VITE_DEFAULT_SERVER_URL=""
 export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
-# minisign keypair for the tauri desktop auto-updater (passwordless)
 UPDATER_KEY="${UPDATER_KEY:-$HOME/.tauri/guild.key}"
-# the bundler signs its updater artifacts itself when createUpdaterArtifacts is on
 export TAURI_SIGNING_PRIVATE_KEY="$UPDATER_KEY"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-
-cd "$(dirname "$0")/.."
-
-# The tag names the commit that was built, so the tree must be that commit.
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ERROR: the working tree is dirty; commit or remove the changes before a release" >&2
-  git status --short >&2
-  exit 1
-fi
-TAG="client-v$VERSION"
-TAGGED=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" 2>/dev/null || true)
-if [[ -n "$TAGGED" && "$TAGGED" != "$(git rev-parse HEAD)" ]]; then
-  echo "ERROR: $TAG already marks $TAGGED, not HEAD; a shipped version is not re-tagged — bump VERSION" >&2
-  exit 1
-fi
+[[ "$(node scripts/release.mjs version)" == "$VERSION" ]] || { echo "build versions differ" >&2; exit 1; }
 # Every tool the three platform builds call, checked before the first
 # compile so a missing one costs seconds and not a build.
 NEEDED_TOOLS=(cargo rustup zig cargo-zigbuild cargo-xwin makensis llvm-rc
@@ -93,38 +46,17 @@ sign() { # file -> stdout signature
   local sig="$1.sig"
   # env -u: -f conflicts with TAURI_SIGNING_PRIVATE_KEY inherited from above
   (cd apps/desktop && env -u TAURI_SIGNING_PRIVATE_KEY npx tauri signer sign \
-    -f "$UPDATER_KEY" --password "" "$1" >/dev/null)
+    -f "$UPDATER_KEY" --password "" --app-version "$VERSION" "$1" >/dev/null)
   cat "$sig"
   rm -f "$sig"
 }
 
-publish() { # platform src filename [updater_sig]
-  local platform="$1" src="$2" filename="$3"
-  local usig="${4:-}"
-  # Delete only the same artifact's previous row: the release identity is
-  # (version, kind, platform, filename) — one platform carries several
-  # artifacts (macOS DMG + its .app.tar.gz updater bundle) that must not
-  # delete each other.
-  for old in $(curl -sf "$BASE/api/v1/releases" -H "authorization: Bearer $TOKEN" \
-    | jq -r --arg p "$platform" --arg f "$filename" '.releases[] | select(.version == "'"$VERSION"'" and .platform == $p and .filename == $f) | .id'); do
-    curl -sf -X DELETE "$BASE/api/v1/admin/releases/$old" -H "authorization: Bearer $TOKEN" >/dev/null
-    echo "    replaced existing $platform artifact $filename"
-  done
-  local local_sha remote_sha ctype="application/gzip"
-  if [[ "$filename" == *.zip ]]; then ctype="application/zip"; fi
-  if [[ "$filename" == *.exe ]]; then ctype="application/octet-stream"; fi
-  if [[ "$filename" == *.dmg || "$filename" == *.AppImage ]]; then ctype="application/octet-stream"; fi
-  local_sha=$(sha256sum "$src" | cut -d' ' -f1)
-  echo "==> $platform: $filename ($(stat -c%s "$src") bytes)"
-  remote_sha=$(curl -sf -X POST \
-    "$BASE/api/v1/admin/releases?version=$VERSION&kind=desktop&platform=$platform&filename=$filename&content_type=$ctype&updater_sig=$(jq -rn --arg s "$usig" '$s|@uri')" \
-    -H "authorization: Bearer $TOKEN" -H "content-type: $ctype" \
-    --data-binary @"$src" | jq -r '.sha256')
-  if [[ "$local_sha" != "$remote_sha" ]]; then
-    echo "ERROR: server sha256 mismatch for $platform" >&2
-    exit 1
-  fi
-  echo "    published, sha256 verified: ${remote_sha:0:16}…"
+publish() { # platform src filename signature
+  local src="$2" filename="$3" signature="$4"
+  mkdir -p "$OUTPUT_DIR"
+  cp "$src" "$OUTPUT_DIR/$filename"
+  printf '%s\n' "$signature" > "$OUTPUT_DIR/$filename.sig"
+  echo "==> collected $1: $filename"
 }
 
 # ---- windows-x86_64: official NSIS installer, cross-built via cargo-xwin ----
@@ -251,23 +183,5 @@ build_dmg() { # arch
 build_dmg aarch64
 build_dmg x86_64
 
-echo "==> client distributions published (single binary, production formats)"
-
-# The tag marks the protocol a shipped client speaks: protocol/check.mjs
-# compares the working tree's schemas against the newest client-v* tag and
-# fails on changes an installed client cannot read. A republish of the same
-# version from the same commit leaves the tag as it is.
-if [[ -n "$TAGGED" ]]; then
-  echo "==> $TAG already marks HEAD"
-else
-  git tag -a "$TAG" -m "client release $VERSION" HEAD
-  echo "==> tagged HEAD as $TAG"
-fi
-if [[ "${NO_PUSH_TAG:-0}" == "1" ]]; then
-  echo "==> NO_PUSH_TAG=1: $TAG stays local"
-elif git remote get-url origin >/dev/null 2>&1; then
-  git push origin "refs/tags/$TAG" \
-    || echo "WARNING: pushing $TAG failed; push it by hand: git push origin $TAG" >&2
-else
-  echo "==> no origin remote: $TAG stays local"
-fi
+node scripts/release.mjs assemble "$OUTPUT_DIR" "$VERSION" "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_COMMIT"
+echo "==> all six signed artifacts ready: $OUTPUT_DIR"

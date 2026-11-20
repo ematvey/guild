@@ -472,10 +472,11 @@
     },
     {
       "id": "release",
-      "definition": "One published desktop build per platform, with its signature and size.",
+      "definition": "One approved signed desktop version, with platform artifacts hosted on GitHub or in object storage.",
       "canonical": "apps/server/src/platform/store/releases.ts",
       "types": [
-        "ReleaseRow"
+        "ReleaseRow",
+        "GithubReleaseArtifact"
       ],
       "aliases": [
         "build"
@@ -492,11 +493,33 @@
         {
           "where": "apps/desktop/src/lib/api/releases.ts",
           "role": "ui"
+        },
+        {
+          "where": "scripts/release.mjs",
+          "role": "domain"
+        },
+        {
+          "where": "scripts/release-clients.sh",
+          "role": "executor"
+        },
+        {
+          "where": ".github/workflows/release-clients.yml",
+          "role": "executor"
         }
       ],
       "translations": [
         {
           "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/platform/http/releases.ts"
+        },
+        {
+          "from": "executor",
+          "to": "domain",
+          "at": "scripts/release.mjs"
+        },
+        {
+          "from": "domain",
           "to": "wire",
           "at": "apps/server/src/platform/http/releases.ts"
         }

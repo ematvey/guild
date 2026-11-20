@@ -63,17 +63,15 @@ only what the repo cannot tell you.
   nothing. Every task ends with the compose rebuild recipe from
   `deploy-nuances.md` §2 and a live-bundle check (§2 end). Run the rebuild
   detached — the npm install and vite build inside Docker are the long pole.
-- **Desktop-affecting changes always get a desktop release, same task.**
-  Anything that lands under `apps/desktop/` (or anything else baked into
-  the client) must end with a client release cut from `develop` and
-  published to the dev updater manifest (`scripts/release-clients.sh`,
-  `docs/clients.md`) — not just the compose deploy. A web-only deploy
-  leaves every installed client on the old bundle, which reads as
-  "my fix didn't work". The flow is: commit → compose rebuild → client
-  release → verify `latest.json` serves the new version.
-- **Bump the version with `scripts/bump-version.sh <semver>`**, never by
-  hand; it covers every file the health endpoint and the release scripts
-  compare.
+- **Desktop-affecting changes get a signed client release in the same task.**
+  Publish a GitHub prerelease from the working branch and approve it on the dev
+  stack; verify all four platforms in its updater manifest (`docs/clients.md` §4).
+- **Committed versions change only in the master release workflow.**
+  `scripts/bump-version.sh` updates the synchronized product version on `master`.
+  Branch/local builds use `scripts/release.mjs preview` to stamp a temporary
+  `-dev.<build-number>` version in an isolated worktree. Keep source version
+  files unchanged on development branches; synchronize released versions from
+  `master`. The **Version policy** CI check enforces these rules.
 - **Review-loop branch topology:** `review/roundN-<agent>`, `fix/roundN`,
   `verify/roundN` worktrees, merged `--no-ff`; branches and worktrees are
   retired after merge, and orchestrator prompt/report files stay out of the

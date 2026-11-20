@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
 import { hashPassword } from "../platform/crypto.js";
 import { versionGt, toRfc3339Offset } from "../platform/http/releases.js";
@@ -27,7 +27,11 @@ interface Env {
 let e: Env;
 
 beforeAll(async () => {
-  const env = await createObjectStoreStack("error", {}, "m6");
+  const env = await createObjectStoreStack(
+    "error",
+    { GUILD_RELEASE_REPOSITORY: "alice/guild", GUILD_RELEASE_CHANNEL: "preview" },
+    "m6",
+  );
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();
@@ -422,6 +426,105 @@ describe("M6 releases", () => {
     // A higher core number wins even as a prerelease; the prerelease-below-
     // release rule only applies at equal cores (unit-tested below).
     expect(after.version).toBe("0.7.0-beta.1");
+  });
+
+  it("adopts complete GitHub releases atomically, preserves downloads, and isolates previews", async () => {
+    const version = "0.8.0-dev.42";
+    const tag = `client-v${version}`;
+    const base = `https://github.com/alice/guild/releases/download/${tag}`;
+    const artifacts = ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"].flatMap((platform) => {
+      const names =
+        platform === "windows-x86_64"
+          ? [`Guild_${version}_x64-setup.exe`]
+          : platform === "linux-x86_64"
+            ? [`Guild-${version}-x86_64.AppImage`]
+            : [
+                `Guild-${version}-macos-${platform.slice(7)}.dmg`,
+                `Guild-${version}-macos-${platform.slice(7)}.app.tar.gz`,
+              ];
+      return names.map((filename) => ({
+        platform,
+        filename,
+        size_bytes: 10,
+        sha256: "a".repeat(64),
+        updater_signature: "signed-artifact",
+      }));
+    });
+    const metadata = { version, tag, repository: "alice/guild", artifacts };
+    const release = {
+      tag_name: tag,
+      draft: false,
+      prerelease: true,
+      body: "Preview release",
+      assets: [
+        { name: "release.json", browser_download_url: `${base}/release.json`, size: 100, digest: "sha256:metadata" },
+        ...artifacts.flatMap((a) => [
+          {
+            name: a.filename,
+            size: a.size_bytes,
+            digest: `sha256:${a.sha256}`,
+            browser_download_url: `${base}/${a.filename}`,
+          },
+          {
+            name: `${a.filename}.sig`,
+            size: 20,
+            digest: "sha256:signature",
+            browser_download_url: `${base}/${a.filename}.sig`,
+          },
+        ]),
+      ],
+    };
+    const realFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === `https://api.github.com/repos/alice/guild/releases/tags/${tag}`) return Response.json(release);
+      if (url === `${base}/release.json`) return Response.json(metadata);
+      return realFetch(input, init);
+    });
+    try {
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.memberToken, { tag })).statusCode).toBe(403);
+      e.env.config.releaseChannel = "stable";
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      const stable = json(await inject("GET", "/api/v1/updates/latest.json", e.adminToken));
+      expect(stable.version).toBe("0.6.0");
+      e.env.config.releaseChannel = "preview";
+      artifacts[0]!.size_bytes = 11;
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      artifacts[0]!.size_bytes = 10;
+      const before = json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as { version: string }[];
+      expect(before.some((r) => r.version === version)).toBe(false);
+      release.draft = true;
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      release.draft = false;
+      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag });
+      expect(accepted.statusCode).toBe(200);
+      expect(json(accepted)).toEqual({ version, artifacts: 6 });
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(200);
+      const rows = (
+        json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as {
+          id: string;
+          version: string;
+          filename: string;
+        }[]
+      ).filter((r) => r.version === version);
+      expect(rows).toHaveLength(6);
+      const manifest = json(await inject("GET", "/api/v1/updates/latest.json", e.adminToken)) as {
+        version: string;
+        platforms: Record<string, { url: string }>;
+      };
+      expect(manifest.version).toBe(version);
+      expect(Object.keys(manifest.platforms)).toHaveLength(4);
+      expect(Object.values(manifest.platforms).every((p) => p.url.startsWith(`${base}/`))).toBe(true);
+      const row = rows.find((r) => r.filename.endsWith(".AppImage"))!;
+      const download = await inject("GET", `/api/v1/releases/${row.id}/download-url`, e.memberToken);
+      expect(json(download).url).toBe(`${base}/${row.filename}`);
+      expect((await inject("GET", `/api/v1/releases/${row.id}/download`, e.memberToken)).statusCode).toBe(302);
+      expect((await inject("DELETE", `/api/v1/admin/releases/${row.id}`, e.adminToken)).statusCode).toBe(200);
+      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+    } finally {
+      e.env.config.releaseChannel = "preview";
+      fetchSpy.mockRestore();
+    }
   });
 
   it("orders versions by semver rules and renders pub_date like chrono to_rfc3339", () => {
