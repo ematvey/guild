@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mcpIntegration, type IntegrationPlugin, type McpIntegrationManifest } from "@guild/integration-sdk";
 import { loadBuiltinMcp, loadBuiltins, validatePluginManifest } from "../integrations/loader.js";
+import hubspot from "../integrations/hubspot/integration.js";
 import { firstSkill, indexDescription } from "../integrations/plugins.js";
 
 function plugin(name: string): IntegrationPlugin {
@@ -52,7 +53,9 @@ function mcpPlugin(name: string, patch: Partial<McpIntegrationManifest> = {}) {
     description: "",
     docs_url: null,
     categories: [],
-    fields: [{ name: "key", kind: "secret", label: "Key", required: true, default: null, help: null, placeholder: null }],
+    fields: [
+      { name: "key", kind: "secret", label: "Key", required: true, default: null, help: null, placeholder: null },
+    ],
     mcp: { url: "https://mcp.example.test", headers: { Authorization: "Bearer {key}" }, envelope: false },
     ...patch,
   });
@@ -123,5 +126,28 @@ describe("validatePluginManifest", () => {
     expect(indexDescription({ summary: "HubSpot CRM\nsearch", description: "long prose" })).toBe("HubSpot CRM search");
     expect(indexDescription({ description: "v1 bundle\nonly prose" })).toBe("v1 bundle only prose");
     expect(indexDescription({ summary: "  " })).toBe("");
+  });
+});
+
+describe("HubSpot investigation tools", () => {
+  it("declares every investigation entry as read without widening raw API access", () => {
+    validatePluginManifest(hubspot.manifest);
+    const names = [
+      "list_marketing_emails",
+      "get_marketing_email",
+      "get_email_events",
+      "search_lists",
+      "get_list",
+      "get_list_members",
+      "get_list_memberships",
+      "list_campaigns",
+      "get_campaign",
+      "list_campaign_assets",
+      "list_workflows",
+      "get_workflow",
+      "check_capabilities",
+    ];
+    for (const name of names) expect(hubspot.manifest.tools.find((t) => t.name === name)?.class).toBe("read");
+    expect(hubspot.manifest.tools.find((t) => t.name === "api")?.class).toBe("write");
   });
 });

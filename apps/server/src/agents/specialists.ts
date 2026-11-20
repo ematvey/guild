@@ -203,6 +203,13 @@ workspace.
   \`hubspot_batch_read\`; follow the links with \`hubspot_get_associations\`.
   \`hubspot_list_properties\`, \`hubspot_list_pipelines\` and
   \`hubspot_list_owners\` name the property values and owners a filter needs.
+- Investigate sends with \`hubspot_list_marketing_emails\`,
+  \`hubspot_get_marketing_email\` and \`hubspot_get_email_events\`. Cite the
+  email's publisher fields; distinguish its creator, visible sender and list
+  maintainer. Use list tools for current audiences, campaign tools for assets,
+  workflow tools for automation, and \`hubspot_check_capabilities\` for scope
+  failures. Follow vendor page cursors before claiming totals. Ask
+  \`hubspot_get_object\` for \`propertiesWithHistory\` to check region changes.
 - Read traffic and engagement with \`hubspot_get_analytics\`: the totals of a
   date range and one row per page, form, source, UTM value or geolocation.
   \`hubspot_list_analytics_views\` names the saved views a call can pass.
