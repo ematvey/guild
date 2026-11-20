@@ -155,8 +155,8 @@ and builds and publishes the stable GitHub Release. A verified signed version
 commit does not trigger another release. A rerun reuses its version commit;
 manual dispatch accepts an optional stable version override.
 
-After publication, the workflow opens a version-only PR to `develop` and enables
-auto-merge after the required Version policy check. The synchronization edits
+After publication, the workflow opens a version-only PR to `develop` and merges it
+after the required Version policy check. The synchronization edits
 version fields in develop's own files and lockfiles, preserving its dependencies
 and source changes. A develop build after synchronization previews the next patch.
 
@@ -173,8 +173,10 @@ blocks force pushes and deletion; the release deploy key has the automation exce
 the branch rule. Version commits are SSH-signed with that key; the policy checks
 its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
 files changed, and validates the synchronized version increase. A commit author
-or message alone grants no release exception. Repository setup enables PR auto-merge and permits Actions to create synchronization
-PRs; the sync job has explicit pull-request write permission. Setup is idempotent; the key stays
+or message alone grants no release exception. Repository setup permits Actions to create synchronization PRs; the sync job
+has explicit pull-request and workflow-dispatch permissions. It explicitly
+dispatches the develop release after merging because token-authenticated merges
+do not trigger another push workflow. Setup is idempotent; the key stays
 in GitHub's encrypted environment secret, not in the checkout.
 
 Only the master release workflow changes committed product versions. Other
@@ -253,15 +255,25 @@ Expired develop releases and their tags are deleted together; deleted immutable
 tag names are not reused. Intermediate Actions build artifacts expire after three
 days. Release workflows queue independently per branch without cancelling builds.
 
-Each installation has its own repository variable, `DEVELOP_RELEASE_PIN_<NAME>`,
-whose value is a published `client-v<version>-dev.<build>` tag. Installation names
-use letters, numbers and underscores and are case-insensitive. `deploy-preview`
-updates its installation pin only after the matching server is live. Other stacks
-pin their approved release before it ages out; removing an installation's variable
-unpins it. The cleanup cannot discover independently hosted servers.
+Each installation has an annotated `guild-pin-<name>` Git tag whose message
+records the published develop release tag. Installation names use letters,
+numbers and underscores and are case-insensitive. Deployment pins its target
+under `guild-pin-<name>-pending` before changing the server, preserves the previous
+running pin, then updates the running pin and removes the pending pin after
+health matches. A failed deployment leaves its pending pin for retry or removal.
+Other stacks pin their approved release before it ages out. The cleanup cannot
+discover independently hosted servers.
+
+Pinning, unpinning and destructive cleanup share an atomic Git ref lock and read
+live pin tags while holding it. Use the commands below for pin changes. If an
+interrupted operation leaves `guild-preview-retention-lock`, an operator verifies
+that operation is inactive before removing the lock tag. Cleanup fails closed
+when a pin or lock cannot be verified.
 
 ```bash
 node scripts/release.mjs pin staging client-v0.6.127-dev.42
+node scripts/release.mjs unpin staging  # remove a running pin
+node scripts/release.mjs unpin staging --pending  # remove a failed deployment pin
 node scripts/release.mjs prune          # show the deletion plan
 node scripts/release.mjs prune --apply  # execute the same retention policy
 ```
