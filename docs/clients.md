@@ -174,7 +174,7 @@ preview stamps and version drift, including changes hidden in lockfiles.
 ### Preview and local releases
 
 Run **Release clients** on a non-master branch with channel `preview` to publish
-a GitHub prerelease. A preview of `0.6.126` is `0.6.127-dev.<run-number>`. It is
+a GitHub prerelease. A preview of `0.6.126` is `0.6.127-dev.<timestamp>`. It is
 excluded from GitHub's latest stable release. No source version commit is created.
 
 The local cross-build entry point is:
@@ -185,7 +185,8 @@ node scripts/release.mjs preview
 PUBLISH=1 node scripts/release.mjs preview 42
 ```
 
-The default local build number is a millisecond UTC timestamp. No hash is needed
+CI and local defaults use the same millisecond UTC timestamp scale so a later
+CI build sorts after a local build. An explicit local build number is also accepted. No hash is needed
 in a version. `release.json` records the source commit separately for provenance.
 The source tree must be committed; a disposable worktree receives the preview
 stamp, installs its own workspace dependencies and shares the build host's npm
