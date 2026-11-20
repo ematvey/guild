@@ -1,0 +1,36 @@
+name: Prune client previews
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Delete eligible develop releases; otherwise only show the plan
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: release-clients-refs/heads/develop
+  cancel-in-progress: false
+  queue: max
+jobs:
+  prune:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Keep newest 10, younger than 14 days, and pinned releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PIN_VARIABLES: ${{ toJSON(vars) }}
+          APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+        run: |
+          node --test scripts/release.test.mjs
+          if [ "$APPLY" = true ]; then
+            node scripts/release.mjs prune --apply
+          else
+            node scripts/release.mjs prune
+          fi

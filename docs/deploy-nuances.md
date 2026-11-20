@@ -489,3 +489,9 @@ building. CI checks synchronization and rejects version changes on other branche
 except synchronization from master. Local and branch releases stamp a temporary
 next-patch `-dev.<build-number>` version with `--build` in a disposable checkout.
 See `docs/clients.md` §4 for publication and per-stack approval.
+
+Develop preview deployments use `scripts/release.mjs deploy-preview <directory>
+<installation>` to stamp the server image and pin the release after health matches.
+The default installation name is `dev`. Daily GitHub cleanup preserves the newest
+ten previews, all previews under fourteen days old, and installation pins; see
+`docs/clients.md` §4. Stable releases are retained.
