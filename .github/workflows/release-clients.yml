@@ -136,6 +136,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_DEFAULT_SERVER_URL: ''
+          APPIMAGE_EXTRACT_AND_RUN: '1'
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo 'Configure the existing updater signing key in repository secrets'; exit 1; }
