@@ -61,6 +61,8 @@ jobs:
             fi
             if [ -z "$RELEASE_VERSION" ]; then RELEASE_VERSION=$(node scripts/release.mjs next-version); fi
             node scripts/release.mjs check-stable "$RELEASE_VERSION"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             test -n "$RELEASE_PUSH_KEY"
             signing_key="$RUNNER_TEMP/release-signing-key"
             umask 077
@@ -237,7 +239,7 @@ jobs:
             git switch -c "$branch" origin/develop
             bash scripts/bump-version.sh --sync "$version"
             git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/server/package.json packages/ui/package.json package-lock.json
-            git -c commit.gpgsign=false commit -m "release: sync version $version from master"
+            git commit -m "release: sync version $version from master"
             git push origin "HEAD:$branch"
           fi
           pr=$(gh pr list --head "$branch" --base develop --state open --json url --jq '.[0].url // empty')
@@ -256,6 +258,8 @@ jobs:
           if [ "$passed" != true ]; then echo "Timed out waiting for version synchronization checks" >&2; exit 1; fi
           node scripts/release.mjs is-release-commit "$sha"
           git fetch origin master develop
+          test "$(git rev-list --parents -n 1 "$sha" | wc -w)" -eq 2
+          git merge-base --is-ancestor "$sha^" origin/develop
           node scripts/release.mjs check-policy origin/develop "$sha" origin/master develop
           git switch -c "merge/client-version-$version" origin/develop
           git merge --no-ff "$sha" -m "Merge version synchronization $version"

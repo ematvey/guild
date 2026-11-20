@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -333,6 +333,116 @@ else {
     );
     assert.ok(appended >= 0 && retired > appended);
     assert.ok(!pinCalls.some((args) => args.includes("DELETE") && args[1].includes("guild-pin-dev-pending")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the sync workflow signs and policy-checks its version PR before merging through Git", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "guild-release-sync-test-"));
+  const runner = path.join(directory, "runner"),
+    remote = path.join(directory, "remote.git"),
+    bin = path.join(directory, "bin");
+  const temporary = path.join(directory, "temp");
+  for (const dir of [runner, bin, temporary]) mkdirSync(dir);
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(directory, "gitconfig") };
+  writeFileSync(env.GIT_CONFIG_GLOBAL, "");
+  const git = (...args) => execFileSync("git", args, { cwd: runner, env, encoding: "utf8", stdio: "pipe" });
+  try {
+    git("init", "-q", "-b", "master");
+    git("init", "-q", "--bare", remote);
+    git("config", "user.name", "alice");
+    git("config", "user.email", "alice@example.test");
+    for (const file of files) {
+      mkdirSync(path.dirname(path.join(runner, file)), { recursive: true });
+      writeFileSync(path.join(runner, file), before(file));
+    }
+    mkdirSync(path.join(runner, "scripts"), { recursive: true });
+    for (const name of ["release.mjs", "bump-version.sh"])
+      writeFileSync(path.join(runner, "scripts", name), readFileSync(new URL(name, import.meta.url)));
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "baseline");
+    git("branch", "develop");
+    for (const file of files) writeFileSync(path.join(runner, file), after(file));
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "stable version");
+    git("remote", "add", "origin", remote);
+    git("push", "-q", "origin", "master", "develop");
+    const key = path.join(directory, "key");
+    execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "release-sync-test", "-f", key], { stdio: "pipe" });
+    writeFileSync(
+      path.join(bin, "gh"),
+      `#!${process.execPath}
+const args=process.argv.slice(2);
+if(args[0]==='pr' && args[1]==='create')console.log('https://github.com/alice/guild/pull/1');
+else if(args[0]==='run' && args[1]==='list')console.log('success');
+else if(!(args[0]==='pr' && args[1]==='list'))process.exit(1);
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "cargo"),
+      String.raw`#!${process.execPath}
+const fs=require('node:fs');const version=fs.readFileSync('Cargo.toml','utf8').match(/^version = "([^"]+)"/m)[1];
+const lock=fs.readFileSync('Cargo.lock','utf8').replace(/(name = "(?:protocol|guild-core|guild-app-server|guild-desktop)"\nversion = ")[^"]+("\n)/g,(_,a,b)=>a+version+b);fs.writeFileSync('Cargo.lock',lock);
+`,
+      { mode: 0o755 },
+    );
+    const workflow = readFileSync(new URL("../.github/workflows/release-clients.yml", import.meta.url), "utf8");
+    const section = workflow.slice(workflow.indexOf("\n  sync-develop:"));
+    const lines = section.split("        run: |\n")[1].split("\n");
+    const body = [];
+    for (const line of lines) {
+      if (line.trim() && !line.startsWith("          ")) break;
+      body.push(line.slice(10));
+    }
+    execFileSync("bash", ["-c", body.join("\n")], {
+      cwd: runner,
+      stdio: "pipe",
+      env: {
+        ...env,
+        PATH: `${bin}:${process.env.PATH}`,
+        RUNNER_TEMP: temporary,
+        RELEASE_PUSH_KEY: readFileSync(key, "utf8"),
+        RELEASE_SIGNING_PUBLIC_KEY: readFileSync(`${key}.pub`, "utf8"),
+        GITHUB_WORKFLOW: "Release clients",
+        GITHUB_EVENT_NAME: "push",
+        GITHUB_REF: "refs/heads/master",
+      },
+    });
+    const updated = JSON.parse(git("--git-dir", remote, "show", "develop:apps/server/package.json"));
+    assert.equal(updated.version, "1.2.4");
+    const signed = git("--git-dir", remote, "rev-parse", "refs/heads/sync/client-version-1.2.4").trim();
+    assert.equal(verifyReleaseCommit(signed, readFileSync(`${key}.pub`, "utf8"), runner), true);
+    assert.equal(git("--git-dir", remote, "rev-list", "--parents", "-n", "1", "develop").trim().split(" ").length, 3);
+    const priorDevelop = git("--git-dir", remote, "rev-parse", "develop").trim();
+    git("switch", "master");
+    writeFileSync(path.join(runner, "unexpected.txt"), "master-only source change");
+    git("add", "unexpected.txt");
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "master source");
+    for (const file of files) writeFileSync(path.join(runner, file), snapshot("1.2.5")(file));
+    git("add", ".");
+    git("-c", `user.signingkey=${key}`, "-c", "commit.gpgsign=true", "commit", "-qm", "signed stable version");
+    const unrelatedSource = git("rev-parse", "HEAD").trim();
+    assert.equal(verifyReleaseCommit(unrelatedSource, readFileSync(`${key}.pub`, "utf8"), runner), true);
+    git("push", "-q", "origin", "master", `${unrelatedSource}:refs/heads/sync/client-version-1.2.5`);
+    assert.throws(() =>
+      execFileSync("bash", ["-c", body.join("\n")], {
+        cwd: runner,
+        stdio: "pipe",
+        env: {
+          ...env,
+          PATH: `${bin}:${process.env.PATH}`,
+          RUNNER_TEMP: temporary,
+          RELEASE_PUSH_KEY: readFileSync(key, "utf8"),
+          RELEASE_SIGNING_PUBLIC_KEY: readFileSync(`${key}.pub`, "utf8"),
+          GITHUB_WORKFLOW: "Release clients",
+          GITHUB_EVENT_NAME: "push",
+          GITHUB_REF: "refs/heads/master",
+        },
+      }),
+    );
+    assert.equal(git("--git-dir", remote, "rev-parse", "develop").trim(), priorDevelop);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
