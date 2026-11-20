@@ -214,8 +214,8 @@ version. An installation persists its own stable/develop preference across
 sign-out and pairing changes. Native offers bind to the paired server, channel
 and observed server version and are revalidated before installation.
 The approved version and all artifact rows become visible together. The updater
-manifest is absent if an approved updater artifact is missing. Object-storage
-artifacts use the existing signed-download path.
+manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
+only on GitHub.
 
 Only a stable release on master changes the committed product version. Branch
 and local builds stamp a temporary preview version in their build checkout.

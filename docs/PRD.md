@@ -256,11 +256,12 @@ content only.
 - Installing an unapproved item is refused.
 
 **PRD-21 — Client releases.**
-The org distributes signed desktop releases through its server.
+The org approves signed GitHub desktop releases through its server.
 
-- Release artifacts are signed; the public key is available for clients to
-  verify downloads.
-- An update feed serves the latest release; clients update themselves.
+- GitHub hosts installers and updater artifacts. Clients verify updater signatures
+  against their baked public key.
+- An installation chooses stable or develop. Its server offers only approved
+  releases up to the server’s own version; clients update themselves.
 
 ### 3.8 Tool artifacts
 

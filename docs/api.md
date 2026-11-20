@@ -110,7 +110,8 @@ Preview tags require `GUILD_RELEASE_CHANNEL=develop`; the default is `stable`.
 
 `GET /api/v1/updates/latest.json` remains public and returns the approved complete
 Tauri manifest. Imported artifacts use GitHub download URLs. The authenticated
-release listing and download-URL endpoints keep their existing response shapes.
+release listing exposes GitHub artifact metadata. Download-URL responses contain
+`url`; authenticated download requests redirect to GitHub.
 The optional `channel=stable|develop` query selects the channel on the manifest,
 listing and download endpoints; omission uses the server default. The manifest
 includes `channel` and `server_version`. Approval, listing and every download

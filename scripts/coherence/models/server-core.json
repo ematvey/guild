@@ -472,7 +472,7 @@
     },
     {
       "id": "release",
-      "definition": "One approved signed desktop version, with platform artifacts hosted on GitHub or in object storage.",
+      "definition": "One approved signed desktop version, with platform artifacts hosted on GitHub.",
       "canonical": "apps/server/src/platform/store/releases.ts",
       "types": [
         "ReleaseRow",

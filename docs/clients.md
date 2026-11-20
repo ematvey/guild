@@ -237,8 +237,7 @@ Approval changes metadata only and requires no rebuild of the client artifacts.
 Verify the stack's `/api/v1/updates/latest.json`: its version must be the approved
 version and its `platforms` must contain all four targets with signatures and
 GitHub download URLs. Removing an updater artifact suppresses the incomplete
-manifest. Object-storage releases remain downloadable through their existing
-signed URLs.
+manifest.
 
 ### Protocol baseline
 
@@ -246,19 +245,14 @@ The newest stable `client-v<major>.<minor>.<patch>` tag is the compatibility
 baseline for `node protocol/check.mjs`. Preview tags do not replace it. Fetch
 full history and tags in release checkouts. CI refuses a missing baseline.
 
-## 5. Downloading + verifying clients
+## 5. Downloading and verifying clients
 
-- No UI view: desktop releases are dev-controlled, not admin-controlled.
-  The API lists them and mints download URLs.
-- CLI:
-  ```bash
-  URL=$(curl -sS -H "authorization: Bearer $TOKEN" \
-        "$BASE/api/v1/releases/$ID/download-url" | jq -r .url)
-  curl -sS "$BASE$URL" -o artifact
-  guild verify --file artifact --sig <hex> --key <signing-key-hex>
-  ```
-- `verify` checks the ed25519 signature over the file's sha256 — tamper-proof
-  offline once the signing key is pinned.
+The release API lists approved GitHub artifacts compatible with the server.
+`GET /api/v1/releases/{id}/download-url?channel=stable|develop` returns a GitHub
+URL. Authenticated `/download` requests redirect there after checking eligibility.
+The desktop updater verifies the artifact's minisign signature against its baked
+public key. `release.json` and `SHA256SUMS` contain artifact digests for manual
+verification. Guild stores metadata and channel approvals; GitHub stores bytes.
 
 ## 6. Verification matrix (honest limits)
 
@@ -290,8 +284,8 @@ A fresh stable build defaults to stable, and a fresh preview defaults to develop
 1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json?channel=stable` or `?channel=develop`
    on the stored server URL. The endpoint is public and serves the Tauri
    updater static-JSON manifest for the server-approved desktop version,
-   with per-platform minisign signatures and GitHub download URLs. Without an
-   approved GitHub release, object-storage releases use signed URLs (24h expiry).
+   with per-platform minisign signatures and GitHub download URLs. Without a
+   complete eligible approved GitHub release, the endpoint returns 204.
 2. The native updater requires `installed < candidate <= server_version` and a matching channel. The server version reaches the UI over `workspace_identity`; a change clears any pending offer. Before applying downloaded bytes, the updater revalidates the current server, channel, version and signature. If the eligible manifest version is newer, the update downloads silently in the
    background (VSCode/Zed-style); a toast "Update to vX ready — Restart to
    update" appears (on any screen, including the pairing screen).

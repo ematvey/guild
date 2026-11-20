@@ -67,6 +67,50 @@ async function history(url: string): Promise<HistoryRow[]> {
 }
 
 describe("applyPlatformMigrations", () => {
+  it("keeps GitHub releases and their approval while removing server-hosted release state", async () => {
+    const { url } = await bareDatabase();
+    const pool = new pg.Pool({ connectionString: url, max: 2 });
+    const migration = "0121_github_releases_only.sql";
+    const dir = tempMigrations(
+      Object.fromEntries(
+        readdirSync(REAL_MIGRATIONS_DIR)
+          .filter((name) => name.endsWith(".sql") && name < migration)
+          .map((name) => [name, readFileSync(path.join(REAL_MIGRATIONS_DIR, name), "utf8")]),
+      ),
+    );
+    try {
+      await applyPlatformMigrations(pool, { dir });
+      await pool.query(
+        `INSERT INTO releases
+        (id, version, kind, platform, filename, content_type, size_bytes, sha256, object_key, download_url)
+        VALUES ($1, '1.0.0', 'desktop', 'linux-x86_64', 'old.AppImage', 'application/octet-stream', 1, 'digest', 'releases/old', NULL),
+        ($2, '1.1.0-dev.42', 'desktop', 'linux-x86_64', 'new.AppImage', 'application/octet-stream', 1, 'digest', 'github/new',
+        'https://github.com/alice/guild/releases/download/client-v1.1.0-dev.42/new.AppImage')`,
+        [crypto.randomUUID(), crypto.randomUUID()],
+      );
+      await pool.query(`INSERT INTO server_kv (key, value) VALUES
+        ('release_signing_seed', 'seed'), ('desktop_release_version', '1.0.0'),
+        ('desktop_release_version:stable', '1.0.0'), ('desktop_release_version:develop', '1.1.0-dev.42')`);
+      await applyPlatformMigrations(pool, { dir: REAL_MIGRATIONS_DIR });
+      expect((await pool.query("SELECT version FROM releases")).rows).toEqual([{ version: "1.1.0-dev.42" }]);
+      expect(
+        (await pool.query("SELECT key, value FROM server_kv WHERE key LIKE '%release%' ORDER BY key")).rows,
+      ).toEqual([{ key: "desktop_release_version:develop", value: "1.1.0-dev.42" }]);
+      const columns = (
+        await pool.query(
+          "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'releases'",
+        )
+      ).rows;
+      expect(columns.some((c) => ["object_key", "content_type", "signature"].includes(c.column_name))).toBe(false);
+      expect(columns.find((c) => c.column_name === "download_url")?.is_nullable).toBe("NO");
+      await applyPlatformMigrations(pool, { dir: REAL_MIGRATIONS_DIR });
+      expect((await pool.query("SELECT count(*)::int AS count FROM releases")).rows[0]?.count).toBe(1);
+    } finally {
+      await pool.end();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("applies pending files in filename order and records name + sha256 in schema_history", async () => {
     const { url } = await bareDatabase();
     const first = "CREATE TABLE pm_t1 (id INT)";

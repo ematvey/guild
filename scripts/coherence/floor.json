@@ -11,9 +11,9 @@
   },
   "report": {
     "files": 563,
-    "loc": 114458,
+    "loc": 114174,
     "test_files": 238,
-    "test_loc": 47854,
+    "test_loc": 47794,
     "unmapped_files": 108
   },
   "declared_seams": 12
