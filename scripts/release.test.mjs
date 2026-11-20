@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { assemble, checkPolicy, filenames, PLATFORMS, previewVersion, versions } from "./release.mjs";
+import {
+  assemble,
+  checkPolicy,
+  filenames,
+  PLATFORMS,
+  previewVersion,
+  versions,
+  verifyReleaseCommit,
+} from "./release.mjs";
 
 const files = [
   "Cargo.toml",
@@ -70,5 +79,44 @@ test("publication refuses a partial release and produces four updater targets fr
     assert.throws(() => assemble(directory, version, "alice/guild", "a".repeat(40)), /empty artifact or signature/);
   } finally {
     rmSync(directory, { recursive: true });
+  }
+});
+
+test("master version commits require the release key's signature and change only version files", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "guild-release-signature-test-"));
+  const command = (program, args) => execFileSync(program, args, { cwd: directory, stdio: "pipe", encoding: "utf8" });
+  try {
+    command("git", ["init", "-q"]);
+    command("git", ["config", "user.name", "alice"]);
+    command("git", ["config", "user.email", "alice@example.test"]);
+    writeFileSync(path.join(directory, "Cargo.toml"), "baseline");
+    command("git", ["add", "Cargo.toml"]);
+    command("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "baseline"]);
+    command("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "release-test", "-f", "key"]);
+    const publicKey = readFileSync(path.join(directory, "key.pub"), "utf8");
+    writeFileSync(path.join(directory, "Cargo.toml"), "new version");
+    command("git", ["add", "Cargo.toml"]);
+    command("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "unsigned version"]);
+    assert.equal(verifyReleaseCommit("HEAD", publicKey, directory), false);
+    writeFileSync(path.join(directory, "Cargo.toml"), "signed version");
+    command("git", ["add", "Cargo.toml"]);
+    const signedCommit = [
+      "-c",
+      "gpg.format=ssh",
+      "-c",
+      `user.signingkey=${path.join(directory, "key")}`,
+      "-c",
+      "commit.gpgsign=true",
+      "commit",
+      "-qm",
+    ];
+    command("git", [...signedCommit, "release version"]);
+    assert.equal(verifyReleaseCommit("HEAD", publicKey, directory), true);
+    writeFileSync(path.join(directory, "unexpected.txt"), "outside release version files");
+    command("git", ["add", "unexpected.txt"]);
+    command("git", [...signedCommit, "unrelated change"]);
+    assert.equal(verifyReleaseCommit("HEAD", publicKey, directory), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

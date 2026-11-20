@@ -24,6 +24,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY }}
         run: |
           git fetch origin master
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then

@@ -22,6 +22,13 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const STABLE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const PREVIEW = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-dev\.([1-9]\d*)$/;
 const MEMBERS = ["apps/desktop", "apps/server", "packages/ui"];
+const PRODUCT_FILES = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "apps/desktop/src-tauri/tauri.conf.json",
+  ...MEMBERS.map((m) => `${m}/package.json`),
+  "package-lock.json",
+];
 export const PLATFORMS = ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"];
 const run = (file, args, options = {}) => execFileSync(file, args, { cwd: ROOT, encoding: "utf8", ...options });
 const git = (...args) => run("git", args).trim();
@@ -151,6 +158,85 @@ function trustedStableWorkflow() {
   );
 }
 
+// The master push from the release deploy key triggers CI too. Verify its
+// signature rather than trusting an author name or commit-message marker.
+export function verifyReleaseCommit(commit, publicKey, cwd = ROOT) {
+  if (!publicKey?.startsWith("ssh-ed25519 ")) return false;
+  const directory = mkdtempSync(path.join(tmpdir(), "guild-release-signers-"));
+  try {
+    const changed = run("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", commit], { cwd })
+      .trim()
+      .split("\n");
+    if (!changed.length || changed.some((f) => !PRODUCT_FILES.includes(f))) return false;
+    const allowed = path.join(directory, "allowed-signers");
+    writeFileSync(allowed, `release ${publicKey.trim()}\n`);
+    run("git", ["-c", "gpg.format=ssh", "-c", `gpg.ssh.allowedSignersFile=${allowed}`, "verify-commit", commit], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function configure() {
+  const repository = JSON.parse(run("gh", ["repo", "view", "--json", "nameWithOwner"])).nameWithOwner;
+  const api = (route, method = "GET", body) => {
+    const result = run(
+      "gh",
+      ["api", `repos/${repository}/${route}`, "--method", method, ...(body ? ["--input", "-"] : [])],
+      body ? { input: JSON.stringify(body) } : {},
+    );
+    return result.trim() ? JSON.parse(result) : null;
+  };
+  api("environments/stable-release", "PUT", {
+    deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+  });
+  const policies = api("environments/stable-release/deployment-branch-policies").branch_policies;
+  for (const policy of policies)
+    if (policy.name !== "master" || policy.type !== "branch")
+      api(`environments/stable-release/deployment-branch-policies/${policy.id}`, "DELETE");
+  if (!policies.some((p) => p.name === "master" && p.type === "branch"))
+    api("environments/stable-release/deployment-branch-policies", "POST", { name: "master", type: "branch" });
+  let key = api("keys").find((k) => k.title === "Guild master releases");
+  if (!key) {
+    const directory = mkdtempSync(path.join(tmpdir(), "guild-release-key-"));
+    try {
+      const file = path.join(directory, "key");
+      run("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "guild-release", "-f", file], { stdio: "ignore" });
+      key = api("keys", "POST", {
+        title: "Guild master releases",
+        key: readFileSync(`${file}.pub`, "utf8").trim(),
+        read_only: false,
+      });
+      run("gh", ["secret", "set", "RELEASE_PUSH_KEY", "--env", "stable-release", "--repo", repository], {
+        input: readFileSync(file),
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  } else {
+    const secrets = JSON.parse(
+      run("gh", ["secret", "list", "--env", "stable-release", "--repo", repository, "--json", "name"]),
+    );
+    assert(
+      secrets.some((s) => s.name === "RELEASE_PUSH_KEY"),
+      "restore the stable-release RELEASE_PUSH_KEY secret for the existing deploy key",
+    );
+  }
+  assert(key.read_only === false, "the release deploy key must permit pushes");
+  run("gh", ["variable", "set", "RELEASE_SIGNING_PUBLIC_KEY", "--repo", repository, "--body", key.key]);
+  const ruleset = json(path.join(ROOT, ".github/release-ruleset.json"));
+  ruleset.bypass_actors = [{ actor_id: key.id, actor_type: "DeployKey", bypass_mode: "always" }];
+  const existing = api("rulesets").find((r) => r.name === ruleset.name);
+  api(`rulesets${existing ? `/${existing.id}` : ""}`, existing ? "PUT" : "POST", ruleset);
+  api("immutable-releases", "PUT");
+  console.log("Required version checks, master-only release credentials and immutable releases configured");
+}
+
 async function publishGithub(directory) {
   const meta = json(path.join(directory, "release.json"));
   assert(
@@ -166,14 +252,12 @@ async function publishGithub(directory) {
   assert(meta.commit === git("rev-parse", "HEAD"), "release source must be HEAD");
   const expected = assemble(directory, meta.version, meta.repository, meta.commit);
   assert(JSON.stringify(expected) === JSON.stringify(meta), "release metadata does not match its assets");
-  let release;
-  try {
-    release = JSON.parse(
-      run("gh", ["api", `repos/${meta.repository}/releases/tags/${meta.tag}`], { stdio: ["ignore", "pipe", "ignore"] }),
-    );
-  } catch {
-    /* New tags have no release yet. */
-  }
+  // GitHub's by-tag endpoint omits drafts; list releases to resume them.
+  const findRelease = () =>
+    JSON.parse(run("gh", ["api", "--paginate", "--slurp", `repos/${meta.repository}/releases?per_page=100`]))
+      .flat()
+      .find((r) => r.tag_name === meta.tag);
+  let release = findRelease();
   assert(!release || release.draft, "published releases are immutable; use a new build number");
   const tagCommit = run("git", ["ls-remote", "origin", `refs/tags/${meta.tag}`, `refs/tags/${meta.tag}^{}`])
     .trim()
@@ -211,6 +295,7 @@ async function publishGithub(directory) {
       ],
       { stdio: "inherit" },
     );
+    release = findRelease();
   }
   const files = [
     ...meta.artifacts.flatMap((a) => [a.filename, `${a.filename}.sig`]),
@@ -231,7 +316,7 @@ async function publishGithub(directory) {
     ],
     { stdio: "inherit" },
   );
-  const uploaded = JSON.parse(run("gh", ["api", `repos/${meta.repository}/releases/tags/${meta.tag}`]));
+  const uploaded = JSON.parse(run("gh", ["api", `repos/${meta.repository}/releases/${release.id}`]));
   for (const name of files) {
     const bytes = readFileSync(path.join(directory, name));
     const asset = uploaded.assets.find((a) => a.name === name);
@@ -298,7 +383,11 @@ async function main() {
         after: read(head),
         master: read(master),
         branch,
-        releaseWorkflow: trustedStableWorkflow(),
+        releaseWorkflow:
+          trustedStableWorkflow() ||
+          (branch === "master" &&
+            process.env.GITHUB_EVENT_NAME === "push" &&
+            verifyReleaseCommit(head, process.env.RELEASE_SIGNING_PUBLIC_KEY)),
       });
       console.log("Version policy passed");
       return;
@@ -338,9 +427,12 @@ async function main() {
     case "publish":
       await publishGithub(path.resolve(args[0]));
       return;
+    case "configure":
+      configure();
+      return;
     default:
       console.log(
-        "Usage: node scripts/release.mjs version | preview [build-number] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
+        "Usage: node scripts/release.mjs configure | version | preview [build-number] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
       );
   }
 }

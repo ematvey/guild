@@ -12,7 +12,7 @@ usage.
 | `coherence/` | The coherence floor and domain model (`npm run coherence`); see `coherence/README.md`. |
 | `bump-version.sh <semver>` | Sets the committed product version on master; `--build` stamps a disposable preview (`docs/clients.md` §4). |
 | `release-clients.sh` | Local preview entry point; cross-builds all six signed desktop artifacts through the isolated release orchestrator. |
-| `release.mjs` | Version policy, isolated preview builds, native artifact collection and complete GitHub release publication (`--help`). |
+| `release.mjs` | Version policy, isolated preview builds, native artifact collection and complete GitHub publication; `configure` installs the repository rule and master-only release credentials (`--help`). |
 | `release.test.mjs` | Executable version-policy and publication checks (`node --test scripts/release.test.mjs`). |
 | `zig-link-dedup.sh` | Linker wrapper `release-clients.sh` uses for the macOS builds: drops repeated `-framework` flags before zig links. |
 | `sandbox-it.sh` | Sandbox integration tests against a real runner, gVisor and the egress proxy; needs `runsc` on the host. |

@@ -159,11 +159,17 @@ version. Publication refuses an existing published release.
 The repository secret `TAURI_SIGNING_PRIVATE_KEY` contains the existing updater
 private key; `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` contains its password (empty
 for a passwordless key). Keep the existing key so installed clients accept updates.
-The release job needs permission to push its version commit to `master`; branch
-rules must permit the release automation's push. The **Version policy** check
-is required on pull requests to `develop` and `master`. The ruleset in
-`.github/release-ruleset.json` enforces that check and allows the GitHub Actions
-integration to push the release workflow's validated master version commit.
+Repository setup uses `node scripts/release.mjs configure` with repository admin
+access. It creates a repository-scoped release deploy key, stores its private key
+as `RELEASE_PUSH_KEY` in the `stable-release` Actions environment, and restricts
+that environment to `master`. It also installs `.github/release-ruleset.json`,
+requiring **Version policy** on `develop` and `master`, and enables GitHub release
+immutability. The deploy key can push the validated release version commit through
+the branch rule. Version commits are SSH-signed with that key; the policy checks
+its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
+files changed, and validates the synchronized version increase. A commit author
+or message alone grants no release exception. Setup is idempotent; the key stays
+in GitHub's encrypted environment secret, not in the checkout.
 
 Only the master release workflow changes committed product versions. Other
 branches keep a stable version and may synchronize a released version from
