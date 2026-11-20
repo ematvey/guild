@@ -20,7 +20,7 @@ import type { ToolOutcome, JsonObject } from "../shared.js";
 const HUBSPOT_ERRORS: JsonRequestErrors = {
   unreachable: (cause) => `hubspot unreachable: ${cause}`,
   unreadable: () => "hubspot returned bad json",
-  status: (status) => `hubspot returned ${status}`,
+  status: (status, body) => `hubspot returned ${status}: ${body.slice(0, 2000)}`,
   badJson: () => "hubspot returned bad json",
 };
 
@@ -200,11 +200,15 @@ async function hubspotGetObject(base: string, token: string, args: JsonObject): 
   const id = recordId(args["id"], "get_object");
   const properties = stringList(args["properties"]);
   const associations = stringList(args["associations"]);
+  const history = stringList(args["propertiesWithHistory"]);
   const params: string[] = [];
   if (properties !== null) params.push(`properties=${properties.map(encodeURIComponent).join(",")}`);
   if (associations !== null) params.push(`associations=${associations.map(encodeURIComponent).join(",")}`);
+  if (history !== null) params.push(`propertiesWithHistory=${history.map(encodeURIComponent).join(",")}`);
   const query = params.length === 0 ? "" : `?${params.join("&")}`;
   const parsed = await crm(base, token, "GET", `/crm/v3/objects/${object}/${id}${query}`);
+  if (history !== null)
+    return { content: JSON.stringify(parsed), meta: { propertiesWithHistory: parsed["propertiesWithHistory"] } };
   const shown = properties ?? displayProps(object);
   const label = recordLabel(shown, parsed);
   const props = (parsed["properties"] ?? {}) as JsonObject;
@@ -240,6 +244,7 @@ async function hubspotBatchRead(base: string, token: string, args: JsonObject): 
     results.push({ id: hit["id"] ?? null, label });
   }
   const missing = ids.filter((id) => !results.some((row) => row["id"] === id));
+  content += `Data: ${JSON.stringify(parsed)}\n`;
   if (content === "") content = "No records.";
   if (missing.length > 0) content += `Not found: ${missing.join(", ")}.\n`;
   return { content, meta: { card: "crm", kind: "search", object, count: results.length, results } };
@@ -370,9 +375,8 @@ async function hubspotAnalytics(base: string, token: string, args: JsonObject): 
   if (dir === "ASC" || dir === "DESC") params.set("sortDir", dir);
   const limit = clampNumber(args, "limit", 25, 350);
   params.set("limit", String(limit));
-  const offset = typeof args["offset"] === "number" && Number.isFinite(args["offset"])
-    ? Math.max(0, Math.trunc(args["offset"]))
-    : 0;
+  const offset =
+    typeof args["offset"] === "number" && Number.isFinite(args["offset"]) ? Math.max(0, Math.trunc(args["offset"])) : 0;
   if (offset > 0) params.set("offset", String(offset));
   // `summarize/daily` is two path segments in HubSpot's own route.
   const periodPath = period.split("/").map(pathSegment).join("/");
@@ -390,7 +394,8 @@ async function hubspotAnalytics(base: string, token: string, args: JsonObject): 
   const totalsLine = metrics(totals);
   if (totalsLine !== "") lines.push(`totals: ${totalsLine}`);
   for (const [i, row] of rows.slice(0, limit).entries()) {
-    const label = typeof row["breakdown"] === "string" && row["breakdown"] !== "" ? row["breakdown"] : `row ${offset + i + 1}`;
+    const label =
+      typeof row["breakdown"] === "string" && row["breakdown"] !== "" ? row["breakdown"] : `row ${offset + i + 1}`;
     lines.push(`${i + 1}. ${label}: ${metrics(row)}`);
   }
   if (rows.length === 0) lines.push("No rows for this report and range.");
@@ -472,6 +477,125 @@ async function hubspotDelete(base: string, token: string, args: JsonObject): Pro
   };
 }
 
+/** Read one page or resource without cutting JSON. The vendor's cursor and
+ * all attribution fields stay in the result; large results use the normal
+ * tool-artifact path. Only the two fixed search/probe POSTs below are reads. */
+async function hubspotMarketing(
+  base: string,
+  token: string,
+  tool: string,
+  args: JsonObject,
+): Promise<ToolOutcome | null> {
+  const paths: Record<string, string> = {
+    list_marketing_emails: "/marketing/v3/emails",
+    get_email_events: "/email/public/v1/events",
+    list_campaigns: "/marketing/v3/campaigns",
+    list_workflows: "/automation/v4/flows",
+  };
+  let path = paths[tool];
+  const params = new URLSearchParams();
+  if (
+    [
+      "get_marketing_email",
+      "get_list",
+      "get_list_members",
+      "get_list_memberships",
+      "get_campaign",
+      "list_campaign_assets",
+      "get_workflow",
+    ].includes(tool)
+  ) {
+    const id = recordId(args["id"], tool);
+    switch (tool) {
+      case "get_marketing_email":
+        path = `/marketing/v3/emails/${id}`;
+        params.set("includeStats", "true");
+        break;
+      case "get_list":
+        path = `/crm/v3/lists/${id}`;
+        params.set("includeFilters", "true");
+        break;
+      case "get_list_members":
+        path = `/crm/v3/lists/${id}/memberships`;
+        break;
+      case "get_list_memberships":
+        path = `/crm/v3/lists/records/${objectSegment(args["object_type_id"], tool)}/${id}/memberships`;
+        break;
+      case "get_campaign":
+        path = `/marketing/v3/campaigns/${id}`;
+        break;
+      case "list_campaign_assets":
+        path = `/marketing/v3/campaigns/${id}/assets/${objectSegment(args["asset_type"], tool)}`;
+        break;
+      case "get_workflow":
+        path = `/automation/v4/flows/${id}`;
+        break;
+    }
+  }
+  if (tool === "search_lists") {
+    const body: JsonObject = { count: clampNumber(args, "count", 25, 100), offset: 0 };
+    if (args["offset"] !== undefined) {
+      if (typeof args["offset"] !== "number" || !Number.isSafeInteger(args["offset"]) || args["offset"] < 0)
+        throw new Error("offset must be a nonnegative integer");
+      body["offset"] = args["offset"];
+    }
+    for (const key of ["query", "objectTypeId"]) {
+      if (args[key] === undefined) continue;
+      if (typeof args[key] !== "string") throw new Error(`${key} must be a string`);
+      body[key] = args[key];
+    }
+    return { content: JSON.stringify(await crm(base, token, "POST", "/crm/v3/lists/search", body)) };
+  }
+  if (tool === "check_capabilities") {
+    const probes = {
+      crm: "/crm/v3/objects/contacts?limit=1",
+      marketing_emails: "/marketing/v3/emails?limit=1",
+      email_events: "/email/public/v1/events?limit=1",
+      campaigns: "/marketing/v3/campaigns?limit=1",
+      workflows: "/automation/v4/flows?limit=1",
+      lists: "/crm/v3/lists/search",
+    };
+    const results = await Promise.all(
+      Object.entries(probes).map(async ([capability, endpoint]) => {
+        try {
+          await crm(
+            base,
+            token,
+            capability === "lists" ? "POST" : "GET",
+            endpoint,
+            capability === "lists" ? { count: 1, offset: 0 } : undefined,
+          );
+          return { capability, available: true };
+        } catch (error) {
+          return { capability, available: false, error: (error as Error).message };
+        }
+      }),
+    );
+    return { content: JSON.stringify({ capabilities: results }) };
+  }
+  if (path === undefined) return null;
+  if (tool.startsWith("list_") || tool === "get_email_events" || tool === "get_list_members") {
+    params.set("limit", String(clampNumber(args, "limit", 25, 100)));
+  }
+  const keys =
+    tool === "get_email_events"
+      ? ["offset", "campaignId", "recipient", "eventType", "startTimestamp", "endTimestamp"]
+      : tool === "list_marketing_emails"
+        ? ["after", "createdAfter", "createdBefore"]
+        : ["after"];
+  for (const key of keys) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (key.endsWith("Timestamp")) {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+        throw new Error(`${key} must be Unix milliseconds`);
+    } else if (typeof value !== "string") throw new Error(`${key} must be a string`);
+    params.set(key, String(value));
+  }
+  const query = params.size ? `?${params}` : "";
+  return { content: JSON.stringify(await crm(base, token, "GET", path + query)) };
+}
+
 // ---------- dispatch ----------
 
 /** The tools whose object type the tool name fixes. */
@@ -492,6 +616,8 @@ export async function hubspotExecute(
   const token = secretOrNull(secrets, "token");
   if (token === null) throw new Error("hubspot requires the token secret");
   const base = hubspotBaseUrl(config);
+  const marketing = await hubspotMarketing(base, token, tool, args);
+  if (marketing !== null) return marketing;
   const named = NAMED_SEARCH[tool];
   if (named !== undefined) return hubspotSearch(base, token, args, named);
   switch (tool) {

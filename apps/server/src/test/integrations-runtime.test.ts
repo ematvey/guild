@@ -254,6 +254,100 @@ function route(
     };
   }
   // HubSpot.
+  // Marketing reads preserve attribution, historical values and vendor paging.
+  if (p === "/marketing/v3/emails/701") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "701",
+        createdById: "10",
+        publishedById: "20",
+        publishedByEmail: "bob@example.com",
+        from: { email: "marketing@example.com" },
+        content: { html: "x".repeat(14000) },
+        to: { contactIlsLists: ["31"] },
+      }),
+    };
+  }
+  if (p === "/marketing/v3/emails") {
+    if (url.searchParams.get("createdAfter") === "denied")
+      return {
+        status: 403,
+        body: JSON.stringify({
+          category: "MISSING_SCOPES",
+          errors: [{ context: { requiredGranularScopes: ["content"] } }],
+        }),
+      };
+    return {
+      status: 200,
+      body: JSON.stringify({
+        results: [{ id: "701", name: "Announcement" }],
+        paging: { next: { after: "opaque+/=" } },
+      }),
+    };
+  }
+  if (p === "/email/public/v1/events")
+    return {
+      status: 200,
+      body: JSON.stringify({
+        events: [{ type: "DELIVERED", recipient: "alice@example.com" }],
+        hasMore: true,
+        offset: "event+/=",
+      }),
+    };
+  if (p === "/crm/v3/lists/search")
+    return {
+      status: 200,
+      body: JSON.stringify({ lists: [{ listId: "31", name: "Customers" }], hasMore: true, offset: 25 }),
+    };
+  if (p === "/crm/v3/lists/31")
+    return {
+      status: 200,
+      body: JSON.stringify({ list: { listId: "31", createdById: "30", filterBranch: { filterBranchType: "OR" } } }),
+    };
+  if (p === "/crm/v3/lists/31/memberships")
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ recordId: "101" }], paging: { next: { after: "member+/=" } } }),
+    };
+  if (p === "/crm/v3/lists/records/0-1/101/memberships")
+    return { status: 200, body: JSON.stringify({ listIds: ["31"] }) };
+  if (
+    p === "/marketing/v3/campaigns" ||
+    p === "/marketing/v3/campaigns/campaign-1" ||
+    p === "/marketing/v3/campaigns/campaign-1/assets/MARKETING_EMAIL"
+  )
+    return {
+      status: 200,
+      body: JSON.stringify({ id: "campaign-1", results: [{ id: "701" }], paging: { next: { after: "campaign+/=" } } }),
+    };
+  if (p === "/automation/v4/flows" && url.searchParams.get("after") === "allowed")
+    return {
+      status: 200,
+      body: JSON.stringify({ results: [{ id: "41", isEnabled: true }], paging: { next: { after: "flow+/=" } } }),
+    };
+  if (p === "/automation/v4/flows")
+    return {
+      status: 403,
+      body: JSON.stringify({ category: "MISSING_SCOPES", requiredGranularScopes: ["automation"] }),
+    };
+  if (p === "/automation/v4/flows/41")
+    return {
+      status: 200,
+      body: JSON.stringify({ id: "41", isEnabled: true, actions: [{ type: "SEND_EMAIL", emailId: "701" }] }),
+    };
+  if (p === "/crm/v3/objects/contacts") return { status: 200, body: JSON.stringify({ results: [] }) };
+  if (p === "/crm/v3/objects/contacts/101")
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "101",
+        properties: { region: "US" },
+        propertiesWithHistory: {
+          region: [{ value: "EU", sourceType: "CRM_UI", updatedByUserId: "10" }, { value: "US" }],
+        },
+      }),
+    };
   if (p === "/crm/v3/objects/contacts/search") {
     return {
       status: 200,
@@ -925,6 +1019,175 @@ describe("connector execute spot checks (mock backend)", () => {
     expect(out.content).toContain("!5 [opened] Issue (@alice)");
   });
 
+  it("hubspot marketing email keeps distinct publisher, creator, sender and large content", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_marketing_email",
+      { id: "701" },
+      [["token", "hs-1"]],
+      null,
+    );
+    const data = JSON.parse(out.content);
+    expect(data).toMatchObject({
+      createdById: "10",
+      publishedById: "20",
+      publishedByEmail: "bob@example.com",
+      from: { email: "marketing@example.com" },
+      to: { contactIlsLists: ["31"] },
+    });
+    expect(data.content.html).toHaveLength(14000);
+    expect(lastHit("/marketing/v3/emails/701").headers.authorization).toBe("Bearer hs-1");
+  });
+
+  it("hubspot email paging and delivery events retain opaque cursors and exact filters", async () => {
+    const call = (tool: string, args: Record<string, unknown>) =>
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        tool,
+        args,
+        [["token", "hs-1"]],
+        null,
+      );
+    const page = JSON.parse(
+      (await call("list_marketing_emails", { limit: 10, after: "opaque+/=", createdAfter: "2026-11-01T00:00:00Z" }))
+        .content,
+    );
+    expect(page.paging.next.after).toBe("opaque+/=");
+    expect(lastHit("/marketing/v3/emails").query.get("after")).toBe("opaque+/=");
+    expect(lastHit("/marketing/v3/emails").query.get("createdAfter")).toBe("2026-11-01T00:00:00Z");
+    const events = JSON.parse(
+      (
+        await call("get_email_events", {
+          campaignId: "99",
+          recipient: "alice+test@example.com",
+          eventType: "DELIVERED",
+          offset: "event+/=",
+          startTimestamp: 1793491200000,
+          endTimestamp: 1793577600000,
+        })
+      ).content,
+    );
+    expect(events).toMatchObject({ hasMore: true, offset: "event+/=" });
+    expect(Object.fromEntries(lastHit("/email/public/v1/events").query)).toMatchObject({
+      campaignId: "99",
+      recipient: "alice+test@example.com",
+      eventType: "DELIVERED",
+      offset: "event+/=",
+      startTimestamp: "1793491200000",
+      endTimestamp: "1793577600000",
+    });
+    await expect(call("get_email_events", { startTimestamp: "yesterday" })).rejects.toThrow("Unix milliseconds");
+    await expect(call("list_marketing_emails", { createdAfter: "denied" })).rejects.toThrow("content");
+  });
+
+  it("hubspot audience tools search without mutation and preserve filters and both membership directions", async () => {
+    const call = (tool: string, args: Record<string, unknown>) =>
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        tool,
+        args,
+        [["token", "hs-1"]],
+        null,
+      );
+    const lists = JSON.parse(
+      (await call("search_lists", { query: "Customers", offset: 25, count: 10, objectTypeId: "0-1" })).content,
+    );
+    expect(lists).toMatchObject({ hasMore: true, offset: 25 });
+    const search = lastHit("/crm/v3/lists/search");
+    expect(search.method).toBe("POST");
+    expect(JSON.parse(search.body)).toEqual({ query: "Customers", offset: 25, count: 10, objectTypeId: "0-1" });
+    expect(JSON.parse((await call("get_list", { id: "31" })).content).list.filterBranch).toEqual({
+      filterBranchType: "OR",
+    });
+    expect(lastHit("/crm/v3/lists/31").query.get("includeFilters")).toBe("true");
+    expect(
+      JSON.parse((await call("get_list_members", { id: "31", after: "member+/=" })).content).paging.next.after,
+    ).toBe("member+/=");
+    expect(lastHit("/crm/v3/lists/31/memberships").query.get("after")).toBe("member+/=");
+    expect(
+      JSON.parse((await call("get_list_memberships", { object_type_id: "0-1", id: "101" })).content).listIds,
+    ).toEqual(["31"]);
+    await expect(call("search_lists", { offset: -1 })).rejects.toThrow("nonnegative integer");
+  });
+
+  it("hubspot campaign and workflow tools preserve asset paging and automation actions", async () => {
+    const call = (tool: string, args: Record<string, unknown>) =>
+      executeConnectorTool(
+        NO_REGISTRY,
+        "org-test",
+        "hubspot",
+        { base_url: vendorBase },
+        tool,
+        args,
+        [["token", "hs-1"]],
+        null,
+      );
+    expect(JSON.parse((await call("list_campaigns", { after: "campaign+/=" })).content).paging.next.after).toBe(
+      "campaign+/=",
+    );
+    expect(JSON.parse((await call("get_campaign", { id: "campaign-1" })).content).id).toBe("campaign-1");
+    await call("list_campaign_assets", { id: "campaign-1", asset_type: "MARKETING_EMAIL", after: "campaign+/=" });
+    expect(lastHit("/marketing/v3/campaigns/campaign-1/assets/MARKETING_EMAIL").query.get("after")).toBe("campaign+/=");
+    expect(JSON.parse((await call("get_workflow", { id: "41" })).content).actions).toEqual([
+      { type: "SEND_EMAIL", emailId: "701" },
+    ]);
+    expect(JSON.parse((await call("list_workflows", { after: "allowed" })).content).paging.next.after).toBe("flow+/=");
+    await expect(call("list_workflows", { after: "next" })).rejects.toThrow("automation");
+    expect(lastHit("/automation/v4/flows").query.get("after")).toBe("next");
+    await expect(call("get_marketing_email", {})).rejects.toThrow("requires id");
+  });
+
+  it("hubspot capability probes keep working areas available when workflows lack a scope", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "check_capabilities",
+      {},
+      [["token", "hs-1"]],
+      null,
+    );
+    const caps = JSON.parse(out.content).capabilities;
+    expect(caps).toHaveLength(6);
+    expect(caps.filter((c: { available: boolean }) => c.available)).toHaveLength(5);
+    expect(caps).toContainEqual(
+      expect.objectContaining({
+        capability: "workflows",
+        available: false,
+        error: expect.stringContaining("automation"),
+      }),
+    );
+    expect(lastHit("/crm/v3/lists/search").method).toBe("POST");
+  });
+
+  it("hubspot record history preserves values and sources rather than just current state", async () => {
+    const out = await executeConnectorTool(
+      NO_REGISTRY,
+      "org-test",
+      "hubspot",
+      { base_url: vendorBase },
+      "get_object",
+      { object_type: "contacts", id: "101", propertiesWithHistory: ["region"] },
+      [["token", "hs-1"]],
+      null,
+    );
+    expect(lastHit("/crm/v3/objects/contacts/101").query.get("propertiesWithHistory")).toBe("region");
+    expect(JSON.parse(out.content).propertiesWithHistory.region[0]).toMatchObject({
+      value: "EU",
+      updatedByUserId: "10",
+    });
+  });
+
   it("hubspot search rides the bearer token and renders the crm card meta", async () => {
     const out = await executeConnectorTool(
       NO_REGISTRY,
@@ -1041,6 +1304,7 @@ describe("connector execute spot checks (mock backend)", () => {
     expect(sent["inputs"]).toEqual([{ id: "900" }, { id: "901" }]);
     expect(out.content).toContain("id=900 dealname=North");
     expect(out.content).toContain("Not found: 901.");
+    expect(out.content).toContain('"amount":"5000"');
   });
 
   it("hubspot get_associations lists the related ids", async () => {
