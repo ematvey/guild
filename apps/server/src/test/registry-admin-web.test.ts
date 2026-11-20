@@ -4,11 +4,13 @@
 // bucket.
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { ReleaseStore } from "../platform/store/releases.js";
 import { createServer } from "node:http";
-import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
+
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
 import { hashPassword } from "../platform/crypto.js";
 import { versionGt, toRfc3339Offset } from "../platform/http/releases.js";
@@ -27,7 +29,11 @@ interface Env {
 let e: Env;
 
 beforeAll(async () => {
-  const env = await createObjectStoreStack("error", {}, "m6");
+  const env = await createObjectStoreStack(
+    "error",
+    { GUILD_RELEASE_REPOSITORY: "alice/guild", GUILD_RELEASE_CHANNEL: "develop" },
+    "m6",
+  );
   const orgId = crypto.randomUUID();
   const adminId = crypto.randomUUID();
   const memberId = crypto.randomUUID();
@@ -284,144 +290,186 @@ describe("M6 registry", () => {
 
 // --------------------------------------------------------------- releases
 
-describe("M6 releases", () => {
-  it("uploads an artifact as admin and lists it", async () => {
-    const bytes = Buffer.from("fake-cli-binary-bytes");
-    const res = await e.env.app.inject({
-      method: "POST",
-      url: "/api/v1/admin/releases?version=0.5.34&kind=cli&platform=linux-x86_64&filename=guild-cli.tar.gz&notes=hello",
-      headers: { authorization: `Bearer ${e.adminToken}`, "content-type": "application/octet-stream" },
-      payload: bytes,
-    });
-    expect(res.statusCode).toBe(200);
-    const row = JSON.parse(res.body) as Record<string, unknown>;
-    expect(row["version"]).toBe("0.5.34");
-    expect(row["kind"]).toBe("cli");
-    expect(row["platform"]).toBe("linux-x86_64");
-    expect(row["filename"]).toBe("guild-cli.tar.gz");
-    expect(row["content_type"]).toBe("application/octet-stream");
-    expect(row["size_bytes"]).toBe(bytes.length);
-    expect(row["sha256"]).toBe(createHash("sha256").update(bytes).digest("hex"));
-    expect(row["signature"]).toMatch(/^[0-9a-f]{128}$/);
-    expect(row["notes"]).toBe("hello");
-    expect(row["updater_signature"]).toBe("");
-    expect(row["created_at"]).toMatch(/^2\d{3}-/);
-
-    const list = await inject("GET", "/api/v1/releases", e.memberToken);
-    expect(list.statusCode).toBe(200);
-    expect((json(list)["releases"] ?? []) as unknown[]).toHaveLength(1);
+describe("GitHub releases", () => {
+  it("has no server-hosted upload or signing-key endpoint", async () => {
+    expect((await inject("POST", "/api/v1/admin/releases", e.adminToken, {})).statusCode).toBe(404);
+    expect((await inject("GET", "/api/v1/releases/signing-key", e.memberToken)).statusCode).toBe(404);
+    expect((await inject("GET", "/api/v1/updates/latest.json", e.memberToken)).statusCode).toBe(204);
   });
 
-  it("validates upload params", async () => {
-    const admin = e.adminToken;
-    const cases: [string, string][] = [
-      ["missing version", "/api/v1/admin/releases?kind=cli&platform=linux-x86_64&filename=f.bin"],
-      ["bad version", "/api/v1/admin/releases?version=bad%20version&kind=cli&platform=linux-x86_64&filename=f.bin"],
-      ["bad kind", "/api/v1/admin/releases?version=1.0.0&kind=apk&platform=linux-x86_64&filename=f.bin"],
-      ["unknown platform", "/api/v1/admin/releases?version=1.0.0&kind=cli&platform=atari2600&filename=f.bin"],
-      ["bad filename", "/api/v1/admin/releases?version=1.0.0&kind=cli&platform=linux-x86_64&filename=.hidden"],
-      ["missing filename", "/api/v1/admin/releases?version=1.0.0&kind=cli&platform=linux-x86_64"],
-    ];
-    for (const [, url] of cases) {
-      const res = await e.env.app.inject({
-        method: "POST",
-        url,
-        headers: { authorization: `Bearer ${admin}`, "content-type": "application/octet-stream" },
-        payload: Buffer.from("x"),
-      });
-      expect(res.statusCode).toBe(400);
+  it("adopts complete GitHub releases atomically, preserves downloads, and isolates previews", async () => {
+    const version = "0.8.0-dev.42";
+    const previousVersion = e.env.config.serverVersion;
+    e.env.config.serverVersion = version;
+    const tag = `client-v${version}`;
+    const base = `https://github.com/alice/guild/releases/download/${tag}`;
+    const artifacts = ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"].flatMap((platform) => {
+      const names =
+        platform === "windows-x86_64"
+          ? [`Guild_${version}_x64-setup.exe`]
+          : platform === "linux-x86_64"
+            ? [`Guild-${version}-x86_64.AppImage`]
+            : [
+                `Guild-${version}-macos-${platform.slice(7)}.dmg`,
+                `Guild-${version}-macos-${platform.slice(7)}.app.tar.gz`,
+              ];
+      return names.map((filename) => ({
+        platform,
+        filename,
+        size_bytes: 10,
+        sha256: "a".repeat(64),
+        updater_signature: "signed-artifact",
+      }));
+    });
+    const metadata = { version, tag, repository: "alice/guild", artifacts };
+    const release = {
+      tag_name: tag,
+      draft: false,
+      prerelease: true,
+      body: "Preview release",
+      assets: [
+        { name: "release.json", browser_download_url: `${base}/release.json`, size: 100, digest: "sha256:metadata" },
+        ...artifacts.flatMap((a) => [
+          {
+            name: a.filename,
+            size: a.size_bytes,
+            digest: `sha256:${a.sha256}`,
+            browser_download_url: `${base}/${a.filename}`,
+          },
+          {
+            name: `${a.filename}.sig`,
+            size: 20,
+            digest: "sha256:signature",
+            browser_download_url: `${base}/${a.filename}.sig`,
+          },
+        ]),
+      ],
+    };
+    const realFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === `https://api.github.com/repos/alice/guild/releases/tags/${tag}`) return Response.json(release);
+      if (url === `${base}/release.json`) return Response.json(metadata);
+      return realFetch(input, init);
+    });
+    try {
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.memberToken, { tag })).statusCode).toBe(403);
+      e.env.config.releaseChannel = "stable";
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+      e.env.config.releaseChannel = "develop";
+      artifacts[0]!.size_bytes = 11;
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      artifacts[0]!.size_bytes = 10;
+      const before = json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as { version: string }[];
+      expect(before.some((r) => r.version === version)).toBe(false);
+      release.draft = true;
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      release.draft = false;
+      e.env.config.serverVersion = "0.7.0";
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
+      e.env.config.serverVersion = version;
+      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag });
+      expect(accepted.statusCode).toBe(200);
+      expect(json(accepted)).toEqual({ version, artifacts: 6 });
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(200);
+      const rows = (
+        json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as {
+          id: string;
+          version: string;
+          filename: string;
+        }[]
+      ).filter((r) => r.version === version);
+      expect(rows).toHaveLength(6);
+      const manifest = json(await inject("GET", "/api/v1/updates/latest.json", e.adminToken)) as {
+        version: string;
+        platforms: Record<string, { url: string }>;
+      };
+      expect(manifest.version).toBe(version);
+      expect(Object.keys(manifest.platforms)).toHaveLength(4);
+      expect(Object.values(manifest.platforms).every((p) => p.url.startsWith(`${base}/`))).toBe(true);
+      const row = rows.find((r) => r.filename.endsWith(".AppImage"))!;
+      const download = await inject("GET", `/api/v1/releases/${row.id}/download-url`, e.memberToken);
+      expect(json(download).url).toBe(`${base}/${row.filename}`);
+      expect((await inject("GET", `/api/v1/releases/${row.id}/download`, e.memberToken)).statusCode).toBe(302);
+      expect((await inject("DELETE", `/api/v1/admin/releases/${row.id}`, e.adminToken)).statusCode).toBe(200);
+      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+    } finally {
+      e.env.config.serverVersion = previousVersion;
+      e.env.config.releaseChannel = "develop";
+      fetchSpy.mockRestore();
     }
-    const member = await inject(
-      "POST",
-      "/api/v1/admin/releases?version=1.0.0&kind=cli&platform=linux-x86_64&filename=f.bin",
-      e.memberToken,
-      Buffer.from("x"),
-    );
-    expect(member.statusCode).toBe(403);
   });
 
-  it("serves the verifying key and signs the digest verifiably", async () => {
-    const key = await inject("GET", "/api/v1/releases/signing-key", e.memberToken);
-    expect(key.statusCode).toBe(200);
-    const body = json(key) as unknown as { public_key: string; algorithm: string };
-    expect(body.algorithm).toBe("ed25519");
-    expect(body.public_key).toMatch(/^[0-9a-f]{64}$/);
-
-    const list = json(await inject("GET", "/api/v1/releases", e.memberToken)) as unknown as {
-      releases: { id: string; sha256: string; signature: string }[];
-    };
-    const rel = list.releases[0]!;
-    const vk = createPublicKey({
-      key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(body.public_key, "hex")]),
-      format: "der",
-      type: "spki",
-    });
-    expect(cryptoVerify(null, Buffer.from(rel.sha256, "hex"), vk, Buffer.from(rel.signature, "hex"))).toBe(true);
-  });
-
-  it("hands out signed download URLs and falls back to bearer auth", async () => {
-    const list = json(await inject("GET", "/api/v1/releases", e.memberToken)) as unknown as {
-      releases: { id: string; filename: string; content_type: string }[];
-    };
-    const rel = list.releases.find((r) => r.filename === "guild-cli.tar.gz")!;
-    const urlRes = await inject("GET", `/api/v1/releases/${rel.id}/download-url`, e.memberToken);
-    expect(urlRes.statusCode).toBe(200);
-    const { url } = json(urlRes) as unknown as { url: string; expires_at: number };
-    const dl = await e.env.app.inject({ method: "GET", url });
-    expect(dl.statusCode).toBe(200);
-    expect(dl.body).toContain("fake-cli-binary-bytes");
-    expect(dl.headers["content-disposition"]).toContain("attachment");
-
-    const noAuth = await e.env.app.inject({ method: "GET", url: `/api/v1/releases/${rel.id}/download` });
-    expect(noAuth.statusCode).toBe(401);
-    const bearer = await e.env.app.inject({
-      method: "GET",
-      url: `/api/v1/releases/${rel.id}/download`,
-      headers: { authorization: `Bearer ${e.memberToken}` },
-    });
-    expect(bearer.statusCode).toBe(200);
-  });
-
-  it("renders the updater manifest only for signed desktop updater artifacts", async () => {
-    const none = await inject("GET", "/api/v1/updates/latest.json", e.memberToken);
-    expect(none.statusCode).toBe(204);
-
-    const put = async (version: string, platform: string, filename: string, updaterSig: string): Promise<string> => {
-      const res = await e.env.app.inject({
-        method: "POST",
-        url: `/api/v1/admin/releases?version=${version}&kind=desktop&platform=${platform}&filename=${filename}${updaterSig ? `&updater_sig=${encodeURIComponent(updaterSig)}` : ""}`,
-        headers: { authorization: `Bearer ${e.adminToken}`, "content-type": "application/octet-stream" },
-        payload: Buffer.from(`desktop-${version}-${platform}`),
+  it("caps both channels, listings and download redirects at the running server version", async () => {
+    const previousVersion = e.env.config.serverVersion;
+    await e.env.db.query("DELETE FROM releases WHERE kind = 'desktop'");
+    await e.env.db.query("DELETE FROM server_kv WHERE key LIKE 'desktop_release_version:%'");
+    const put = async (version: string) => {
+      const artifacts = ["linux-x86_64", "windows-x86_64", "darwin-aarch64", "darwin-x86_64"].map((platform) => {
+        const filename =
+          platform === "linux-x86_64"
+            ? `Guild-${version}.AppImage`
+            : platform === "windows-x86_64"
+              ? `Guild-${version}-setup.exe`
+              : `Guild-${version}-${platform}.app.tar.gz`;
+        return {
+          id: crypto.randomUUID(),
+          version,
+          platform,
+          filename,
+          size_bytes: 1,
+          sha256: "a".repeat(64),
+          updater_signature: "signature",
+          notes: "",
+          download_url: `https://github.com/alice/guild/releases/download/client-v${version}/${filename}`,
+        };
       });
-      expect(res.statusCode).toBe(200);
-      return (JSON.parse(res.body) as { id: string }).id;
+      await new ReleaseStore(e.env.db).importGithub(artifacts);
+      return artifacts[0]!.id;
     };
-    await put("0.6.0", "linux-x86_64", "guild_0.6.0_amd64.AppImage", "dW5pcXVlLXNpZ25hdHVyZQ==");
-    await put("0.6.0", "linux-aarch64", "guild_0.6.0_arm64.AppImage", ""); // not updater-signable
-
-    const manifest = await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json" });
-    expect(manifest.statusCode).toBe(200);
-    const body = JSON.parse(manifest.body) as {
-      version: string;
-      platforms: Record<string, { url: string; signature: string }>;
-      pub_date: string;
-    };
-    expect(body.version).toBe("0.6.0");
-    expect(Object.keys(body.platforms)).toEqual(["linux-x86_64"]);
-    expect(body.platforms["linux-x86_64"]!.signature).toBe("dW5pcXVlLXNpZ25hdHVyZQ==");
-    expect(body.platforms["linux-x86_64"]!.url).toContain("/api/v1/releases/");
-    expect(body.pub_date).toMatch(/\+00:00$/);
-    // The signed URL in the manifest downloads.
-    const dl = await e.env.app.inject({ method: "GET", url: body.platforms["linux-x86_64"]!.url });
-    expect(dl.statusCode).toBe(200);
-
-    await put("0.7.0-beta.1", "linux-x86_64", "guild_0.7.0.AppImage", "sig2");
-    const after = JSON.parse((await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json" })).body) as {
-      version: string;
-    };
-    // A higher core number wins even as a prerelease; the prerelease-below-
-    // release rule only applies at equal cores (unit-tested below).
-    expect(after.version).toBe("0.7.0-beta.1");
+    try {
+      e.env.config.serverVersion = "0.6.128-dev.200";
+      e.env.config.releaseChannel = "develop";
+      await put("0.6.128");
+      await put("0.6.127");
+      const future = await put("0.6.128-dev.250");
+      await put("0.6.128-dev.150");
+      const stable = json(await inject("GET", "/api/v1/updates/latest.json?channel=stable", e.memberToken));
+      const develop = json(await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken));
+      expect(stable.version).toBe("0.6.127");
+      expect(develop.version).toBe("0.6.128-dev.150");
+      expect(develop.server_version).toBe("0.6.128-dev.200");
+      expect(develop.channel).toBe("develop");
+      const rows = json(await inject("GET", "/api/v1/releases?channel=develop", e.memberToken)).releases as {
+        kind: string;
+        version: string;
+      }[];
+      expect([...new Set(rows.map((r) => r.version))]).toEqual(["0.6.128-dev.150"]);
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download-url?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(404);
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(404);
+      e.env.config.serverVersion = "0.6.128-dev.300";
+      await e.env.db.query(
+        "UPDATE server_kv SET value = '0.6.128-dev.250' WHERE key = 'desktop_release_version:develop'",
+      );
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(302);
+      e.env.config.serverVersion = "0.6.128-dev.200";
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(404);
+      expect((await inject("GET", "/api/v1/updates/latest.json?channel=other", e.memberToken)).statusCode).toBe(400);
+      e.env.config.releaseChannel = "stable";
+      expect((await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken)).statusCode).toBe(204);
+    } finally {
+      e.env.config.serverVersion = previousVersion;
+      e.env.config.releaseChannel = "develop";
+    }
   });
 
   it("orders versions by semver rules and renders pub_date like chrono to_rfc3339", () => {

@@ -100,6 +100,12 @@ object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
 
 ---
 
+For a preview, `node scripts/release.mjs deploy-preview <artifact-directory>`
+sets `GUILD_BUILD_VERSION` in the ignored Compose `.env` and runs the rebuild
+below. The Docker build stamps that version into the image’s server package.
+Health, WebSocket identity and release eligibility use the same baked version.
+The source manifests retain the stable product version.
+
 ## 2. The big gotcha: the frontend dist is baked into the server IMAGE
 
 The TS server (`apps/server`, `Dockerfile.server-ts`) builds the chat SPA
@@ -395,30 +401,17 @@ isolated config file (`GUILD_CONFIG_ENV`).
 - Two publisher scripts, both **idempotent** (they delete+republish an
   existing version/platform artifact) and both verify the server's sha256
   against the local file:
-  - `scripts/release-clients.sh` — production-format artifacts:
-    Windows NSIS installer (cargo-xwin cross-build), Linux AppImage
-    (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
-    deps on PATH: zig + cargo-zigbuild, cargo-xwin, macOS SDK at `$SDKROOT`, makensis,
-    llvm, linuxdeploy, libdmg-hfsplus, hfsprogs, 7z.
-  - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
-    VITE_DEFAULT_SERVER_URL=https://guild.example.com scripts/release-clients.sh`.
-  - Running the release script from a systemd transient unit needs an explicit
-    `-E PATH=...` including `~/.cargo/bin` (cargo-xwin/zigbuild) — the unit's
-    default PATH lacks it and the build fails with "cargo-xwin command not
-    found". Also pass `-E TAURI_SIGNING_PRIVATE_KEY=` for the bundler to sign
-    updater artifacts.
-- Artifacts land in `/api/v1/releases` (S3-backed); the desktop
-  updater consumes `latest.json`.
-- A server compose rebuild does not create client releases. For each new
-  deployment, run `scripts/release-clients.sh` separately with `BASE` pointing
-  to that deployment, `VERSION` matching `apps/desktop/src-tauri/tauri.conf.json`,
-  and `VITE_DEFAULT_SERVER_URL` set to its public URL. Verify six release rows
-  (Windows installer, Linux AppImage, two macOS DMGs, two macOS updater
-  archives) and a four-platform `/api/v1/updates/latest.json` response.
-- The release script assumes `node_modules` is current: it does NOT run
-  `npm ci`. Any commit that adds/moves a frontend dependency (e.g. a new
-  `packages/ui` dep) must be followed by `npm ci` in the release checkout,
-  or the vite build fails on unresolved imports.
+  - `scripts/release-clients.sh` — local cross-build entry point. It delegates
+    preview stamping and publication to `scripts/release.mjs`; see `docs/clients.md` §4.
+- Desktop artifacts are published once to GitHub Releases. Each stack imports
+  an approved tag using `POST /api/v1/admin/releases/github`. Set
+  `GUILD_RELEASE_REPOSITORY=owner/repository`; set `GUILD_RELEASE_CHANNEL=develop`
+  on dev to allow preview versions. The default stable channel rejects them.
+- The paired server keeps `/api/v1/updates/latest.json` and the release download
+  API, with GitHub URLs for imported releases. Verify the approved version and
+  all four updater targets after importing. Approval requires no client rebuild.
+- Release builds need current node dependencies and an explicit full `PATH`
+  when run detached. The local builder installs isolated dependencies and shares npm and Cargo caches.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
   `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
   GUI hosts the engine in-process (`guild-app-server` is a library
@@ -448,12 +441,10 @@ Maintenance notes for the engine's local socket host (the GUI in-process,
 or the `Guild daemon` / `guild-daemon.service` headless host). Check these
 when touching releases, tests, or the daemon itself.
 
-1. **Bump the workspace version on every release.** The attach handshake
-   (`daemon.hello` → version compare) reads `CARGO_PKG_VERSION` of the
-   shared `guild-app-server` lib on both sides, so it only distinguishes
-   builds if the workspace `[workspace.package] version` actually moves.
-   A stale version makes every daemon look current — a mismatched old
-   daemon would never be told to shut down and respawn.
+1. **Every build carries its release version.** Stable product versions are
+   committed only by the master release workflow. Branch builds stamp a temporary
+   `-dev.<build-number>` version in an isolated checkout. The attach handshake
+   reads `CARGO_PKG_VERSION`, so previews also distinguish running engines.
 
 2. **Daemon shutdown is unconditional** (`process::exit(0)` after
    `run_daemon()` in both binaries). Clients holding a socket mid-request
@@ -492,16 +483,15 @@ The complete list of places:
 | `apps/server/package.json` | TS server; `GUILD_TS_SERVER_VERSION` reads it → `/api/v1/health` |
 | `packages/ui/package.json` | shared UI kit |
 
-**Update them with the script, never by hand** — it also refreshes both
-Cargo lockfiles (`cargo update -w` touches only workspace members):
+**Stable version commits belong to the master release workflow.** It invokes
+`scripts/bump-version.sh <semver>` to update all manifests and lock entries before
+building. CI checks synchronization and rejects version changes on other branches,
+except synchronization from master. Local and branch releases stamp a temporary
+next-patch `-dev.<build-number>` version with `--build` in a disposable checkout.
+See `docs/clients.md` §4 for publication and per-stack approval.
 
-```bash
-scripts/bump-version.sh 0.5.38
-```
-
-Deliberately NOT synced: every external dependency in the
-`[workspace.dependencies]` table.
-
-When a release bumps the version, run the script first, commit, then
-follow `docs/clients.md`'s release flow (`scripts/release-clients.sh` with
-the same `VERSION`).
+Develop preview deployments use `scripts/release.mjs deploy-preview <directory>
+<installation>` to stamp the server image and pin the release after health matches.
+The default installation name is `dev`. Daily GitHub cleanup preserves the newest
+ten previews, all previews under fourteen days old, and installation pins; see
+`docs/clients.md` §4. Stable releases are retained.

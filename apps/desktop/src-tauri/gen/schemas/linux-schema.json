@@ -393,10 +393,22 @@
           "markdownDescription": "Enables the set_daemon_trace command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_update_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-update-channel",
+          "markdownDescription": "Enables the set_update_channel command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_engine command without any pre-configured scope.",
           "type": "string",
           "const": "allow-start-engine",
           "markdownDescription": "Enables the start_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-status",
+          "markdownDescription": "Enables the update_status command without any pre-configured scope."
         },
         {
           "description": "Enables the wsl_home command without any pre-configured scope.",
@@ -459,10 +471,22 @@
           "markdownDescription": "Denies the set_daemon_trace command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_update_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-update-channel",
+          "markdownDescription": "Denies the set_update_channel command without any pre-configured scope."
+        },
+        {
           "description": "Denies the start_engine command without any pre-configured scope.",
           "type": "string",
           "const": "deny-start-engine",
           "markdownDescription": "Denies the start_engine command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-status",
+          "markdownDescription": "Denies the update_status command without any pre-configured scope."
         },
         {
           "description": "Denies the wsl_home command without any pre-configured scope.",

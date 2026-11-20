@@ -22,7 +22,7 @@ type Caller = Pick<UserRow, "org_id" | "id">;
 
 /** The stores and hub reads the workspace snapshots take. */
 export interface WorkspaceReads {
-  readonly config: Pick<Config, "webDistDir">;
+  readonly config: Pick<Config, "webDistDir" | "serverVersion">;
   readonly hub: ChatWireHub;
   readonly chats: Pick<ChatStore, "listChats" | "listArchivedChats">;
   readonly projects: Pick<ProjectStore, "list" | "listArchived">;
@@ -73,6 +73,7 @@ export async function workspaceIdentitySnapshot(
   telemetry: boolean;
   remote_images: RemoteImagesPolicy;
   web_bundle?: string;
+  server_version: string;
 }> {
   const [org, telemetry, remoteImages] = await Promise.all([
     ctx.orgs.get(orgId),
@@ -82,6 +83,7 @@ export async function workspaceIdentitySnapshot(
   const bundle = servedWebBundle(ctx.config);
   return {
     name: org.name,
+    server_version: ctx.config.serverVersion,
     ...(org.logo_url !== null ? { logo_url: org.logo_url } : {}),
     telemetry,
     remote_images: remoteImages,

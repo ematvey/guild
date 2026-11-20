@@ -4,6 +4,8 @@ fn main() {
     // and a command not granted there is not callable from the webview.
     const COMMANDS: &[&str] = &[
         "check_update_now",
+        "update_status",
+        "set_update_channel",
         "start_engine",
         "rpc_submit",
         "list_wsl_distros",

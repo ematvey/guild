@@ -202,3 +202,26 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 
 - **Skill scope.** Installs and pins are per Member, so two Members using one shared Agent may get different Skills from it. The alternative is a per-Agent skill set (`selected` or `all`), like the tool allowlist.
 - **Bundle trust.** Registry bundles are content-addressed but not signed. Only desktop releases are signed.
+
+## Desktop releases
+
+A Release names signed desktop artifacts for one product version. GitHub hosts
+six artifacts for four platforms; a server imports their checked metadata and
+approves one complete version per channel for its paired clients. A stable stack accepts
+stable versions; a develop stack also accepts `-dev.<build-number>` versions.
+Every installer, listing and updater candidate is capped at the running server
+version. An installation persists its own stable/develop preference across
+sign-out and pairing changes. Native offers bind to the paired server, channel
+and observed server version and are revalidated before installation.
+The approved version and all artifact rows become visible together. The updater
+manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
+only on GitHub.
+
+Only a stable release on master changes the committed product version. Branch
+and local builds stamp a temporary preview version in their build checkout.
+The source commit is release provenance, separate from the version identifier.
+
+Release workflows run on develop and master pushes. Stable version increments
+originate on master and synchronize to develop through a version-only PR after
+publication. Develop release retention keeps the newest ten, those younger than
+fourteen days, and installation pins; stable releases are retained.

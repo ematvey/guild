@@ -98,3 +98,22 @@ when the message has already been placed or admission is still pending.
 `protocol/*.schema.json` is the contract. The TypeScript types are
 hand-written from it in `packages/wire`, the Rust types in
 `crates/protocol/src`. Nothing generates either side.
+
+## Desktop release approval
+
+`POST /api/v1/admin/releases/github` (admin session) accepts
+`{"tag":"client-v0.6.127"}`. The source is the public repository configured in
+`GUILD_RELEASE_REPOSITORY`. All six signed artifact records, their GitHub digests
+and sizes are checked before the server imports their metadata and approves the
+version atomically. Success returns `{"version":"0.6.127","artifacts":6}`.
+Preview tags require `GUILD_RELEASE_CHANNEL=develop`; the default is `stable`.
+
+`GET /api/v1/updates/latest.json` remains public and returns the approved complete
+Tauri manifest. Imported artifacts use GitHub download URLs. The authenticated
+release listing exposes GitHub artifact metadata. Download-URL responses contain
+`url`; authenticated download requests redirect to GitHub.
+The optional `channel=stable|develop` query selects the channel on the manifest,
+listing and download endpoints; omission uses the server default. The manifest
+includes `channel` and `server_version`. Approval, listing and every download
+request reject versions newer than the running server. A stable server rejects
+develop candidates; approvals are independent per channel.

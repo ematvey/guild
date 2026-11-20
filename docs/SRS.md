@@ -153,10 +153,10 @@ under $HOME":
 
 **SRS-16 — Registry crypto.**
 The backend performs bundle hashing (sha256 over bundle bytes) and the
-provenance sidecar writes for publish/install/uninstall; release artifacts
-are ed25519-signed over their sha256 digest
-(`apps/server/src/platform/http/releases.ts`)
-and the public key is served for verification. Guild metadata lives in
+provenance sidecar writes for publish/install/uninstall. Desktop updater artifacts
+carry minisign signatures verified against the client’s baked public key. The
+server checks GitHub metadata and serves only approved releases compatible with
+its own build version (`apps/server/src/platform/http/releases.ts`). Guild metadata lives in
 manifests and sidecars, never inside SKILL.md.
 
 **SRS-17 — Auth store.**
@@ -372,7 +372,8 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
   `GET /api/v1/registry/{kind}/{slug}`, 
   `GET .../{version}/bundle`, `POST .../install`, `POST .../review`.
 - Releases: `GET /api/v1/releases`, `/api/v1/releases/{id}/download*`, 
-  `/api/v1/releases/signing-key`, `/api/v1/updates/latest.json`, admin upload/list under `/api/v1/admin/releases`.
+  `/api/v1/updates/latest.json`, admin GitHub approval at `/api/v1/admin/releases/github`,
+  and admin metadata listing/deletion under `/api/v1/admin/releases`.
 - Integrations script API: `GET /api/v1/integrations`, 
   `GET /api/v1/integrations/{slug}/tools`, 
   `POST /api/v1/integrations/{slug}/tools/{tool}`.
