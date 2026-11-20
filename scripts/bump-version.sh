@@ -36,27 +36,26 @@ FILES=(
 )
 
 for f in "${FILES[@]}"; do
-  if [[ "$f" == *.toml ]]; then
-    sed -i 's/^version = ".*"/version = "'"$V"'"/' "$f"
-  elif [[ "$f" == "package-lock.json" ]]; then
-    # Only the workspace members carry the product version in the npm lock;
-    # every other "version" there belongs to a dependency. A stale member
-    # version makes `npm install` rewrite the lock, which the client release
-    # refuses as a dirty tree.
-    node -e '
-      const fs = require("fs");
-      const file = process.argv[1];
-      const v = process.argv[2];
-      const lock = JSON.parse(fs.readFileSync(file, "utf8"));
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const version = process.argv[2];
+    const original = fs.readFileSync(file, "utf8");
+    let stamped;
+    if (file === "package-lock.json") {
+      const lock = JSON.parse(original);
       for (const key of ["apps/desktop", "apps/server", "packages/ui"]) {
-        const entry = lock.packages?.[key];
-        if (entry && entry.version) entry.version = v;
+        if (!lock.packages?.[key]?.version) throw new Error(`missing workspace version: ${key}`);
+        lock.packages[key].version = version;
       }
-      fs.writeFileSync(file, JSON.stringify(lock, null, 2) + "\n");
-    ' "$f" "$V"
-  else
-    sed -i '0,/"version": ".*"/s//"version": "'"$V"'"/' "$f"
-  fi
+      stamped = JSON.stringify(lock, null, 2) + "\n";
+    } else if (file.endsWith(".toml")) {
+      stamped = original.replace(/^version = "[^"]*"/m, `version = "${version}"`);
+    } else {
+      stamped = original.replace(/"version": "[^"]*"/, `"version": "${version}"`);
+    }
+    fs.writeFileSync(file, stamped);
+  ' "$f" "$V"
   grep -q "$V" "$f" || { echo "FAILED: $f does not carry $V" >&2; exit 1; }
   echo "bumped  $f"
 done

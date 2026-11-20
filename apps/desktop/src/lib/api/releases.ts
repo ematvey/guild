@@ -78,19 +78,14 @@ export async function listReleases(): Promise<Release[] | null> {
   }
 }
 
-/// Mints a short-lived signed URL and triggers a browser download.
+/** Opens an approved GitHub artifact after server eligibility checks. */
 export async function downloadRelease(id: string): Promise<void> {
   const v = await request<{ url: string }>(
     "GET",
     `/api/v1/releases/${encodeURIComponent(id)}/download-url${await releaseQuery()}`,
   );
-  // The server returns a root-relative signed path; in the Tauri webview a
-  // relative href resolves against tauri://localhost and the download
-  // fails. Resolve against the paired server (the page origin in the
-  // browser). The native app hands the signed URL to the system browser —
-  // a programmatic cross-origin <a download> click either navigates the
-  // webview or does nothing (no download handler).
-  const url = String(v.url).startsWith("/") ? `${serverUrl()}${v.url}` : v.url;
+  // Native hands the GitHub URL to the system browser; web uses a download link.
+  const url = v.url;
   if (HAS_SHELL) {
     openExternal(url);
     return;
