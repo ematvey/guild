@@ -193,6 +193,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -226,4 +227,15 @@ jobs:
             printf 'Synchronize the stable product version %s from master. Source changes on develop are preserved. Version policy validates this version against master.\n' "$version" > "$RUNNER_TEMP/version-sync.md"
             pr=$(gh pr create --base develop --head "$branch" --title "release: sync version $version" --body-file "$RUNNER_TEMP/version-sync.md")
           fi
-          gh pr merge "$pr" --auto --merge
+          sha=$(git rev-parse HEAD)
+          passed=false
+          for attempt in $(seq 1 300); do
+            conclusion=$(gh run list --workflow version-policy.yml --branch "$branch" --event push --commit "$sha" --json conclusion --jq '.[0].conclusion // empty')
+            if [ "$conclusion" = success ]; then passed=true; break; fi
+            if [ -n "$conclusion" ]; then echo "Version policy failed: $conclusion" >&2; exit 1; fi
+            sleep 2
+          done
+          if [ "$passed" != true ]; then echo "Timed out waiting for version synchronization checks" >&2; exit 1; fi
+          gh pr merge "$pr" --merge
+          # GITHUB_TOKEN merges do not emit a downstream push workflow.
+          gh workflow run release-clients.yml --ref develop
