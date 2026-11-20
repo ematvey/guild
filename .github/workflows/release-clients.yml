@@ -5,8 +5,8 @@ on:
       channel:
         description: Stable releases run on master; previews run on any branch
         type: choice
-        options: [preview, stable]
-        default: preview
+        options: [develop, stable]
+        default: develop
       version:
         description: Stable version (for example 0.6.127); empty for previews
         type: string
@@ -19,12 +19,13 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.channel == 'stable' && 'stable-release' || 'preview-release' }}
+    environment: ${{ inputs.channel == 'stable' && 'stable-release' || 'develop-release' }}
     permissions:
       contents: write
     outputs:
       version: ${{ steps.prepare.outputs.version }}
       commit: ${{ steps.prepare.outputs.commit }}
+      source_ref: ${{ github.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -158,8 +159,9 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
+          SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/release.mjs collect bundles artifacts "$VERSION"
-          node scripts/release.mjs assemble artifacts "$VERSION" "$GITHUB_REPOSITORY" "$COMMIT"
+          node scripts/release.mjs assemble artifacts "$VERSION" "$GITHUB_REPOSITORY" "$COMMIT" "$SOURCE_REF"
           node scripts/release.mjs publish artifacts

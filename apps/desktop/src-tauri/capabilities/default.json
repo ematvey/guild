@@ -18,6 +18,8 @@
     "updater:default",
     "process:default",
     "allow-check-update-now",
+    "allow-update-status",
+    "allow-set-update-channel",
     "allow-start-engine",
     "allow-rpc-submit",
     "allow-list-wsl-distros",

@@ -3,7 +3,6 @@
 // socket upgrade, Faro ingest and the web UI. Unmatched paths answer the
 // /api/v1 not-found envelope.
 
-import { createRequire } from "node:module";
 import Fastify, { type FastifyBaseLogger } from "fastify";
 import pino from "pino";
 import type { Config } from "./config.js";
@@ -15,16 +14,7 @@ import { registerFaroRoute } from "./platform/http/faro.js";
 import { registerCors } from "./platform/http/cors.js";
 import { ApiError } from "./platform/errors.js";
 
-const require = createRequire(import.meta.url);
-
-export const GUILD_TS_SERVER_VERSION: string = (() => {
-  try {
-    const pkg = require("../package.json") as { version?: string };
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+export { GUILD_TS_SERVER_VERSION } from "./config.js";
 
 /** The composition root rides the app instance: tests and diagnostics read
  *  the wiring through `app.platform`. */
@@ -42,7 +32,7 @@ const BODY_LIMIT_BYTES = 1024 * 1024;
 export async function buildApp(config: Config) {
   const logger = pino({
     level: config.logLevel,
-    base: { version: GUILD_TS_SERVER_VERSION },
+    base: { version: config.serverVersion },
   });
 
   // The app is typed with Fastify's base logger, the type every route
@@ -76,7 +66,7 @@ export async function buildApp(config: Config) {
   // Health: {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
     status: "ok",
-    version: GUILD_TS_SERVER_VERSION,
+    version: config.serverVersion,
   }));
 
   // Platform routes (auth, org, events, attachments, OIDC, gateway, chats,

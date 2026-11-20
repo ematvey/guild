@@ -7,28 +7,22 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
+import { setUpdateChannel, useUpdateStatus, type UpdateChannel } from "../../../lib/api/releases";
 import { PageHeader } from "../../../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { HAS_SHELL, serverBase } from "../../../lib/session";
 import { useWorkspaceIdentity } from "../../../lib/workspace-store";
 
-async function fetchJson(url: string): Promise<unknown | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
 export function AboutSection() {
+  const identity = useWorkspaceIdentity();
+  const updates = useUpdateStatus();
+  const [savingChannel, setSavingChannel] = useState(false);
+  const [channelError, setChannelError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
-  const [serverVersion, setServerVersion] = useState<string | null | undefined>(undefined);
-  const [latestRelease, setLatestRelease] = useState<string | null | undefined>(undefined);
+  const serverVersion = identity?.server_version;
   // Read-only and live: the switch is the workspace admin's (Settings →
   // General), and the workspace-identity frame carries it.
-  const telemetry = useWorkspaceIdentity()?.telemetry ?? null;
+  const telemetry = identity?.telemetry ?? null;
   const [trace, setTrace] = useState<{
     enabled: boolean;
     path: string;
@@ -43,33 +37,30 @@ export function AboutSection() {
   }, []);
 
   useEffect(() => {
-    void fetchJson(`${serverBase()}/api/v1/health`).then((h) => {
-      const v = (h as { version?: string } | null)?.version ?? null;
-      setServerVersion(v);
-      // The web UI is the server's own build — its version is the app version.
-      if (!HAS_SHELL) setAppVersion(v);
-    });
     if (HAS_SHELL) {
       getVersion()
         .then(setAppVersion)
         .catch(() => setAppVersion(null));
     }
-    void fetchJson(`${serverBase()}/api/v1/updates/latest.json`).then((m) => {
-      setLatestRelease((m as { version?: string } | null)?.version ?? null);
-    });
   }, []);
 
   const base = serverBase();
-  const updateAvailable = appVersion != null && latestRelease != null && latestRelease !== appVersion;
 
   return (
     <div className="space-y-4">
       <PageHeader title="About" />
       <FactGrid>
         <FactCard label="App version">
-          {appVersion === undefined ? <Skeleton className="my-1 h-4 w-20" /> : (appVersion ?? "Unavailable")}
-          {updateAvailable && (
-            <span className="ml-2 text-sm text-muted-foreground">(update available: {latestRelease})</span>
+          {HAS_SHELL ? (
+            appVersion === undefined ? (
+              <Skeleton className="my-1 h-4 w-20" />
+            ) : (
+              (appVersion ?? "Unavailable")
+            )
+          ) : serverVersion === undefined ? (
+            <Skeleton className="my-1 h-4 w-20" />
+          ) : (
+            (serverVersion ?? "Unavailable")
           )}
         </FactCard>
         <FactCard label="Server version">
@@ -87,9 +78,69 @@ export function AboutSection() {
             </span>
           )}
         </FactCard>
-        <FactCard label="Newest published release">
-          {latestRelease === undefined ? <Skeleton className="my-1 h-4 w-20" /> : (latestRelease ?? "none")}
-        </FactCard>
+        {HAS_SHELL && (
+          <FactCard label="Updates">
+            <label htmlFor="update-channel" className="text-sm font-medium">
+              Update channel
+            </label>
+            <select
+              id="update-channel"
+              className="mt-2 h-9 w-full rounded-md border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={updates?.channel ?? ""}
+              disabled={!updates || savingChannel || updates.phase === "installing"}
+              onChange={(event) => {
+                setSavingChannel(true);
+                setChannelError(null);
+                void setUpdateChannel(event.target.value as UpdateChannel)
+                  .catch(() => setChannelError("Could not save the update channel. Try again."))
+                  .finally(() => setSavingChannel(false));
+              }}
+            >
+              {!updates && (
+                <option value="" disabled>
+                  Loading channel…
+                </option>
+              )}
+              <option value="stable">Stable</option>
+              <option value="develop">Develop</option>
+            </select>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Saved for this installation. Updates stop at your server’s version.
+            </p>
+            <p role="status" className="mt-3 text-sm text-muted-foreground">
+              {!updates
+                ? "Loading update settings…"
+                : updates.phase === "checking"
+                  ? "Checking for updates…"
+                  : updates?.pending_version
+                    ? `Version ${updates.pending_version} is ready to install.`
+                    : updates?.phase === "disabled"
+                      ? "Automatic updates are off in local development."
+                      : "No eligible update is ready."}
+            </p>
+            {(channelError || updates?.message) && (
+              <p role="alert" className="mt-2 text-sm text-destructive">
+                {channelError ?? updates?.message}
+              </p>
+            )}
+            <Button
+              className="mt-3"
+              size="sm"
+              variant="outline"
+              disabled={
+                !updates ||
+                updates.phase === "checking" ||
+                updates.phase === "installing" ||
+                updates.phase === "disabled"
+              }
+              onClick={() => {
+                void invoke("check_update_now", { force: true }).catch(() => {});
+              }}
+            >
+              Check for updates
+            </Button>
+          </FactCard>
+        )}
       </FactGrid>
       {HAS_SHELL && (
         <p className="text-sm text-muted-foreground">

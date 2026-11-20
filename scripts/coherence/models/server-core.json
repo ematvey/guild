@@ -476,7 +476,10 @@
       "canonical": "apps/server/src/platform/store/releases.ts",
       "types": [
         "ReleaseRow",
-        "GithubReleaseArtifact"
+        "GithubReleaseArtifact",
+        "UpdateChannel",
+        "UpdateStatus",
+        "UpdateState"
       ],
       "aliases": [
         "build"
@@ -505,6 +508,14 @@
         {
           "where": ".github/workflows/release-clients.yml",
           "role": "executor"
+        },
+        {
+          "where": "apps/desktop/src-tauri/src/updates.rs",
+          "role": "executor"
+        },
+        {
+          "where": "apps/desktop/src/views/settings/sections/AboutSection.tsx",
+          "role": "ui"
         }
       ],
       "translations": [
@@ -522,6 +533,11 @@
           "from": "domain",
           "to": "wire",
           "at": "apps/server/src/platform/http/releases.ts"
+        },
+        {
+          "from": "executor",
+          "to": "ui",
+          "at": "apps/desktop/src/lib/api/releases.ts"
         }
       ]
     },

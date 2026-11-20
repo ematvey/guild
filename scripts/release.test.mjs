@@ -69,7 +69,9 @@ test("publication refuses a partial release and produces four updater targets fr
         writeFileSync(path.join(directory, file), `artifact ${platform} ${file}`);
         writeFileSync(path.join(directory, `${file}.sig`), "signed-artifact");
       }
-    const meta = assemble(directory, version, "alice/guild", "a".repeat(40));
+    const meta = assemble(directory, version, "alice/guild", "a".repeat(40), "refs/heads/develop");
+    assert.equal(meta.channel, "develop");
+    assert.equal(meta.source_ref, "refs/heads/develop");
     assert.equal(meta.artifacts.length, 6);
     const manifest = JSON.parse(readFileSync(path.join(directory, "latest.json")));
     assert.equal(Object.keys(manifest.platforms).length, 4);

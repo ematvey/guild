@@ -106,8 +106,13 @@ hand-written from it in `packages/wire`, the Rust types in
 `GUILD_RELEASE_REPOSITORY`. All six signed artifact records, their GitHub digests
 and sizes are checked before the server imports their metadata and approves the
 version atomically. Success returns `{"version":"0.6.127","artifacts":6}`.
-Preview tags require `GUILD_RELEASE_CHANNEL=preview`; the default is `stable`.
+Preview tags require `GUILD_RELEASE_CHANNEL=develop`; the default is `stable`.
 
 `GET /api/v1/updates/latest.json` remains public and returns the approved complete
 Tauri manifest. Imported artifacts use GitHub download URLs. The authenticated
 release listing and download-URL endpoints keep their existing response shapes.
+The optional `channel=stable|develop` query selects the channel on the manifest,
+listing and download endpoints; omission uses the server default. The manifest
+includes `channel` and `server_version`. Approval, listing and every download
+request reject versions newer than the running server. A stable server rejects
+develop candidates; approvals are independent per channel.

@@ -118,7 +118,10 @@ export class ReleaseStore {
       }
       await client.query(
         "INSERT INTO server_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
-        [APPROVED_RELEASE_VERSION_KV, artifacts[0]!.version],
+        [
+          `${APPROVED_RELEASE_VERSION_KV}:${artifacts[0]!.version.includes("-") ? "develop" : "stable"}`,
+          artifacts[0]!.version,
+        ],
       );
     });
   }

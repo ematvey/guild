@@ -1,11 +1,18 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BIND_ADDR, DEFAULT_FARO_URL, DEFAULT_LOG_LEVEL, loadConfig } from "../config.js";
+import {
+  DEFAULT_BIND_ADDR,
+  DEFAULT_FARO_URL,
+  DEFAULT_LOG_LEVEL,
+  GUILD_TS_SERVER_VERSION,
+  loadConfig,
+} from "../config.js";
 
 describe("loadConfig", () => {
   it("uses defaults on empty env", () => {
     const cfg = loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" });
     expect(cfg).toEqual({
+      serverVersion: GUILD_TS_SERVER_VERSION,
       bindHost: "0.0.0.0",
       bindPort: 8080,
       logLevel: "info",

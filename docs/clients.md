@@ -180,7 +180,7 @@ preview stamps and version drift, including changes hidden in lockfiles.
 
 ### Preview and local releases
 
-Run **Release clients** on a non-master branch with channel `preview` to publish
+Run **Release clients** on a non-master branch with channel `develop` to publish
 a GitHub prerelease. A preview of `0.6.126` is `0.6.127-dev.<timestamp>`. It is
 excluded from GitHub's latest stable release. No source version commit is created.
 
@@ -206,11 +206,19 @@ CI builds use a generic client: the server address is editable at pairing, and
 the stored paired server controls updates. The same artifacts can serve several
 stacks. Signing and packaging do not publish to a Guild database.
 
+Deploy the matching dev server from the same source commit and artifact directory:
+
+```bash
+node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42
+```
+
+This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable.
+
 ### Approving a release on a server
 
 Configure the stack with `GUILD_RELEASE_REPOSITORY=owner/repository` and
-`GUILD_RELEASE_CHANNEL=stable` (the default) or `preview` for dev. Then an admin
-approves a published tag:
+`GUILD_RELEASE_CHANNEL=stable` (the default) or `develop` for dev. Then an admin
+approves a published tag whose version does not exceed the running server:
 
 ```bash
 curl -fsS -X POST "$BASE/api/v1/admin/releases/github" \
@@ -223,7 +231,7 @@ release channel, all six artifacts, their digests, sizes and signature assets,
 then imports the download metadata and approved version in one transaction.
 The server's existing release endpoints return GitHub URLs. The paired updater
 endpoint serves only the approved complete release; it does not follow GitHub's
-latest release automatically. Dev can approve a preview; stable stacks reject it.
+latest release automatically. Develop stacks can approve a preview; stable stacks reject it. Approvals are stored separately for stable and develop. Listing, installer download URLs and the updater manifest all enforce the running server version as a ceiling, including after a server downgrade.
 Approval changes metadata only and requires no rebuild of the client artifacts.
 
 Verify the stack's `/api/v1/updates/latest.json`: its version must be the approved
@@ -275,12 +283,16 @@ to enforce asset and tag immutability at the repository level.
 
 The desktop app self-updates against the server it is paired/logged into:
 
-1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json`
+Each desktop installation saves a stable/develop preference in its local configuration.
+Settings → About changes it; signing out or pairing another server preserves it.
+A fresh stable build defaults to stable, and a fresh preview defaults to develop.
+
+1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json?channel=stable` or `?channel=develop`
    on the stored server URL. The endpoint is public and serves the Tauri
    updater static-JSON manifest for the server-approved desktop version,
    with per-platform minisign signatures and GitHub download URLs. Without an
    approved GitHub release, object-storage releases use signed URLs (24h expiry).
-2. If the manifest version is newer, the update downloads silently in the
+2. The native updater requires `installed < candidate <= server_version` and a matching channel. The server version reaches the UI over `workspace_identity`; a change clears any pending offer. Before applying downloaded bytes, the updater revalidates the current server, channel, version and signature. If the eligible manifest version is newer, the update downloads silently in the
    background (VSCode/Zed-style); a toast "Update to vX ready — Restart to
    update" appears (on any screen, including the pairing screen).
 3. Clicking restart applies the update and relaunches. On Windows the NSIS

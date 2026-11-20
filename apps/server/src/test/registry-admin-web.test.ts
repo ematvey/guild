@@ -29,7 +29,7 @@ let e: Env;
 beforeAll(async () => {
   const env = await createObjectStoreStack(
     "error",
-    { GUILD_RELEASE_REPOSITORY: "alice/guild", GUILD_RELEASE_CHANNEL: "preview" },
+    { GUILD_RELEASE_REPOSITORY: "alice/guild", GUILD_RELEASE_CHANNEL: "develop" },
     "m6",
   );
   const orgId = crypto.randomUUID();
@@ -387,7 +387,7 @@ describe("M6 releases", () => {
   });
 
   it("renders the updater manifest only for signed desktop updater artifacts", async () => {
-    const none = await inject("GET", "/api/v1/updates/latest.json", e.memberToken);
+    const none = await inject("GET", "/api/v1/updates/latest.json?channel=stable", e.memberToken);
     expect(none.statusCode).toBe(204);
 
     const put = async (version: string, platform: string, filename: string, updaterSig: string): Promise<string> => {
@@ -403,7 +403,7 @@ describe("M6 releases", () => {
     await put("0.6.0", "linux-x86_64", "guild_0.6.0_amd64.AppImage", "dW5pcXVlLXNpZ25hdHVyZQ==");
     await put("0.6.0", "linux-aarch64", "guild_0.6.0_arm64.AppImage", ""); // not updater-signable
 
-    const manifest = await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json" });
+    const manifest = await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json?channel=stable" });
     expect(manifest.statusCode).toBe(200);
     const body = JSON.parse(manifest.body) as {
       version: string;
@@ -420,16 +420,19 @@ describe("M6 releases", () => {
     expect(dl.statusCode).toBe(200);
 
     await put("0.7.0-beta.1", "linux-x86_64", "guild_0.7.0.AppImage", "sig2");
-    const after = JSON.parse((await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json" })).body) as {
+    const after = JSON.parse(
+      (await e.env.app.inject({ method: "GET", url: "/api/v1/updates/latest.json?channel=stable" })).body,
+    ) as {
       version: string;
     };
-    // A higher core number wins even as a prerelease; the prerelease-below-
-    // release rule only applies at equal cores (unit-tested below).
-    expect(after.version).toBe("0.7.0-beta.1");
+    // Stable downloads exclude prereleases regardless of their core version.
+    expect(after.version).toBe("0.6.0");
   });
 
   it("adopts complete GitHub releases atomically, preserves downloads, and isolates previews", async () => {
     const version = "0.8.0-dev.42";
+    const previousVersion = e.env.config.serverVersion;
+    e.env.config.serverVersion = version;
     const tag = `client-v${version}`;
     const base = `https://github.com/alice/guild/releases/download/${tag}`;
     const artifacts = ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"].flatMap((platform) => {
@@ -487,7 +490,7 @@ describe("M6 releases", () => {
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
       const stable = json(await inject("GET", "/api/v1/updates/latest.json", e.adminToken));
       expect(stable.version).toBe("0.6.0");
-      e.env.config.releaseChannel = "preview";
+      e.env.config.releaseChannel = "develop";
       artifacts[0]!.size_bytes = 11;
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
       artifacts[0]!.size_bytes = 10;
@@ -522,8 +525,61 @@ describe("M6 releases", () => {
       expect((await inject("DELETE", `/api/v1/admin/releases/${row.id}`, e.adminToken)).statusCode).toBe(200);
       expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
     } finally {
-      e.env.config.releaseChannel = "preview";
+      e.env.config.serverVersion = previousVersion;
+      e.env.config.releaseChannel = "develop";
       fetchSpy.mockRestore();
+    }
+  });
+
+  it("caps both channels, listings and previously issued downloads at the running server version", async () => {
+    const previousVersion = e.env.config.serverVersion;
+    await e.env.db.query("DELETE FROM releases WHERE kind = 'desktop'");
+    await e.env.db.query("DELETE FROM server_kv WHERE key LIKE 'desktop_release_version:%'");
+    const put = async (version: string) => {
+      const res = await e.env.app.inject({
+        method: "POST",
+        url: `/api/v1/admin/releases?version=${version}&kind=desktop&platform=linux-x86_64&filename=Guild-${version}.AppImage&updater_sig=signature`,
+        headers: { authorization: `Bearer ${e.adminToken}`, "content-type": "application/octet-stream" },
+        payload: Buffer.from("artifact"),
+      });
+      expect(res.statusCode).toBe(200);
+      return (JSON.parse(res.body) as { id: string }).id;
+    };
+    try {
+      e.env.config.serverVersion = "0.6.128-dev.200";
+      e.env.config.releaseChannel = "develop";
+      await put("0.6.127");
+      await put("0.6.128");
+      await put("0.6.128-dev.150");
+      const future = await put("0.6.128-dev.250");
+      const stable = json(await inject("GET", "/api/v1/updates/latest.json?channel=stable", e.memberToken));
+      const develop = json(await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken));
+      expect(stable.version).toBe("0.6.127");
+      expect(develop.version).toBe("0.6.128-dev.150");
+      expect(develop.server_version).toBe("0.6.128-dev.200");
+      expect(develop.channel).toBe("develop");
+      const rows = json(await inject("GET", "/api/v1/releases?channel=develop", e.memberToken)).releases as {
+        kind: string;
+        version: string;
+      }[];
+      expect(rows.filter((r) => r.kind === "desktop").map((r) => r.version)).toEqual(["0.6.128-dev.150"]);
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download-url?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(404);
+      expect(
+        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
+      ).toBe(404);
+      e.env.config.serverVersion = "0.6.128-dev.300";
+      const signed = json(await inject("GET", `/api/v1/releases/${future}/download-url?channel=develop`, e.memberToken))
+        .url as string;
+      e.env.config.serverVersion = "0.6.128-dev.200";
+      expect((await e.env.app.inject({ method: "GET", url: signed })).statusCode).toBe(404);
+      expect((await inject("GET", "/api/v1/updates/latest.json?channel=other", e.memberToken)).statusCode).toBe(400);
+      e.env.config.releaseChannel = "stable";
+      expect((await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken)).statusCode).toBe(204);
+    } finally {
+      e.env.config.serverVersion = previousVersion;
+      e.env.config.releaseChannel = "develop";
     }
   });
 

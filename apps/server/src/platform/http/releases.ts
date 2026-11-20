@@ -11,7 +11,7 @@ import {
   sign as cryptoSign,
   timingSafeEqual,
 } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
@@ -42,7 +42,7 @@ async function githubArtifacts(repository: string, tag: string, previews: boolea
     throw ApiError.badRequest("invalid client release tag");
   const version = tag.slice("client-v".length);
   if (version.includes("-") && !previews)
-    throw ApiError.badRequest("preview releases require GUILD_RELEASE_CHANNEL=preview");
+    throw ApiError.badRequest("develop releases require GUILD_RELEASE_CHANNEL=develop");
   const release = (await githubJson(`https://api.github.com/repos/${repository}/releases/tags/${tag}`)) as {
     tag_name?: string;
     draft?: boolean;
@@ -270,6 +270,27 @@ export function registerReleaseRoutes(
   ctx: IdentityCtx,
   objects: ObjectStore,
 ): void {
+  const channelFor = (req: FastifyRequest): "stable" | "develop" => {
+    const channel = queryParam(req, "channel") ?? ctx.config.releaseChannel;
+    if (channel !== "stable" && channel !== "develop") throw ApiError.badRequest("invalid release channel");
+    return channel;
+  };
+  const eligible = (row: ReleaseRow, channel: "stable" | "develop"): boolean =>
+    !versionGt(row.version, ctx.config.serverVersion) &&
+    (row.kind !== "desktop" ||
+      ((channel === "stable" || ctx.config.releaseChannel === "develop") &&
+        row.version.includes("-") === (channel === "develop")));
+  const approvedVersion = (channel: string) => ctx.kv.get(`${APPROVED_RELEASE_VERSION_KV}:${channel}`);
+  const downloadRow = async (req: FastifyRequest, id: string): Promise<ReleaseRow> => {
+    const row = await gateway.releases.get(id);
+    const channel = channelFor(req);
+    const approved = await approvedVersion(channel);
+    if (!eligible(row, channel) || (row.kind === "desktop" && approved !== null && versionGt(row.version, approved))) {
+      throw ApiError.notFound("no compatible release on this channel");
+    }
+    return row;
+  };
+
   app.post("/api/v1/admin/releases/github", async (req, reply) => {
     await requireAdminUser(ctx, req);
     if (ctx.config.releaseRepository === null) throw ApiError.badRequest("GUILD_RELEASE_REPOSITORY is not configured");
@@ -278,8 +299,11 @@ export function registerReleaseRoutes(
     const artifacts = await githubArtifacts(
       ctx.config.releaseRepository,
       body.tag,
-      ctx.config.releaseChannel === "preview",
+      ctx.config.releaseChannel === "develop",
     );
+    if (versionGt(artifacts[0]!.version, ctx.config.serverVersion)) {
+      throw ApiError.badRequest("release is newer than this server");
+    }
     const seed = await signingSeed(ctx);
     for (const artifact of artifacts) artifact.signature = signDigest(seed, Buffer.from(artifact.sha256, "hex"));
     await gateway.releases.importGithub(artifacts);
@@ -368,8 +392,16 @@ export function registerReleaseRoutes(
 
   app.get("/api/v1/releases", async (req, reply) => {
     await requireUser(ctx, req);
+    const channel = channelFor(req);
+    const approved = await approvedVersion(channel);
     const rows = await gateway.releases.list();
-    sendJson(reply, { releases: rows });
+    sendJson(reply, {
+      releases: rows
+        .filter(
+          (r) => eligible(r, channel) && (r.kind !== "desktop" || approved === null || !versionGt(r.version, approved)),
+        )
+        .sort((a, b) => (versionGt(a.version, b.version) ? -1 : versionGt(b.version, a.version) ? 1 : 0)),
+    });
     return reply;
   });
 
@@ -386,9 +418,12 @@ export function registerReleaseRoutes(
   app.get("/api/v1/releases/:id/download-url", async (req, reply) => {
     await requireUser(ctx, req);
     const id = parseUuidParam(req, "id");
-    await gateway.releases.get(id);
+    await downloadRow(req, id);
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    sendJson(reply, { url: (await gateway.releases.downloadUrl(id)) ?? signDownload(ctx, id, exp), expires_at: exp });
+    sendJson(reply, {
+      url: (await gateway.releases.downloadUrl(id)) ?? `${signDownload(ctx, id, exp)}&channel=${channelFor(req)}`,
+      expires_at: exp,
+    });
     return reply;
   });
 
@@ -414,7 +449,7 @@ export function registerReleaseRoutes(
       }
       await ctx.identity.validateSession(header.slice("Bearer ".length));
     }
-    const releaseRow: ReleaseRow = await gateway.releases.get(id);
+    const releaseRow = await downloadRow(req, id);
     const githubUrl = await gateway.releases.downloadUrl(id);
     if (githubUrl !== null) return reply.redirect(githubUrl);
     const key = objectKey(releaseRow.version, releaseRow.kind, releaseRow.platform, releaseRow.id, releaseRow.filename);
@@ -435,14 +470,15 @@ export function registerReleaseRoutes(
   // the updater plugin, pointing at short-lived signed download URLs. Only
   // platforms with a signed updater artifact for the newest desktop version
   // are listed.
-  app.get("/api/v1/updates/latest.json", async (_req, reply) => {
+  app.get("/api/v1/updates/latest.json", async (req, reply) => {
+    const channel = channelFor(req);
     const rows = await gateway.releases.list();
-    const approved = await ctx.kv.get(APPROVED_RELEASE_VERSION_KV);
+    const approved = await approvedVersion(channel);
     let latest: { version: string; created_at: string } | null = null;
     for (const r of rows) {
       if (r.kind !== "desktop" || r.updater_signature === "") continue;
+      if (!eligible(r, channel)) continue;
       if (approved !== null && r.version !== approved) continue;
-      if (ctx.config.releaseChannel === "stable" && r.version.includes("-")) continue;
       if (latest === null || versionGt(r.version, latest.version)) {
         latest = { version: r.version, created_at: r.created_at };
       }
@@ -466,7 +502,8 @@ export function registerReleaseRoutes(
       if (row === undefined) continue;
       platforms[target] = {
         signature: row.updater_signature,
-        url: (await gateway.releases.downloadUrl(row.id)) ?? `${base}${signDownload(ctx, row.id, exp)}`,
+        url:
+          (await gateway.releases.downloadUrl(row.id)) ?? `${base}${signDownload(ctx, row.id, exp)}&channel=${channel}`,
       };
     }
     if (Object.keys(platforms).length === 0) return reply.status(204).send();
@@ -476,6 +513,8 @@ export function registerReleaseRoutes(
     // pub_date renders with chrono's to_rfc3339 (+00:00 offset).
     sendJson(reply, {
       version: latest.version,
+      server_version: ctx.config.serverVersion,
+      channel,
       notes,
       pub_date: toRfc3339Offset(latest.created_at),
       platforms,

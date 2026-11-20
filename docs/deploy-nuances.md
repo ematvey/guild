@@ -100,6 +100,12 @@ object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
 
 ---
 
+For a preview, `node scripts/release.mjs deploy-preview <artifact-directory>`
+sets `GUILD_BUILD_VERSION` in the ignored Compose `.env` and runs the rebuild
+below. The Docker build stamps that version into the image’s server package.
+Health, WebSocket identity and release eligibility use the same baked version.
+The source manifests retain the stable product version.
+
 ## 2. The big gotcha: the frontend dist is baked into the server IMAGE
 
 The TS server (`apps/server`, `Dockerfile.server-ts`) builds the chat SPA
@@ -399,7 +405,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
     preview stamping and publication to `scripts/release.mjs`; see `docs/clients.md` §4.
 - Desktop artifacts are published once to GitHub Releases. Each stack imports
   an approved tag using `POST /api/v1/admin/releases/github`. Set
-  `GUILD_RELEASE_REPOSITORY=owner/repository`; set `GUILD_RELEASE_CHANNEL=preview`
+  `GUILD_RELEASE_REPOSITORY=owner/repository`; set `GUILD_RELEASE_CHANNEL=develop`
   on dev to allow preview versions. The default stable channel rejects them.
 - The paired server keeps `/api/v1/updates/latest.json` and the release download
   API, with GitHub URLs for imported releases. Verify the approved version and

@@ -114,3 +114,6 @@ On every reconnect the client clears its watermarks and syncs again. When it wak
 | Sending every Thread's view to every socket | A socket on another page received megabytes it never displayed |
 | Notifying whenever no socket is open | An open but unwatched app is not presence; the read marker is |
 | Push content in the notification | A push is a hint. The content stays on the server until the app syncs |
+
+The `workspace_identity` snapshot includes `server_version`, the running server’s
+build version. Desktop clients invalidate pending update offers when it changes.

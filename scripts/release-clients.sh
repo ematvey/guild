@@ -183,5 +183,5 @@ build_dmg() { # arch
 build_dmg aarch64
 build_dmg x86_64
 
-node scripts/release.mjs assemble "$OUTPUT_DIR" "$VERSION" "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_COMMIT"
+node scripts/release.mjs assemble "$OUTPUT_DIR" "$VERSION" "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_COMMIT" "$RELEASE_SOURCE_REF"
 echo "==> all six signed artifacts ready: $OUTPUT_DIR"

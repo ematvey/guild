@@ -3,8 +3,13 @@
 // sandbox runner, and the runtime tunables.
 
 import path from "node:path";
+import { createRequire } from "node:module";
+
+export const GUILD_TS_SERVER_VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
 export interface Config {
+  /** Version baked into this server image, including temporary develop stamps. */
+  serverVersion: string;
   /** Address the Fastify server binds, e.g. 0.0.0.0:8080 (GUILD_BIND_ADDR). */
   bindHost: string;
   bindPort: number;
@@ -29,7 +34,7 @@ export interface Config {
   /** Public GitHub repository that supplies approved desktop releases. */
   releaseRepository: string | null;
   /** Preview adoption is explicit on development stacks. */
-  releaseChannel: "stable" | "preview";
+  releaseChannel: "stable" | "develop";
   /** ClickHouse HTTP interface (GUILD_CLICKHOUSE_URL/DATABASE/USER/PASSWORD)
    *  — usage_events sink and usage/quota queries. Empty user = no auth. */
   clickhouseUrl: string;
@@ -247,6 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
   const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
+    serverVersion: GUILD_TS_SERVER_VERSION,
     faroUrl,
     webDistDir,
     internalKey,
@@ -267,7 +273,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     s3SecretAccessKey: env.GUILD_S3_SECRET_ACCESS_KEY ?? DEFAULT_S3_SECRET_ACCESS_KEY,
     apiUrl,
     releaseRepository: env.GUILD_RELEASE_REPOSITORY || null,
-    releaseChannel: env.GUILD_RELEASE_CHANNEL === "preview" ? "preview" : "stable",
+    releaseChannel: env.GUILD_RELEASE_CHANNEL === "develop" ? "develop" : "stable",
     poolMax,
     dataDir,
     agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",

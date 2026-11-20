@@ -92,7 +92,7 @@ export function filenames(version, platform) {
   return [`Guild-${version}-macos-${arch}.dmg`, `Guild-${version}-macos-${arch}.app.tar.gz`];
 }
 
-export function assemble(directory, version, repository, commit) {
+export function assemble(directory, version, repository, commit, sourceRef = "HEAD") {
   assert(STABLE.test(version) || PREVIEW.test(version), "invalid release version");
   assert(/^[\w.-]+\/[\w.-]+$/.test(repository), "set GITHUB_REPOSITORY to owner/repository");
   assert(/^[a-f0-9]{40}$/.test(commit), "release provenance requires a committed source revision");
@@ -116,7 +116,15 @@ export function assemble(directory, version, repository, commit) {
       if (!filename.endsWith(".dmg")) platforms[platform] = { signature, url: `${base}/${filename}` };
     }
   }
-  const metadata = { version, tag, repository, commit, artifacts };
+  const metadata = {
+    version,
+    tag,
+    repository,
+    commit,
+    source_ref: sourceRef,
+    channel: PREVIEW.test(version) ? "develop" : "stable",
+    artifacts,
+  };
   save(path.join(directory, "release.json"), metadata);
   save(path.join(directory, "latest.json"), {
     version,
@@ -275,7 +283,7 @@ async function publishGithub(directory) {
     );
   }
   assert(meta.commit === git("rev-parse", "HEAD"), "release source must be HEAD");
-  const expected = assemble(directory, meta.version, meta.repository, meta.commit);
+  const expected = assemble(directory, meta.version, meta.repository, meta.commit, meta.source_ref);
   assert(JSON.stringify(expected) === JSON.stringify(meta), "release metadata does not match its assets");
   // GitHub's by-tag endpoint omits drafts; list releases to resume them.
   const findRelease = () =>
@@ -365,6 +373,7 @@ function preview(build) {
     "commit changes before building a preview; the version stamp is temporary",
   );
   const source = git("rev-parse", "HEAD");
+  const sourceRef = git("rev-parse", "--symbolic-full-name", "HEAD");
   const repository =
     process.env.GITHUB_REPOSITORY ?? JSON.parse(run("gh", ["repo", "view", "--json", "nameWithOwner"])).nameWithOwner;
   const directory = mkdtempSync(path.join(tmpdir(), "guild-preview-"));
@@ -387,6 +396,7 @@ function preview(build) {
         OUTPUT_DIR: output,
         GITHUB_REPOSITORY: repository,
         RELEASE_SOURCE_COMMIT: source,
+        RELEASE_SOURCE_REF: sourceRef,
       },
     });
   } finally {
@@ -395,6 +405,27 @@ function preview(build) {
   }
   console.log(`Preview ${version}: ${output}`);
   if (process.env.PUBLISH === "1") return publishGithub(output);
+}
+
+function deployPreview(directory) {
+  const meta = json(path.join(path.resolve(directory), "release.json"));
+  assert(
+    PREVIEW.test(meta.version) && meta.commit === git("rev-parse", "HEAD"),
+    "deploy the preview built from this committed checkout",
+  );
+  const compose = path.join(ROOT, "deploy/compose");
+  const envFile = path.join(compose, ".env");
+  const contents = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
+  writeFileSync(
+    envFile,
+    `${contents
+      .split("\n")
+      .filter((line) => !line.startsWith("GUILD_BUILD_VERSION="))
+      .join("\n")
+      .trimEnd()}\nGUILD_BUILD_VERSION=${meta.version}\n`,
+  );
+  run("docker", ["compose", "build", "server"], { cwd: compose, stdio: "inherit" });
+  run("docker", ["compose", "up", "-d", "server"], { cwd: compose, stdio: "inherit" });
 }
 
 async function main() {
@@ -455,9 +486,12 @@ async function main() {
     case "configure":
       configure();
       return;
+    case "deploy-preview":
+      deployPreview(args[0]);
+      return;
     default:
       console.log(
-        "Usage: node scripts/release.mjs configure | version | preview [build-number] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
+        "Usage: node scripts/release.mjs configure | version | preview [build-number] | deploy-preview <directory> | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
       );
   }
 }
