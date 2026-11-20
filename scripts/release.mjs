@@ -2,7 +2,7 @@
 // Release policy, isolated preview builds, and complete GitHub publications.
 // Run with --help for the local and CI entry points.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -53,11 +53,16 @@ export function versions(read) {
   return cargo;
 }
 
+export function nextStableVersion(stable) {
+  assert(STABLE.test(stable), "the committed product version must be stable");
+  const [major, minor, patch] = stable.split(".").map(BigInt);
+  return `${major}.${minor}.${patch + 1n}`;
+}
+
 export function previewVersion(stable, build) {
   assert(STABLE.test(stable), "the committed product version must be stable");
   assert(/^[1-9]\d*$/.test(String(build)), "build number must be a positive integer");
-  const [major, minor, patch] = stable.split(".").map(Number);
-  return `${major}.${minor}.${patch + 1}-dev.${build}`;
+  return `${nextStableVersion(stable)}-dev.${build}`;
 }
 
 // Checks semantic version fields, allowing unrelated dependency lock changes.
@@ -161,7 +166,7 @@ function collect(input, output, version) {
 function trustedStableWorkflow() {
   return (
     process.env.GITHUB_WORKFLOW === "Release clients" &&
-    process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+    ["workflow_dispatch", "push"].includes(process.env.GITHUB_EVENT_NAME) &&
     process.env.GITHUB_REF === "refs/heads/master"
   );
 }
@@ -190,22 +195,24 @@ export function verifyReleaseCommit(commit, publicKey, cwd = ROOT) {
   }
 }
 
+function githubApi(repository, route, method = "GET", body, allowMissing = false) {
+  let result;
+  try {
+    result = run(
+      "gh",
+      ["api", `repos/${repository}${route ? `/${route}` : ""}`, "--method", method, ...(body ? ["--input", "-"] : [])],
+      { stdio: ["pipe", "pipe", "pipe"], ...(body ? { input: JSON.stringify(body) } : {}) },
+    );
+  } catch (error) {
+    if (allowMissing && String(error.stdout).includes('"status":"404"')) return null;
+    throw error;
+  }
+  return result.trim() ? JSON.parse(result) : null;
+}
+
 function configure() {
   const repository = JSON.parse(run("gh", ["repo", "view", "--json", "nameWithOwner"])).nameWithOwner;
-  const api = (route, method = "GET", body, allowMissing = false) => {
-    let result;
-    try {
-      result = run(
-        "gh",
-        ["api", `repos/${repository}/${route}`, "--method", method, ...(body ? ["--input", "-"] : [])],
-        { stdio: ["pipe", "pipe", "pipe"], ...(body ? { input: JSON.stringify(body) } : {}) },
-      );
-    } catch (error) {
-      if (allowMissing && String(error.stdout).includes('"status":"404"')) return null;
-      throw error;
-    }
-    return result.trim() ? JSON.parse(result) : null;
-  };
+  const api = (...args) => githubApi(repository, ...args);
   const classic = api("branches/master/protection", "GET", undefined, true);
   if (classic) {
     const reviews = classic.required_pull_request_reviews;
@@ -267,7 +274,13 @@ function configure() {
   }
   if (classic) api("branches/master/protection", "DELETE");
   api("immutable-releases", "PUT");
-  console.log("Required version checks, master-only release credentials and immutable releases configured");
+  api("actions/permissions/workflow", "PUT", {
+    default_workflow_permissions: "read",
+    can_approve_pull_request_reviews: true,
+  });
+  console.log(
+    "Required version checks, master-only release credentials, sync PR creation and immutable releases configured",
+  );
 }
 
 async function publishGithub(directory) {
@@ -409,12 +422,163 @@ function preview(build) {
   if (process.env.PUBLISH === "1") return publishGithub(output);
 }
 
-function deployPreview(directory) {
+const PIN_PREFIX = "refs/tags/guild-pin-";
+const RETENTION_LOCK = "tags/guild-preview-retention-lock";
+
+export function releasePins(pins) {
+  return Object.entries(pins).map(([name, tag]) => {
+    assert(
+      typeof tag === "string" && tag.startsWith("client-v") && PREVIEW.test(tag.slice(8)),
+      `invalid release pin: ${name}`,
+    );
+    return tag;
+  });
+}
+
+function readPins(repository) {
+  const refs = githubApi(repository, "git/matching-refs/tags/guild-pin-");
+  return releasePins(
+    Object.fromEntries(
+      refs.map((ref) => {
+        assert(ref.ref.startsWith(PIN_PREFIX) && ref.object.type === "tag", "invalid installation pin ref");
+        const annotation = githubApi(repository, `git/tags/${ref.object.sha}`);
+        return [ref.ref, JSON.parse(annotation.message).release];
+      }),
+    ),
+  );
+}
+
+async function withRetentionLock(repository, operation) {
+  const master = githubApi(repository, "git/ref/heads/master").object.sha;
+  const lock = githubApi(repository, "git/tags", "POST", {
+    tag: "guild-preview-retention-lock",
+    object: master,
+    type: "commit",
+    message: JSON.stringify({
+      owner: randomUUID(),
+      run: process.env.GITHUB_RUN_ID ?? "local",
+      started_at: new Date().toISOString(),
+    }),
+  });
+  let acquired = false;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      githubApi(repository, "git/refs", "POST", { ref: `refs/${RETENTION_LOCK}`, sha: lock.sha });
+      acquired = true;
+      break;
+    } catch (error) {
+      if (!String(error.stdout).includes("Reference already exists")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  assert(acquired, "release retention is locked; inspect the lock tag before retrying");
+  const assertLock = () =>
+    assert(
+      githubApi(repository, `git/ref/${RETENTION_LOCK}`).object.sha === lock.sha,
+      "release retention lock ownership changed",
+    );
+  try {
+    return await operation(assertLock);
+  } finally {
+    assertLock();
+    githubApi(repository, `git/refs/${RETENTION_LOCK}`, "DELETE");
+  }
+}
+
+export function previewCleanup(releases, pins = [], now = Date.now()) {
+  assert(Number.isFinite(now), "invalid cleanup time");
+  const previews = releases
+    .filter((r) => r.prerelease === true && r.tag_name?.startsWith("client-v") && PREVIEW.test(r.tag_name.slice(8)))
+    .map((release) => ({ release, time: Date.parse(release.published_at ?? release.created_at) }))
+    .sort((a, b) => b.time - a.time);
+  assert(
+    previews.every((r) => Number.isFinite(r.time)),
+    "preview release has an invalid date; refusing cleanup",
+  );
+  return previews
+    .filter(
+      ({ release, time }, index) => index >= 10 && now - time >= 14 * 86400_000 && !pins.includes(release.tag_name),
+    )
+    .map(({ release }) => release);
+}
+
+function repositoryName() {
+  return (
+    process.env.GITHUB_REPOSITORY ?? JSON.parse(run("gh", ["repo", "view", "--json", "nameWithOwner"])).nameWithOwner
+  );
+}
+
+function pinName(installation, pending = false) {
+  assert(
+    /^[a-zA-Z0-9_]{1,40}$/.test(installation),
+    "installation pin name must contain letters, numbers or underscores",
+  );
+  return `guild-pin-${installation.toLowerCase()}${pending ? "-pending" : ""}`;
+}
+
+async function pinRelease(repository, installation, tag, pending = false) {
+  const name = pinName(installation, pending);
+  releasePins({ [name]: tag });
+  await withRetentionLock(repository, (assertLock) => {
+    const release = githubApi(repository, `releases/tags/${tag}`);
+    assert(release.prerelease === true && release.draft === false, "pin a published develop release");
+    let object = githubApi(repository, `git/ref/tags/${tag}`).object;
+    for (let depth = 0; object.type === "tag" && depth < 10; depth++)
+      object = githubApi(repository, `git/tags/${object.sha}`).object;
+    assert(object.type === "commit", "release tag must resolve to a commit");
+    const annotation = githubApi(repository, "git/tags", "POST", {
+      tag: name,
+      object: object.sha,
+      type: "commit",
+      message: JSON.stringify({ release: tag }),
+    });
+    const existing = githubApi(repository, `git/ref/tags/${name}`, "GET", undefined, true);
+    assertLock();
+    if (existing) githubApi(repository, `git/refs/tags/${name}`, "PATCH", { sha: annotation.sha, force: true });
+    else githubApi(repository, "git/refs", "POST", { ref: `refs/tags/${name}`, sha: annotation.sha });
+  });
+  console.log(`Pinned ${tag} for ${installation}${pending ? " (pending deployment)" : ""}`);
+}
+
+async function unpinRelease(repository, installation, pending = false) {
+  const name = pinName(installation, pending);
+  await withRetentionLock(repository, (assertLock) => {
+    assertLock();
+    githubApi(repository, `git/refs/tags/${name}`, "DELETE", undefined, true);
+  });
+}
+
+async function prunePreviews(apply) {
+  const repository = repositoryName();
+  const prune = (assertLock = () => {}) => {
+    const pins = readPins(repository);
+    const releases = JSON.parse(
+      run("gh", ["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`]),
+    ).flat();
+    const obsolete = previewCleanup(releases, pins);
+    console.log(
+      JSON.stringify({ apply, keepNewest: 10, keepDays: 14, pins, delete: obsolete.map((r) => r.tag_name) }, null, 2),
+    );
+    if (!apply) return;
+    for (const release of obsolete) {
+      const current = githubApi(repository, `releases/${release.id}`);
+      assert(current.prerelease === true && current.tag_name === release.tag_name, "release changed during cleanup");
+      assertLock();
+      githubApi(repository, `releases/${release.id}`, "DELETE");
+      githubApi(repository, `git/refs/tags/${release.tag_name}`, "DELETE", undefined, true);
+    }
+  };
+  if (apply) await withRetentionLock(repository, prune);
+  else prune();
+}
+
+async function deployPreview(directory, installation = "dev") {
   const meta = json(path.join(path.resolve(directory), "release.json"));
   assert(
     PREVIEW.test(meta.version) && meta.commit === git("rev-parse", "HEAD"),
     "deploy the preview built from this committed checkout",
   );
+  await pinRelease(meta.repository, installation, meta.tag, true);
   const compose = path.join(ROOT, "deploy/compose");
   const envFile = path.join(compose, ".env");
   const contents = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
@@ -428,6 +592,30 @@ function deployPreview(directory) {
   );
   run("docker", ["compose", "build", "server"], { cwd: compose, stdio: "inherit" });
   run("docker", ["compose", "up", "-d", "server"], { cwd: compose, stdio: "inherit" });
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      run(
+        "docker",
+        [
+          "compose",
+          "exec",
+          "-T",
+          "server",
+          "node",
+          "-e",
+          'fetch("http://127.0.0.1:8080/api/v1/health").then(r=>r.json()).then(h=>{if(h.version!==process.argv[1])process.exit(1)}).catch(()=>process.exit(1))',
+          meta.version,
+        ],
+        { cwd: compose, stdio: "pipe" },
+      );
+      await pinRelease(meta.repository, installation, meta.tag);
+      await unpinRelease(meta.repository, installation, true);
+      return;
+    } catch (error) {
+      if (attempt === 59) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
 }
 
 async function main() {
@@ -451,7 +639,24 @@ async function main() {
       return;
     }
     case "version":
-      console.log(versions((f) => readFileSync(path.join(ROOT, f), "utf8")));
+      console.log(
+        versions((f) => (args[0] ? run("git", ["show", `${args[0]}:${f}`]) : readFileSync(path.join(ROOT, f), "utf8"))),
+      );
+      return;
+    case "next-version":
+      console.log(nextStableVersion(versions((f) => readFileSync(path.join(ROOT, f), "utf8"))));
+      return;
+    case "is-release-commit":
+      process.exitCode = verifyReleaseCommit(args[0] ?? "HEAD", process.env.RELEASE_SIGNING_PUBLIC_KEY) ? 0 : 1;
+      return;
+    case "pin":
+      await pinRelease(repositoryName(), args[0], args[1]);
+      return;
+    case "unpin":
+      await unpinRelease(repositoryName(), args[0], args.includes("--pending"));
+      return;
+    case "prune":
+      await prunePreviews(args.includes("--apply"));
       return;
     case "preview-version":
       console.log(
@@ -489,11 +694,11 @@ async function main() {
       configure();
       return;
     case "deploy-preview":
-      deployPreview(args[0]);
+      await deployPreview(args[0], args[1]);
       return;
     default:
       console.log(
-        "Usage: node scripts/release.mjs configure | version | preview [build-number] | deploy-preview <directory> | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
+        "Usage: node scripts/release.mjs configure | version | preview [build-number] | deploy-preview <directory> [installation] | pin <installation> <tag> | unpin <installation> [--pending] | prune [--apply] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
       );
   }
 }

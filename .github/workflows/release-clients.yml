@@ -1,28 +1,28 @@
 name: Release clients
 on:
+  push:
+    branches: [develop, master]
   workflow_dispatch:
     inputs:
-      channel:
-        description: Stable releases run on master; previews run on any branch
-        type: choice
-        options: [develop, stable]
-        default: develop
       version:
-        description: Stable version (for example 0.6.127); empty for previews
+        description: Optional stable version override on master; otherwise next patch
         type: string
         default: ''
 permissions:
   contents: read
 concurrency:
-  group: release-clients
+  group: release-clients-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.channel == 'stable' && 'stable-release' || 'develop-release' }}
+    environment: ${{ github.ref == 'refs/heads/master' && 'stable-release' || 'develop-release' }}
     permissions:
       contents: write
     outputs:
+      skip: ${{ steps.prepare.outputs.skip }}
+      channel: ${{ steps.prepare.outputs.channel }}
       version: ${{ steps.prepare.outputs.version }}
       commit: ${{ steps.prepare.outputs.commit }}
       source_ref: ${{ github.ref }}
@@ -37,15 +37,30 @@ jobs:
       - name: Prepare release version
         id: prepare
         env:
-          CHANNEL: ${{ inputs.channel }}
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_PUSH_KEY: ${{ secrets.RELEASE_PUSH_KEY }}
         run: |
           set -euo pipefail
           node --test scripts/release.test.mjs
-          if [ "$CHANNEL" = stable ]; then
-            node scripts/release.mjs check-stable "$RELEASE_VERSION"
+          if [ "$GITHUB_REF" = refs/heads/master ]; then
+            if [ "$GITHUB_EVENT_NAME" = push ] && node scripts/release.mjs is-release-commit HEAD; then
+              echo 'skip=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo 'channel=stable' >> "$GITHUB_OUTPUT"
             git switch master
+            git pull --ff-only origin master
+            prior=$(git log --format=%H --grep="^Guild-Release-Run: $GITHUB_RUN_ID$" -1)
+            if [ -n "$prior" ] && node scripts/release.mjs is-release-commit "$prior"; then
+              git switch --detach "$prior"
+              RELEASE_VERSION=$(node scripts/release.mjs version)
+              echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+              echo "commit=$prior" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ -z "$RELEASE_VERSION" ]; then RELEASE_VERSION=$(node scripts/release.mjs next-version); fi
+            node scripts/release.mjs check-stable "$RELEASE_VERSION"
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             test -n "$RELEASE_PUSH_KEY"
@@ -60,17 +75,19 @@ jobs:
             scripts/bump-version.sh "$RELEASE_VERSION"
             git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/server/package.json packages/ui/package.json package-lock.json
             if ! git diff --cached --quiet; then
-              git commit -m "release: version $RELEASE_VERSION"
+              git commit -m "release: version $RELEASE_VERSION" -m "Guild-Release-Run: $GITHUB_RUN_ID"
               node scripts/release.mjs check-policy "$before" HEAD origin/master master
               git push origin HEAD:master
             fi
           else
+            echo 'channel=develop' >> "$GITHUB_OUTPUT"
             RELEASE_VERSION=$(node scripts/release.mjs preview-version "$(node -p Date.now\(\))")
           fi
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   build:
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -139,8 +156,10 @@ jobs:
             target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
             target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz.sig
           if-no-files-found: error
+          retention-days: 3
   publish:
     needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -165,3 +184,61 @@ jobs:
           node scripts/release.mjs collect bundles artifacts "$VERSION"
           node scripts/release.mjs assemble artifacts "$VERSION" "$GITHUB_REPOSITORY" "$COMMIT" "$SOURCE_REF"
           node scripts/release.mjs publish artifacts
+
+  sync-develop:
+    needs: [prepare, publish]
+    if: needs.prepare.outputs.channel == 'stable'
+    runs-on: ubuntu-24.04
+    environment: stable-release
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_PUSH_KEY }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Synchronize the released version through a develop PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin master develop
+          version=$(node scripts/release.mjs version origin/master)
+          if [ "$(node scripts/release.mjs version origin/develop)" = "$version" ]; then
+            gh workflow run release-clients.yml --ref develop
+            exit 0
+          fi
+          branch="sync/client-version-$version"
+          if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+            git switch --track "origin/$branch"
+          else
+            git switch -c "$branch" origin/develop
+            bash scripts/bump-version.sh --sync "$version"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/server/package.json packages/ui/package.json package-lock.json
+            git -c commit.gpgsign=false commit -m "release: sync version $version from master"
+            git push origin "HEAD:$branch"
+          fi
+          pr=$(gh pr list --head "$branch" --base develop --state open --json url --jq '.[0].url // empty')
+          if [ -z "$pr" ]; then
+            printf 'Synchronize the stable product version %s from master. Source changes on develop are preserved. Version policy validates this version against master.\n' "$version" > "$RUNNER_TEMP/version-sync.md"
+            pr=$(gh pr create --base develop --head "$branch" --title "release: sync version $version" --body-file "$RUNNER_TEMP/version-sync.md")
+          fi
+          sha=$(git rev-parse HEAD)
+          passed=false
+          for attempt in $(seq 1 300); do
+            conclusion=$(gh run list --workflow version-policy.yml --branch "$branch" --event push --commit "$sha" --json conclusion --jq '.[0].conclusion // empty')
+            if [ "$conclusion" = success ]; then passed=true; break; fi
+            if [ -n "$conclusion" ]; then echo "Version policy failed: $conclusion" >&2; exit 1; fi
+            sleep 2
+          done
+          if [ "$passed" != true ]; then echo "Timed out waiting for version synchronization checks" >&2; exit 1; fi
+          gh pr merge "$pr" --merge
+          # GITHUB_TOKEN merges do not emit a downstream push workflow.
+          gh workflow run release-clients.yml --ref develop

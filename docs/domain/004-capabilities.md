@@ -220,3 +220,8 @@ only on GitHub.
 Only a stable release on master changes the committed product version. Branch
 and local builds stamp a temporary preview version in their build checkout.
 The source commit is release provenance, separate from the version identifier.
+
+Release workflows run on develop and master pushes. Stable version increments
+originate on master and synchronize to develop through a version-only PR after
+publication. Develop release retention keeps the newest ten, those younger than
+fourteen days, and installation pins; stable releases are retained.

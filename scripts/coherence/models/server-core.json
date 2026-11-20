@@ -510,6 +510,10 @@
           "role": "executor"
         },
         {
+          "where": ".github/workflows/prune-client-previews.yml",
+          "role": "executor"
+        },
+        {
           "where": "apps/desktop/src-tauri/src/updates.rs",
           "role": "executor"
         },

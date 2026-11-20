@@ -10,6 +10,9 @@ import {
   filenames,
   PLATFORMS,
   previewVersion,
+  nextStableVersion,
+  previewCleanup,
+  releasePins,
   versions,
   verifyReleaseCommit,
 } from "./release.mjs";
@@ -162,6 +165,134 @@ else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
     const calls = readFileSync(path.join(directory, "calls"), "utf8").trim().split("\n").map(JSON.parse);
     assert.equal(calls.filter((args) => args.includes("--slurp")).length, 1);
     assert.ok(calls.some((args) => args.includes("--draft=false")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("automatic stable releases select the next patch and trust only master release events", () => {
+  assert.equal(nextStableVersion("1.2.9"), "1.2.10");
+  assert.equal(nextStableVersion("1.2.9007199254740993"), "1.2.9007199254740994");
+  assert.throws(() => nextStableVersion("1.2.3-dev.42"));
+  for (const event of ["push", "workflow_dispatch"]) {
+    execFileSync(process.execPath, [new URL("./release.mjs", import.meta.url).pathname, "check-stable", baseline], {
+      env: {
+        ...process.env,
+        GITHUB_WORKFLOW: "Release clients",
+        GITHUB_REF: "refs/heads/master",
+        GITHUB_EVENT_NAME: event,
+      },
+      stdio: "pipe",
+    });
+  }
+  assert.throws(() =>
+    execFileSync(process.execPath, [new URL("./release.mjs", import.meta.url).pathname, "check-stable", baseline], {
+      env: {
+        ...process.env,
+        GITHUB_WORKFLOW: "Release clients",
+        GITHUB_REF: "refs/heads/develop",
+        GITHUB_EVENT_NAME: "push",
+      },
+      stdio: "pipe",
+    }),
+  );
+});
+
+test("develop cleanup keeps newest ten, anything under fourteen days, and installation pins", () => {
+  const now = Date.UTC(2026, 10, 20);
+  const release = (n, age, extra = {}) => ({
+    id: n,
+    tag_name: `client-v1.2.4-dev.${n}`,
+    prerelease: true,
+    draft: false,
+    published_at: new Date(now - age * 86400_000).toISOString(),
+    ...extra,
+  });
+  const releases = Array.from({ length: 15 }, (_, i) => release(i + 1, 20 + i));
+  releases.push(release(100, 1));
+  releases.push(release(101, 2, { tag_name: "client-v1.2.4", prerelease: false }));
+  releases.push(release(102, 100, { tag_name: "unrelated", prerelease: true }));
+  const pins = releasePins({ dev: "client-v1.2.4-dev.15" });
+  const obsolete = previewCleanup(releases, pins, now).map((r) => r.id);
+  assert.deepEqual(obsolete, [10, 11, 12, 13, 14]);
+  assert.equal(releases.length, 18);
+  const fresh = Array.from({ length: 30 }, (_, i) => release(i + 1, 1));
+  assert.deepEqual(previewCleanup(fresh, [], now), []);
+  assert.deepEqual(previewCleanup(releases.slice(0, 10), [], now), []);
+  assert.throws(() => releasePins({ dev: "client-v1.2.4" }), /invalid release pin/);
+  assert.throws(() => previewCleanup([release(1, 0, { published_at: "invalid" })], [], now), /invalid date/);
+});
+
+test("preview pruning defaults to a dry run and never deletes stable or pinned releases", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "guild-release-prune-test-"));
+  const releases = Array.from({ length: 13 }, (_, i) => ({
+    id: i + 1,
+    tag_name: `client-v1.2.4-dev.${i + 1}`,
+    prerelease: true,
+    draft: false,
+    published_at: new Date(Date.UTC(2020, 0, 30 - i)).toISOString(),
+  }));
+  releases.push({ id: 99, tag_name: "client-v1.2.4", prerelease: false, published_at: "2020-01-01T00:00:00Z" });
+  try {
+    writeFileSync(path.join(directory, "releases.json"), JSON.stringify(releases));
+    writeFileSync(
+      path.join(directory, "gh"),
+      `#!${process.execPath}
+const fs=require('node:fs'),path=require('node:path');
+const dir=process.env.RELEASE_TEST_DIR,args=process.argv.slice(2),releases=JSON.parse(fs.readFileSync(path.join(dir,'releases.json')));
+fs.appendFileSync(path.join(dir,'calls'),JSON.stringify(args)+'\\n');
+if(args.includes('--slurp'))console.log(JSON.stringify([releases]));
+else if(args.includes('DELETE')){}
+else if(args[1].endsWith('/git/ref/heads/master'))console.log(JSON.stringify({object:{sha:'master'}}));
+else if(args[1].endsWith('/git/tags') && args.includes('POST'))console.log(JSON.stringify({sha:'lock-object'}));
+else if(args[1].endsWith('/git/refs') && args.includes('POST'))console.log('{}');
+else if(args[1].endsWith('/git/ref/tags/guild-preview-retention-lock'))console.log(JSON.stringify({object:{sha:process.env.RELEASE_TEST_LOST_LOCK?'other-owner':'lock-object'}}));
+else if(args[1].endsWith('/git/matching-refs/tags/guild-pin-'))console.log(JSON.stringify([{ref:'refs/tags/guild-pin-dev',object:{type:'tag',sha:'pin'}}]));
+else if(args[1].endsWith('/git/tags/pin'))console.log(JSON.stringify({message:JSON.stringify({release:'client-v1.2.4-dev.12'})}));
+else {
+ const release=releases.find(r=>args[1].endsWith('/releases/'+r.id));
+ if(!release)process.exit(1);console.log(JSON.stringify(release));
+}
+`,
+      { mode: 0o755 },
+    );
+    const options = {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        GITHUB_REPOSITORY: "alice/guild",
+        RELEASE_TEST_DIR: directory,
+      },
+      stdio: "pipe",
+    };
+    const command = [new URL("./release.mjs", import.meta.url).pathname, "prune"];
+    execFileSync(process.execPath, command, options);
+    assert.ok(!readFileSync(path.join(directory, "calls"), "utf8").includes("DELETE"));
+    writeFileSync(path.join(directory, "calls"), "");
+    execFileSync(process.execPath, [...command, "--apply"], options);
+    const deletes = readFileSync(path.join(directory, "calls"), "utf8")
+      .trim()
+      .split("\n")
+      .map(JSON.parse)
+      .filter((args) => args.includes("DELETE"));
+    assert.deepEqual(
+      deletes.map((args) => args[1]),
+      [
+        "repos/alice/guild/releases/11",
+        "repos/alice/guild/git/refs/tags/client-v1.2.4-dev.11",
+        "repos/alice/guild/releases/13",
+        "repos/alice/guild/git/refs/tags/client-v1.2.4-dev.13",
+        "repos/alice/guild/git/refs/tags/guild-preview-retention-lock",
+      ],
+    );
+    writeFileSync(path.join(directory, "calls"), "");
+    assert.throws(() =>
+      execFileSync(process.execPath, [...command, "--apply"], {
+        ...options,
+        env: { ...options.env, RELEASE_TEST_LOST_LOCK: "1" },
+      }),
+    );
+    assert.ok(!readFileSync(path.join(directory, "calls"), "utf8").includes("DELETE"));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

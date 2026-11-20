@@ -149,12 +149,16 @@ asset digests and sizes match the local files. Published versions are not replac
 
 ### Stable releases
 
-Run the **Release clients** GitHub Actions workflow on `master`, with channel
-`stable` and an explicit next stable version. The workflow uses
-`scripts/bump-version.sh`, commits the synchronized version on `master`, builds
-on native Windows, Linux, Apple Silicon and Intel macOS runners, and publishes
-`client-v<version>` as a stable GitHub Release. A retry can reuse an unpublished
-version. Publication refuses an existing published release.
+Every push to `master` starts **Release clients**, which selects the next patch
+version, runs `scripts/bump-version.sh`, creates an SSH-signed version commit,
+and builds and publishes the stable GitHub Release. A verified signed version
+commit does not trigger another release. A rerun reuses its version commit;
+manual dispatch accepts an optional stable version override.
+
+After publication, the workflow opens a version-only PR to `develop` and merges it
+after the required Version policy check. The synchronization edits
+version fields in develop's own files and lockfiles, preserving its dependencies
+and source changes. A develop build after synchronization previews the next patch.
 
 The repository secret `TAURI_SIGNING_PRIVATE_KEY` contains the existing updater
 private key; `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` contains its password (empty
@@ -169,7 +173,10 @@ blocks force pushes and deletion; the release deploy key has the automation exce
 the branch rule. Version commits are SSH-signed with that key; the policy checks
 its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
 files changed, and validates the synchronized version increase. A commit author
-or message alone grants no release exception. Setup is idempotent; the key stays
+or message alone grants no release exception. Repository setup permits Actions to create synchronization PRs; the sync job
+has explicit pull-request and workflow-dispatch permissions. It explicitly
+dispatches the develop release after merging because token-authenticated merges
+do not trigger another push workflow. Setup is idempotent; the key stays
 in GitHub's encrypted environment secret, not in the checkout.
 
 Only the master release workflow changes committed product versions. Other
@@ -180,8 +187,8 @@ preview stamps and version drift, including changes hidden in lockfiles.
 
 ### Preview and local releases
 
-Run **Release clients** on a non-master branch with channel `develop` to publish
-a GitHub prerelease. A preview of `0.6.126` is `0.6.127-dev.<timestamp>`. It is
+Every push to `develop` starts **Release clients** and publishes a GitHub
+prerelease. Manual dispatch on another branch also creates a preview. A preview of `0.6.126` is `0.6.127-dev.<timestamp>`. It is
 excluded from GitHub's latest stable release. No source version commit is created.
 
 The local cross-build entry point is:
@@ -209,10 +216,11 @@ stacks. Signing and packaging do not publish to a Guild database.
 Deploy the matching dev server from the same source commit and artifact directory:
 
 ```bash
-node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42
+node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42 dev
 ```
 
-This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable.
+This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable. After the server reports the stamped
+version, deployment pins that release for the named installation.
 
 ### Approving a release on a server
 
@@ -238,6 +246,41 @@ Verify the stack's `/api/v1/updates/latest.json`: its version must be the approv
 version and its `platforms` must contain all four targets with signatures and
 GitHub download URLs. Removing an updater artifact suppresses the incomplete
 manifest.
+
+### Develop release retention
+
+Daily cleanup keeps the newest ten develop releases, every develop release under
+fourteen days old, and every pinned release. Stable releases are never pruned.
+Expired develop releases and their tags are deleted together; deleted immutable
+tag names are not reused. Intermediate Actions build artifacts expire after three
+days. Release workflows queue independently per branch without cancelling builds.
+
+Each installation has an annotated `guild-pin-<name>` Git tag whose message
+records the published develop release tag. Installation names use letters,
+numbers and underscores and are case-insensitive. Deployment pins its target
+under `guild-pin-<name>-pending` before changing the server, preserves the previous
+running pin, then updates the running pin and removes the pending pin after
+health matches. A failed deployment leaves its pending pin for retry or removal.
+Other stacks pin their approved release before it ages out. The cleanup cannot
+discover independently hosted servers.
+
+Pinning, unpinning and destructive cleanup share an atomic Git ref lock and read
+live pin tags while holding it. Use the commands below for pin changes. If an
+interrupted operation leaves `guild-preview-retention-lock`, an operator verifies
+that operation is inactive before removing the lock tag. Cleanup fails closed
+when a pin or lock cannot be verified.
+
+```bash
+node scripts/release.mjs pin staging client-v0.6.127-dev.42
+node scripts/release.mjs unpin staging  # remove a running pin
+node scripts/release.mjs unpin staging --pending  # remove a failed deployment pin
+node scripts/release.mjs prune          # show the deletion plan
+node scripts/release.mjs prune --apply  # execute the same retention policy
+```
+
+The **Prune client previews** workflow applies this policy daily. Manual dispatch
+shows the plan unless its `apply` input is selected. Missing/invalid pin values or
+release dates abort cleanup. GitHub metadata in a server database is not a pin.
 
 ### Protocol baseline
 
