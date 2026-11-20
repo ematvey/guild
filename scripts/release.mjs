@@ -319,7 +319,19 @@ async function publishGithub(directory) {
       /* New local tag. */
     }
     if (localCommit) assert(localCommit === meta.commit, "local tag already names another source commit");
-    else run("git", ["tag", "-a", meta.tag, "-m", `client release ${meta.version}`, meta.commit]);
+    else
+      run("git", [
+        "-c",
+        "user.name=Guild release automation",
+        "-c",
+        "user.email=release@example.test",
+        "tag",
+        "-a",
+        meta.tag,
+        "-m",
+        `client release ${meta.version}`,
+        meta.commit,
+      ]);
     run("git", ["push", "origin", `refs/tags/${meta.tag}`], { stdio: "inherit" });
   }
   if (!release) {
