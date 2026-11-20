@@ -1,7 +1,6 @@
-// Client release downloads: admin
-// upload → user download via short-lived signed URLs, plus the Tauri
-// updater manifest. Artifacts are ed25519-signed over the sha256 digest so
-// downloads are verifiable offline.
+// Signed desktop releases: GitHub approval, downloads and the paired updater.
+// Imported bytes stay on GitHub; object-storage artifacts use signed URLs.
+// Artifact digests carry the server's ed25519 signature for offline verification.
 
 import type { Readable } from "node:stream";
 import {

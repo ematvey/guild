@@ -1,6 +1,5 @@
-// Client release artifacts: bytes in
-// object storage, metadata + sha256 in Postgres. Admins upload builds;
-// users download via short-lived signed URLs (bearer auth also accepted).
+// Desktop artifact metadata and digests in Postgres. Bytes are hosted on
+// GitHub for imported releases or in object storage for uploaded artifacts.
 
 import { createHash } from "node:crypto";
 import { ApiError } from "../errors.js";

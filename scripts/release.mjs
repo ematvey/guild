@@ -268,7 +268,7 @@ async function publishGithub(directory) {
   else {
     let localCommit;
     try {
-      localCommit = git("rev-parse", "--verify", `refs/tags/${meta.tag}^{commit}`);
+      localCommit = git("rev-parse", "--quiet", "--verify", `refs/tags/${meta.tag}^{commit}`);
     } catch {
       /* New local tag. */
     }
