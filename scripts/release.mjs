@@ -184,14 +184,36 @@ export function verifyReleaseCommit(commit, publicKey, cwd = ROOT) {
 
 function configure() {
   const repository = JSON.parse(run("gh", ["repo", "view", "--json", "nameWithOwner"])).nameWithOwner;
-  const api = (route, method = "GET", body) => {
-    const result = run(
-      "gh",
-      ["api", `repos/${repository}/${route}`, "--method", method, ...(body ? ["--input", "-"] : [])],
-      body ? { input: JSON.stringify(body) } : {},
-    );
+  const api = (route, method = "GET", body, allowMissing = false) => {
+    let result;
+    try {
+      result = run(
+        "gh",
+        ["api", `repos/${repository}/${route}`, "--method", method, ...(body ? ["--input", "-"] : [])],
+        { stdio: ["pipe", "pipe", "pipe"], ...(body ? { input: JSON.stringify(body) } : {}) },
+      );
+    } catch (error) {
+      if (allowMissing && String(error.stdout).includes('"status":"404"')) return null;
+      throw error;
+    }
     return result.trim() ? JSON.parse(result) : null;
   };
+  const classic = api("branches/master/protection", "GET", undefined, true);
+  if (classic) {
+    const reviews = classic.required_pull_request_reviews;
+    assert(
+      !classic.required_status_checks &&
+        !classic.restrictions &&
+        !reviews?.required_approving_review_count &&
+        !reviews?.dismiss_stale_reviews &&
+        !reviews?.require_code_owner_reviews &&
+        !reviews?.require_last_push_approval &&
+        ["required_signatures", "required_linear_history", "required_conversation_resolution", "lock_branch"].every(
+          (k) => !classic[k]?.enabled,
+        ),
+      "map customized master protections into the release rulesets before configuring automation",
+    );
+  }
   api("environments/stable-release", "PUT", {
     deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
   });
@@ -229,10 +251,13 @@ function configure() {
   }
   assert(key.read_only === false, "the release deploy key must permit pushes");
   run("gh", ["variable", "set", "RELEASE_SIGNING_PUBLIC_KEY", "--repo", repository, "--body", key.key]);
-  const ruleset = json(path.join(ROOT, ".github/release-ruleset.json"));
-  ruleset.bypass_actors = [{ actor_id: key.id, actor_type: "DeployKey", bypass_mode: "always" }];
-  const existing = api("rulesets").find((r) => r.name === ruleset.name);
-  api(`rulesets${existing ? `/${existing.id}` : ""}`, existing ? "PUT" : "POST", ruleset);
+  for (const file of ["release-ruleset.json", "master-release-ruleset.json"]) {
+    const ruleset = json(path.join(ROOT, ".github", file));
+    ruleset.bypass_actors = [{ actor_id: key.id, actor_type: "DeployKey", bypass_mode: "always" }];
+    const existing = api("rulesets").find((r) => r.name === ruleset.name);
+    api(`rulesets${existing ? `/${existing.id}` : ""}`, existing ? "PUT" : "POST", ruleset);
+  }
+  if (classic) api("branches/master/protection", "DELETE");
   api("immutable-releases", "PUT");
   console.log("Required version checks, master-only release credentials and immutable releases configured");
 }

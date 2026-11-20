@@ -164,7 +164,8 @@ access. It creates a repository-scoped release deploy key, stores its private ke
 as `RELEASE_PUSH_KEY` in the `stable-release` Actions environment, and restricts
 that environment to `master`. It also installs `.github/release-ruleset.json`,
 requiring **Version policy** on `develop` and `master`, and enables GitHub release
-immutability. The deploy key can push the validated release version commit through
+immutability. `.github/master-release-ruleset.json` requires PRs to master and
+blocks force pushes and deletion; the release deploy key has the automation exception. The deploy key can push the validated release version commit through
 the branch rule. Version commits are SSH-signed with that key; the policy checks
 its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
 files changed, and validates the synchronized version increase. A commit author
