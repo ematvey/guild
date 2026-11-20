@@ -1,95 +1,104 @@
-// Client release downloads: admin
-// upload → user download via short-lived signed URLs, plus the Tauri
-// updater manifest. Artifacts are ed25519-signed over the sha256 digest so
-// downloads are verifiable offline.
+// Signed desktop releases: GitHub approval, downloads and the paired updater.
+// Artifact bytes and updater signatures are hosted on GitHub.
 
-import type { Readable } from "node:stream";
-import {
-  createHmac,
-  createPrivateKey,
-  createPublicKey,
-  randomBytes,
-  sign as cryptoSign,
-  timingSafeEqual,
-} from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
-import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
-import { parseUuidParam, requireUser, requireAdminUser, queryParam, sendJson, bodyBytes } from "./error.js";
-import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
-import { SIGNING_SEED_KV } from "../store/org-kv.js";
+import { parseUuidParam, requireUser, requireAdminUser, queryParam, sendJson } from "./error.js";
+import { APPROVED_RELEASE_VERSION_KV, type ReleaseRow, type GithubReleaseArtifact } from "../store/releases.js";
 import { uuidv7 } from "../time.js";
 
-const MASTER_KEY_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-
-function objectKey(version: string, kind: string, platform: string, id: string, filename: string): string {
-  return `releases/${version}/${kind}/${platform}/${id}/${filename}`;
+async function githubJson(url: string): Promise<unknown> {
+  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw ApiError.badRequest(`GitHub release request failed (${response.status})`);
+  return response.json();
 }
 
-/** Short-lived signed download URL: `/dl?exp=<unix>&sig=<hmac(id,exp)>`. */
-function signDownload(ctx: IdentityCtx, id: string, exp: number): string {
-  const sig = createHmac("sha256", ctx.config.jwtSecret).update(`${id}:${exp}`).digest("hex");
-  return `/api/v1/releases/${id}/download?exp=${exp}&sig=${sig}`;
-}
-
-function verifySignature(ctx: IdentityCtx, id: string, exp: number, sig: string): void {
-  if (exp < Math.floor(Date.now() / 1000)) {
-    throw ApiError.unauthorized("download link expired");
+/** Release metadata is accepted only from the configured public repository;
+ * each artifact must match GitHub's own digest and size. */
+async function githubArtifacts(repository: string, tag: string, previews: boolean): Promise<GithubReleaseArtifact[]> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository))
+    throw ApiError.badRequest("configure GUILD_RELEASE_REPOSITORY as owner/repository");
+  if (!/^client-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-dev\.[1-9]\d*)?$/.test(tag))
+    throw ApiError.badRequest("invalid client release tag");
+  const version = tag.slice("client-v".length);
+  if (version.includes("-") && !previews)
+    throw ApiError.badRequest("develop releases require GUILD_RELEASE_CHANNEL=develop");
+  const release = (await githubJson(`https://api.github.com/repos/${repository}/releases/tags/${tag}`)) as {
+    tag_name?: string;
+    draft?: boolean;
+    prerelease?: boolean;
+    body?: string;
+    assets?: { name: string; size: number; digest: string; browser_download_url: string }[];
+  };
+  if (
+    release.tag_name !== tag ||
+    release.draft !== false ||
+    release.prerelease !== version.includes("-") ||
+    !Array.isArray(release.assets)
+  ) {
+    throw ApiError.badRequest("GitHub release is unpublished or its channel does not match the version");
   }
-  const expected = createHmac("sha256", ctx.config.jwtSecret).update(`${id}:${exp}`).digest("hex");
-  // Constant-time: the signature gates authenticated downloads.
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(sig, "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    throw ApiError.unauthorized("bad download signature");
+  const base = `https://github.com/${repository}/releases/download/${tag}`;
+  if (!release.assets.some((a) => a.name === "release.json" && a.browser_download_url === `${base}/release.json`)) {
+    throw ApiError.badRequest("GitHub release is missing release.json");
   }
-}
-
-/** The release-signing ed25519 seed, in order: GUILD_RELEASE_SIGNING_SEED
- *  env (hex, 32 bytes), the auto-generated seed persisted in server_kv,
- *  generate-once. */
-async function signingSeed(ctx: IdentityCtx): Promise<Buffer> {
-  const envSeed = process.env.GUILD_RELEASE_SIGNING_SEED;
-  if (envSeed !== undefined && envSeed.trim() !== "") {
-    return decodeSeed(envSeed);
+  const metadata = (await githubJson(`${base}/release.json`)) as {
+    version?: string;
+    repository?: string;
+    tag?: string;
+    artifacts?: { platform: string; filename: string; size_bytes: number; sha256: string; updater_signature: string }[];
+  };
+  if (
+    metadata.version !== version ||
+    metadata.repository !== repository ||
+    metadata.tag !== tag ||
+    !Array.isArray(metadata.artifacts) ||
+    metadata.artifacts.length !== 6
+  ) {
+    throw ApiError.badRequest("invalid GitHub release metadata");
   }
-  const existing = await ctx.kv.get(SIGNING_SEED_KV);
-  if (existing !== null) return decodeSeed(existing);
-  const hexSeed = randomBytes(32).toString("hex");
-  await ctx.kv.put(SIGNING_SEED_KV, hexSeed);
-  return decodeSeed(hexSeed);
-}
-
-function decodeSeed(seedHex: string): Buffer {
-  const trimmed = seedHex.trim();
-  if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
-    throw ApiError.internal("signing seed must be 32 bytes");
+  const result: GithubReleaseArtifact[] = [];
+  for (const platform of ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"]) {
+    const filenames =
+      platform === "windows-x86_64"
+        ? [`Guild_${version}_x64-setup.exe`]
+        : platform === "linux-x86_64"
+          ? [`Guild-${version}-x86_64.AppImage`]
+          : [
+              `Guild-${version}-macos-${platform.slice(7)}.dmg`,
+              `Guild-${version}-macos-${platform.slice(7)}.app.tar.gz`,
+            ];
+    for (const filename of filenames) {
+      const artifact = metadata.artifacts.find((a) => a.platform === platform && a.filename === filename);
+      const asset = release.assets.find((a) => a.name === filename);
+      const signatureAsset = release.assets.find((a) => a.name === `${filename}.sig`);
+      if (
+        !artifact ||
+        !asset ||
+        !signatureAsset ||
+        asset.browser_download_url !== `${base}/${filename}` ||
+        signatureAsset.browser_download_url !== `${base}/${filename}.sig` ||
+        !Number.isSafeInteger(artifact.size_bytes) ||
+        artifact.size_bytes <= 0 ||
+        asset.size !== artifact.size_bytes ||
+        !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+        asset.digest !== `sha256:${artifact.sha256}` ||
+        typeof artifact.updater_signature !== "string" ||
+        artifact.updater_signature.trim() === ""
+      ) {
+        throw ApiError.badRequest(`missing or unverified GitHub artifact: ${filename}`);
+      }
+      result.push({
+        ...artifact,
+        version,
+        id: uuidv7(),
+        download_url: `${base}/${filename}`,
+        notes: release.body ?? "",
+      });
+    }
   }
-  return Buffer.from(trimmed, "hex");
-}
-
-/** ed25519 private key from the 32-byte seed (PKCS#8 DER wrapping, the
- *  standard RFC 8410 encoding the Rust ed25519-dalek seed produces too). */
-function ed25519PrivateKey(seed: Buffer): ReturnType<typeof createPrivateKey> {
-  return createPrivateKey({
-    key: Buffer.concat([MASTER_KEY_ED25519_PREFIX, seed]),
-    format: "der",
-    type: "pkcs8",
-  });
-}
-
-/** Signs the 32-byte sha256 digest of an artifact; returns the hex
- *  signature (ed25519 over the digest, same bytes ed25519-dalek emits). */
-function signDigest(seed: Buffer, digest: Buffer): string {
-  return cryptoSign(null, digest, ed25519PrivateKey(seed)).toString("hex");
-}
-
-async function verifyingKeyHex(ctx: IdentityCtx): Promise<string> {
-  const seed = await signingSeed(ctx);
-  const publicKey = createPublicKey(ed25519PrivateKey(seed));
-  const spki = publicKey.export({ format: "der", type: "spki" }) as Buffer;
-  return spki.subarray(spki.length - 32).toString("hex");
+  return result;
 }
 
 /** Semver ordering (semver.org §11): major/minor/patch numerically; a
@@ -164,66 +173,42 @@ function updaterArtifact(target: string, filename: string): boolean {
   }
 }
 
-export function registerReleaseRoutes(
-  app: FastifyInstance,
-  gateway: GatewayCtx,
-  ctx: IdentityCtx,
-  objects: ObjectStore,
-): void {
-  app.post("/api/v1/admin/releases", { bodyLimit: 512 * 1024 * 1024 }, async (req, reply) => {
-    await requireAdminUser(ctx, req);
-    const version = queryParam(req, "version");
-    if (version === undefined) throw ApiError.badRequest("missing version");
-    if (version === "" || version.length > 64 || ![...version].every((c) => /[a-zA-Z0-9.\-_]/.test(c))) {
-      throw ApiError.badRequest("bad version");
+export function registerReleaseRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
+  const channelFor = (req: FastifyRequest): "stable" | "develop" => {
+    const channel = queryParam(req, "channel") ?? ctx.config.releaseChannel;
+    if (channel !== "stable" && channel !== "develop") throw ApiError.badRequest("invalid release channel");
+    return channel;
+  };
+  const eligible = (row: ReleaseRow, channel: "stable" | "develop"): boolean =>
+    !versionGt(row.version, ctx.config.serverVersion) &&
+    (channel === "stable" || ctx.config.releaseChannel === "develop") &&
+    row.version.includes("-") === (channel === "develop");
+  const approvedVersion = (channel: string) => ctx.kv.get(`${APPROVED_RELEASE_VERSION_KV}:${channel}`);
+  const downloadRow = async (req: FastifyRequest, id: string): Promise<ReleaseRow> => {
+    const row = await gateway.releases.get(id);
+    const channel = channelFor(req);
+    const approved = await approvedVersion(channel);
+    if (!eligible(row, channel) || approved === null || versionGt(row.version, approved)) {
+      throw ApiError.notFound("no compatible release on this channel");
     }
-    const kind = queryParam(req, "kind");
-    if (kind === undefined) throw ApiError.badRequest("missing kind");
-    if (kind !== "cli" && kind !== "desktop") {
-      throw ApiError.badRequest("kind must be cli or desktop");
-    }
-    const platform = queryParam(req, "platform");
-    if (platform === undefined) throw ApiError.badRequest("missing platform");
-    if (!validPlatform(platform)) throw ApiError.badRequest("unknown platform");
-    const rawFilename = queryParam(req, "filename");
-    if (rawFilename === undefined) throw ApiError.badRequest("missing filename");
-    const filename = safeFilename(rawFilename);
-    if (filename === null) throw ApiError.badRequest("bad filename");
-    const body = bodyBytes(req);
-    if (body.length === 0) throw ApiError.badRequest("empty body");
-    if (body.length > 512 * 1024 * 1024) {
-      throw ApiError.badRequest("artifact too large (max 512MiB)");
-    }
-    const contentType = queryParam(req, "content_type") ?? "application/octet-stream";
-    const notes = queryParam(req, "notes") ?? "";
-    const updaterSignature = queryParam(req, "updater_sig") ?? "";
+    return row;
+  };
 
-    const id = uuidv7();
-    const key = objectKey(version, kind, platform, id, filename);
-    try {
-      await objects.put(key, body);
-    } catch (error) {
-      throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
-    }
-    // ed25519-sign the artifact digest so downloads are verifiable offline
-    const digest = sha256Hex(body);
-    const seed = await signingSeed(ctx);
-    const signature = signDigest(seed, Buffer.from(digest, "hex"));
-    const created = await gateway.releases.create(
-      id,
-      version,
-      kind,
-      platform,
-      filename,
-      contentType,
-      body.length,
-      digest,
-      signature,
-      updaterSignature,
-      notes,
-      key,
+  app.post("/api/v1/admin/releases/github", async (req, reply) => {
+    await requireAdminUser(ctx, req);
+    if (ctx.config.releaseRepository === null) throw ApiError.badRequest("GUILD_RELEASE_REPOSITORY is not configured");
+    const body = req.body as { tag?: unknown } | null;
+    if (typeof body?.tag !== "string") throw ApiError.badRequest("tag is required");
+    const artifacts = await githubArtifacts(
+      ctx.config.releaseRepository,
+      body.tag,
+      ctx.config.releaseChannel === "develop",
     );
-    sendJson(reply, created);
+    if (versionGt(artifacts[0]!.version, ctx.config.serverVersion)) {
+      throw ApiError.badRequest("release is newer than this server");
+    }
+    await gateway.releases.importGithub(artifacts);
+    sendJson(reply, { version: artifacts[0]!.version, artifacts: artifacts.length });
     return reply;
   });
 
@@ -237,30 +222,20 @@ export function registerReleaseRoutes(
   app.delete("/api/v1/admin/releases/:id", async (req, reply) => {
     await requireAdminUser(ctx, req);
     const id = parseUuidParam(req, "id");
-    const deleted = await gateway.releases.delete(id);
-    const key = objectKey(deleted.version, deleted.kind, deleted.platform, deleted.id, deleted.filename);
-    try {
-      await objects.delete(key);
-    } catch {
-      // best-effort
-    }
+    await gateway.releases.delete(id);
     sendJson(reply, {});
     return reply;
   });
 
   app.get("/api/v1/releases", async (req, reply) => {
     await requireUser(ctx, req);
+    const channel = channelFor(req);
+    const approved = await approvedVersion(channel);
     const rows = await gateway.releases.list();
-    sendJson(reply, { releases: rows });
-    return reply;
-  });
-
-  app.get("/api/v1/releases/signing-key", async (req, reply) => {
-    await requireUser(ctx, req);
     sendJson(reply, {
-      public_key: await verifyingKeyHex(ctx),
-      algorithm: "ed25519",
-      signs: "sha256 digest of the artifact (hex)",
+      releases: rows
+        .filter((r) => eligible(r, channel) && approved !== null && !versionGt(r.version, approved))
+        .sort((a, b) => (versionGt(a.version, b.version) ? -1 : versionGt(b.version, a.version) ? 1 : 0)),
     });
     return reply;
   });
@@ -268,68 +243,36 @@ export function registerReleaseRoutes(
   app.get("/api/v1/releases/:id/download-url", async (req, reply) => {
     await requireUser(ctx, req);
     const id = parseUuidParam(req, "id");
-    await gateway.releases.get(id);
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    sendJson(reply, { url: signDownload(ctx, id, exp), expires_at: exp });
+    const row = await downloadRow(req, id);
+    sendJson(reply, { url: row.download_url });
     return reply;
   });
 
-  // Accepts either a valid signature (query) or a session bearer token.
   app.get("/api/v1/releases/:id/download", async (req, reply) => {
-    const id = parseUuidParam(req, "id");
-    const exp = queryParam(req, "exp");
-    const sig = queryParam(req, "sig");
-    let signed = false;
-    if (exp !== undefined && sig !== undefined) {
-      try {
-        verifySignature(ctx, id, Number(exp), sig);
-        signed = true;
-      } catch {
-        signed = false;
-      }
-    }
-    if (!signed) {
-      // fall back to session bearer auth (UIs that fetch with credentials)
-      const header = req.headers.authorization;
-      if (header === undefined || !header.startsWith("Bearer ")) {
-        throw ApiError.unauthorized("expired link and no bearer token");
-      }
-      await ctx.identity.validateSession(header.slice("Bearer ".length));
-    }
-    const releaseRow: ReleaseRow = await gateway.releases.get(id);
-    const key = objectKey(releaseRow.version, releaseRow.kind, releaseRow.platform, releaseRow.id, releaseRow.filename);
-    let bytes: Readable;
-    try {
-      bytes = await objects.getStream(key);
-    } catch (error) {
-      throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
-    }
-    return reply
-      .status(200)
-      .type(releaseRow.content_type)
-      .header("content-disposition", `attachment; filename="${releaseRow.filename}"`)
-      .send(bytes);
+    await requireUser(ctx, req);
+    const row = await downloadRow(req, parseUuidParam(req, "id"));
+    return reply.redirect(row.download_url);
   });
 
   // Tauri desktop auto-updater manifest. Public: static-JSON format from
-  // the updater plugin, pointing at short-lived signed download URLs. Only
+  // the updater plugin, pointing at GitHub download URLs. Only
   // platforms with a signed updater artifact for the newest desktop version
   // are listed.
-  app.get("/api/v1/updates/latest.json", async (_req, reply) => {
+  app.get("/api/v1/updates/latest.json", async (req, reply) => {
+    const channel = channelFor(req);
     const rows = await gateway.releases.list();
+    const approved = await approvedVersion(channel);
+    if (approved === null) return reply.status(204).send();
     let latest: { version: string; created_at: string } | null = null;
     for (const r of rows) {
       if (r.kind !== "desktop" || r.updater_signature === "") continue;
+      if (!eligible(r, channel)) continue;
+      if (r.version !== approved) continue;
       if (latest === null || versionGt(r.version, latest.version)) {
         latest = { version: r.version, created_at: r.created_at };
       }
     }
     if (latest === null) return reply.status(204).send();
-    const exp = Math.floor(Date.now() / 1000) + 86_400;
-    // the plugin needs absolute URLs: build them from the configured API
-    // base URL — the request's Host header is attacker-controlled on the
-    // direct-HTTP deployment, so it must not shape download origins
-    const base = ctx.config.apiUrl.replace(/\/+$/, "");
     const platforms: Record<string, unknown> = {};
     for (const target of ["linux-x86_64", "windows-x86_64", "darwin-x86_64", "darwin-aarch64"]) {
       const row = rows.find(
@@ -343,15 +286,17 @@ export function registerReleaseRoutes(
       if (row === undefined) continue;
       platforms[target] = {
         signature: row.updater_signature,
-        url: `${base}${signDownload(ctx, row.id, exp)}`,
+        url: row.download_url,
       };
     }
-    if (Object.keys(platforms).length === 0) return reply.status(204).send();
+    if (Object.keys(platforms).length !== 4) return reply.status(204).send();
     const notes = rows.find((r) => r.version === latest!.version && r.notes !== "")?.notes ?? "";
     // The manifest object keys are sorted like every json!-built body;
     // pub_date renders with chrono's to_rfc3339 (+00:00 offset).
     sendJson(reply, {
       version: latest.version,
+      server_version: ctx.config.serverVersion,
+      channel,
       notes,
       pub_date: toRfc3339Offset(latest.created_at),
       platforms,

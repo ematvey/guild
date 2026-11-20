@@ -21,16 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Pending downloaded update, waiting for the user to restart.
-#[derive(Default)]
-pub struct UpdateState {
-    pending: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
-    /// Last update-check start time. The webview invokes check_update_now on
-    /// every page load, so a reload storm must not hammer the update endpoint
-    /// or hold duplicate in-flight downloads — a check inside the interval is
-    /// a no-op (the 15-minute loop checks independently).
-    last_check: Mutex<Option<std::time::Instant>>,
-}
+mod updates;
+use updates::{start_update_checker, UpdateState};
 
 /// Everything the webview rpc surface needs: the in-process engine
 /// connection (pipes to the same-process dispatch loop) and the engine's
@@ -627,187 +619,7 @@ pub mod commands {
         });
         Ok(id)
     }
-
-    /// Version of the pending downloaded update, if any (UI queries on mount
-    /// so a toast isn't missed when the update finished before the webview).
-    #[tauri::command]
-    pub async fn pending_update_version(
-        state: State<'_, UpdateState>,
-    ) -> Result<Option<String>, String> {
-        Ok(state
-            .pending
-            .guard()
-            .as_ref()
-            .map(|(u, _)| u.version.clone()))
-    }
-
-    /// Applies the pending downloaded update and restarts the app.
-    #[tauri::command]
-    pub async fn install_update(
-        state: State<'_, UpdateState>,
-        app: AppHandle,
-    ) -> Result<(), String> {
-        let (update, bytes) = {
-            let mut guard = state.pending.guard();
-            guard
-                .take()
-                .ok_or_else(|| "no pending update".to_string())?
-        };
-        // on Windows the installer exits the app itself; mac/linux restart below
-        if let Err(e) = update.install(&bytes) {
-            // Restore: a failed install must not lose the pending update —
-            // the next install attempt would otherwise report "no pending
-            // update".
-            *state.pending.guard() = Some((update, bytes));
-            return Err(e.to_string());
-        }
-        app.request_restart();
-        #[allow(unreachable_code)]
-        Ok(())
-    }
 } // commands module
-
-/// Checks the paired server for a newer signed build and, if found, downloads
-/// it in the background. Emits `update.ready {version}` when the update can be
-/// applied; the frontend shows a restart toast (VSCode/Zed-style: download is
-/// silent, applying happens on the user's restart).
-async fn check_and_prepare_update(app: &AppHandle) {
-    use tauri_plugin_updater::UpdaterExt;
-    // only paired/logged-in instances have a server to ask
-    let session_path = match guild_app_server::session_store::default_path() {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-    let Some(session) = guild_app_server::session_store::load(&session_path) else {
-        eprintln!("updater: no stored session, skipping");
-        return;
-    };
-    eprintln!("updater: checking {}", session.base_url);
-    let endpoint = format!(
-        "{}/api/v1/updates/latest.json",
-        session.base_url.trim_end_matches('/')
-    );
-    let url = match url::Url::parse(&endpoint) {
-        Ok(u) => u,
-        Err(e) => {
-            eprintln!("updater: bad server url: {e}");
-            return;
-        }
-    };
-    let updater = match app
-        .updater_builder()
-        .endpoints(vec![url])
-        .and_then(|b| b.build())
-    {
-        Ok(u) => u,
-        Err(e) => {
-            eprintln!("updater: bad endpoint config: {e}");
-            return;
-        }
-    };
-    let update = match updater.check().await {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            eprintln!("updater: up to date");
-            return;
-        }
-        Err(e) => {
-            eprintln!("updater: check failed: {e}");
-            return;
-        }
-    };
-    let version = update.version.clone();
-    // An already-downloaded pending update must not re-download every
-    // cycle — the bytes are ready and a restart applies them.
-    {
-        let state: State<UpdateState> = app.state();
-        let already = state
-            .pending
-            .guard()
-            .as_ref()
-            .is_some_and(|(pending, _)| pending.version == version);
-        if already {
-            eprintln!("updater: version {version} already pending");
-            let _ = app.emit("update-ready", serde_json::json!({"version": version}));
-            return;
-        }
-    }
-    eprintln!("updater: downloading version {version}");
-    let app_for_progress = app.clone();
-    let result = update
-        .download(
-            move |chunk, total| {
-                let _ = app_for_progress.emit(
-                    "update-progress",
-                    serde_json::json!({"chunk": chunk, "total": total}),
-                );
-            },
-            || {},
-        )
-        .await;
-    let bytes = match result {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("updater: download failed: {e}");
-            let _ = app.emit(
-                "update-failed",
-                serde_json::json!({"message": e.to_string()}),
-            );
-            return;
-        }
-    };
-    let state: State<UpdateState> = app.state();
-    *state.pending.guard() = Some((update, bytes));
-    eprintln!("updater: version {version} ready to install");
-    let _ = app.emit("update-ready", serde_json::json!({"version": version}));
-}
-
-/// On-demand update check: the webview invokes this on every page load
-/// (F5, navigation) so a fresh refresh asks the server promptly — debounced
-/// to one check per interval so a reload storm cannot hammer the endpoint.
-#[tauri::command]
-async fn check_update_now(app: AppHandle) {
-    const MIN_INTERVAL: Duration = Duration::from_secs(60);
-    {
-        let state: State<UpdateState> = app.state();
-        let mut last = state.last_check.guard();
-        if let Some(t) = *last {
-            if t.elapsed() < MIN_INTERVAL {
-                return;
-            }
-        }
-        *last = Some(std::time::Instant::now());
-    }
-    check_and_prepare_update(&app).await;
-}
-
-pub fn start_update_checker(app: AppHandle) {
-    // debug builds run from target/ with dev sessions; never self-replace them
-    // (GUILD_UPDATER_FORCE opts a debug build in for testing)
-    if cfg!(debug_assertions) && std::env::var("GUILD_UPDATER_FORCE").is_err() {
-        return;
-    }
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("updater runtime");
-        rt.block_on(async move {
-            loop {
-                // The loop shares the debounce clock so a webview reload right
-                // after a scheduled check does not re-download immediately.
-                {
-                    let state: State<UpdateState> = app.state();
-                    *state.last_check.guard() = Some(std::time::Instant::now());
-                }
-                check_and_prepare_update(&app).await;
-                // re-check every 15 minutes while the app is open
-                tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
-            }
-        });
-    });
-}
 
 /// Restores the persisted session, hosts the CLI socket on it, builds the
 /// webview engine, and publishes the Shared so `start_engine` resolves.
@@ -888,7 +700,9 @@ pub fn run() {
         .manage(UpdateState::default())
         .manage(Arc::new(GuildState::default()))
         .invoke_handler(tauri::generate_handler![
-            check_update_now,
+            updates::check_update_now,
+            updates::update_status,
+            updates::set_update_channel,
             commands::start_engine,
             commands::rpc_submit,
             commands::list_wsl_distros,
@@ -897,8 +711,8 @@ pub fn run() {
             commands::list_dir,
             commands::daemon_trace_state,
             commands::set_daemon_trace,
-            commands::install_update,
-            commands::pending_update_version
+            updates::install_update,
+            updates::pending_update_version
         ])
         .setup(|app| {
             let handle = app.handle().clone();

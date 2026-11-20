@@ -237,6 +237,9 @@ pub enum WsServerMsg {
         /// no bundle.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         web_bundle: Option<String>,
+        /// The running server image's product/build version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        server_version: Option<String>,
     },
     /// The org's enabled chat models. Sent with every workspace push and to
     /// every member socket of the org when an admin changes a route.

@@ -142,140 +142,117 @@ The field stays editable, so any URL can always be typed at login.
 
 ## 4. Release process
 
-One script does everything (idempotent — republishing replaces existing
-artifacts of the same version/platform). It finds every tool on `PATH` and
-checks them all before the first compile. When running it detached
-(systemd-run), pass the interactive PATH explicitly — `cargo-xwin` lives in
-`~/.cargo/bin`, which the systemd user environment lacks:
+GitHub Releases holds desktop installers, updater bundles, minisign signatures,
+`SHA256SUMS`, `release.json` and the Tauri `latest.json`. Every publication contains
+six artifacts for four platforms. A draft becomes public only after GitHub's
+asset digests and sizes match the local files. Published versions are not replaced.
+
+### Stable releases
+
+Run the **Release clients** GitHub Actions workflow on `master`, with channel
+`stable` and an explicit next stable version. The workflow uses
+`scripts/bump-version.sh`, commits the synchronized version on `master`, builds
+on native Windows, Linux, Apple Silicon and Intel macOS runners, and publishes
+`client-v<version>` as a stable GitHub Release. A retry can reuse an unpublished
+version. Publication refuses an existing published release.
+
+The repository secret `TAURI_SIGNING_PRIVATE_KEY` contains the existing updater
+private key; `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` contains its password (empty
+for a passwordless key). Keep the existing key so installed clients accept updates.
+Repository setup uses `node scripts/release.mjs configure` with repository admin
+access. It creates a repository-scoped release deploy key, stores its private key
+as `RELEASE_PUSH_KEY` in the `stable-release` Actions environment, and restricts
+that environment to `master`. It also installs `.github/release-ruleset.json`,
+requiring **Version policy** on `develop` and `master`, and enables GitHub release
+immutability. `.github/master-release-ruleset.json` requires PRs to master and
+blocks force pushes and deletion; the release deploy key has the automation exception. The deploy key can push the validated release version commit through
+the branch rule. Version commits are SSH-signed with that key; the policy checks
+its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
+files changed, and validates the synchronized version increase. A commit author
+or message alone grants no release exception. Setup is idempotent; the key stays
+in GitHub's encrypted environment secret, not in the checkout.
+
+Only the master release workflow changes committed product versions. Other
+branches keep a stable version and may synchronize a released version from
+`master`. The version policy checks the workspace Cargo version and lock entries,
+Tauri config, npm package versions and workspace lock entries. It rejects committed
+preview stamps and version drift, including changes hidden in lockfiles.
+
+### Preview and local releases
+
+Run **Release clients** on a non-master branch with channel `develop` to publish
+a GitHub prerelease. A preview of `0.6.126` is `0.6.127-dev.<timestamp>`. It is
+excluded from GitHub's latest stable release. No source version commit is created.
+
+The local cross-build entry point is:
 
 ```bash
-BASE=http://localhost:18080 TOKEN=<admin-session-token> VERSION=0.1.0 \
-  VITE_DEFAULT_SERVER_URL=https://guild.example.com \
-  scripts/release-clients.sh
+node scripts/release.mjs preview
+# Explicit build number, with GitHub publication:
+PUBLISH=1 node scripts/release.mjs preview 42
 ```
 
-Per-platform pipeline:
+CI and local defaults use the same millisecond UTC timestamp scale so a later
+CI build sorts after a local build. An explicit local build number is also accepted. No hash is needed
+in a version. `release.json` records the source commit separately for provenance.
+The source tree must be committed; a disposable worktree receives the preview
+stamp, installs its own workspace dependencies and shares the build host's npm
+and Cargo caches. Artifacts land in
+`$OUTPUT_DIR` or the system temporary directory under `guild-releases/<version>`.
+The source branch and its version files stay unchanged.
 
-### Windows → `Guild_<VERSION>_x64-setup.exe`
-Official Tauri NSIS installer, cross-built:
-1. `npm run build` (frontend → `dist/`)
-2. `npm run tauri build -- --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis`
-   (cargo-xwin downloads the MSVC CRT/SDK on first run; `llvm-rc` compiles the
-   resource file; the tauri bundler runs `makensis`)
-3. Output: `target/x86_64-pc-windows-msvc/release/bundle/nsis/…-setup.exe`
-   (installers get shortcuts + uninstaller; WebView2 bootstrapper included)
+The local builder needs the tools in §3 and the SDK at `$SDKROOT`. Both local and
+CI builds use a generic client: the server address is editable at pairing, and
+the stored paired server controls updates. The same artifacts can serve several
+stacks. Signing and packaging do not publish to a Guild database.
 
-### Linux → `Guild-<VERSION>_x86_64.AppImage`
-1. `cargo build --release -p guild-desktop` (native; the GUI links the host
-   webkit2gtk, so a glibc floor pin does not apply — AppImage targets modern
-   distros)
-2. AppDir: `usr/bin/guild` + `guild.desktop` + hicolor icon
-3. `linuxdeploy --appdir <AppDir> --output appimage` (with
-   `APPIMAGE_EXTRACT_AND_RUN=1`) — bundles all non-base libs; output lands in
-   the linuxdeploy process CWD
-
-### macOS → `Guild-<VERSION>-macos-{aarch64,x86_64}.dmg`
-1. `cargo zigbuild --release -p guild-desktop --target <arch>-apple-darwin`
-   (WKWebView/AppKit link against the SDK; no Mac needed to *build*) — the
-   binary carries a valid linker-generated ad-hoc signature. The link runs
-   through `scripts/zig-link-dedup.sh`, which drops repeated `-framework`
-   flags: rustc passes one per crate, the zig linker writes one LC_LOAD_DYLIB
-   per flag, and dyld on macOS 26 aborts on a dylib named twice
-2. Hand-assemble `Guild.app` (`Contents/MacOS/Guild`, `Info.plist`,
-   `Resources/icon.icns`) — Tauri's bundler refuses to bundle off-host. With
-   `GUILD_APPLE_CERT_P12` (+ `GUILD_APPLE_CERT_PASSWORD`) set, the bundle is
-   Developer ID-signed via `rcodesign` before packaging
-3. 64 MB raw image → `mkfs.hfsplus` → loop-mount → copy `Guild.app` +
-   `Applications` symlink → unmount → `fsck.hfsplus` must pass
-4. Wrap into UDIF: `libdmg-hfsplus/build/dmg/dmg build raw.dmg out.dmg`
-5. Verify: `dmg2img` round-trip + `7z l` shows `Guild.app` and `Applications`
-6. With `GUILD_APPLE_CERT_P12` + `GUILD_APPLE_API_KEY` (App Store Connect API
-   key JSON for `rcodesign`) set: notarize the DMG (`rcodesign notary-submit
-   --wait`) and staple it. Requires an Apple Developer account ($99/yr); the
-   `.app.tar.gz` updater artifact is signed but not stapled — the updater
-   installs it without a quarantine flag, so no ticket is needed. Without the
-   cert, quarantined downloads trip Gatekeeper's "damaged" dialog; on the
-   user's Mac the workaround is
-   `xattr -dr com.apple.quarantine /Applications/Guild.app`
-
-`tauri.conf.json` has `"bundle": { "targets": "all" }`; per-run targets are
-chosen with `--bundles`/`--output` flags.
-
-### Publishing
-Each artifact is uploaded via `POST /api/v1/admin/releases` (admin session
-token). The server records size + **sha256**, and **ed25519-signs the
-sha256 digest** with a server key (auto-generated once, persisted in
-`server_kv`; override with `GUILD_RELEASE_SIGNING_SEED`). The script asserts
-the server-computed sha256 matches the local file before declaring success.
-
-### The client tag
-Before it builds anything the script refuses a dirty working tree, runs
-`node protocol/check.mjs` and aborts on a failure, and refuses a
-`client-v<VERSION>` tag that already marks a different commit (a shipped
-version is never re-tagged; bump `VERSION`). After the last upload it tags
-HEAD `client-v<VERSION>` (annotated) and pushes the tag to `origin` when
-that remote exists (`NO_PUSH_TAG=1` keeps it local). The newest
-`client-v*` tag is the compatibility baseline: `node protocol/check.mjs`
-loads `protocol/*.schema.json` from it and fails when the working tree
-removes or retypes anything a shipped client reads from the server
-(variants, properties, enum values, required-ness), or requires a property
-a shipped client does not send. With no tag reachable (a fresh or shallow
-clone: `git fetch --tags`) the comparison is skipped with a warning, and
-fails when `CI` is set.
-
-### Prod release
-A stack serves the clients published to its own release registry. A dev
-release does not reach prod users; prod needs its own run of the script.
+Deploy the matching dev server from the same source commit and artifact directory:
 
 ```bash
-cd ~/guild-live                      # the prod checkout, on master, clean
-BASE=http://localhost:18081 \
-  TOKEN=<prod admin session token> \
-  VERSION=<version from Cargo.toml> \
-  VITE_DEFAULT_SERVER_URL=https://guild.example.org \
-  NO_PUSH_TAG=1 \
-  scripts/release-clients.sh
+node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42
 ```
 
-Rules this release follows:
+This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable.
 
-- **Same version as the prod server.** The prod server's
-  `/api/v1/health` names the version the client must carry. A client newer
-  than its server reads as a mismatched client.
-- **The tag usually exists already.** The dev release created
-  `client-v<VERSION>` at the same commit, so the script accepts it and
-  only republishes artifacts. `NO_PUSH_TAG=1` keeps the tag local; it is
-  already on `origin`.
-- **The token comes from a password login.** Prod accounts are OIDC, but
-  `admin@example.test` still accepts a password:
-  ```bash
-  curl -sS -X POST http://localhost:18081/api/v1/auth/login \
-    -H 'content-type: application/json' \
-    -d '{"email":"admin@example.test","password":"<password>"}'
-  ```
-  The session lasts 30 days. Do not use `deploy/compose/BOOTSTRAP-ADMIN.txt`:
-  that account does not exist in the prod database, and login fails with
-  `invalid_credentials`.
-- **Verify the manifest, not the log.** After the run:
-  ```bash
-  curl -sS http://localhost:18081/api/v1/updates/latest.json \
-    | jq -r '.version, (.platforms|keys|join(" "))'
-  ```
-  All four platforms must be listed under the new version.
+### Approving a release on a server
 
-## 5. Downloading + verifying clients
+Configure the stack with `GUILD_RELEASE_REPOSITORY=owner/repository` and
+`GUILD_RELEASE_CHANNEL=stable` (the default) or `develop` for dev. Then an admin
+approves a published tag whose version does not exceed the running server:
 
-- No UI view: desktop releases are dev-controlled, not admin-controlled.
-  The API lists them and mints download URLs.
-- CLI:
-  ```bash
-  URL=$(curl -sS -H "authorization: Bearer $TOKEN" \
-        "$BASE/api/v1/releases/$ID/download-url" | jq -r .url)
-  curl -sS "$BASE$URL" -o artifact
-  guild verify --file artifact --sig <hex> --key <signing-key-hex>
-  ```
-- `verify` checks the ed25519 signature over the file's sha256 — tamper-proof
-  offline once the signing key is pinned.
+```bash
+curl -fsS -X POST "$BASE/api/v1/admin/releases/github" \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"tag":"client-v0.6.127"}'
+```
+
+The server reads only its configured public GitHub repository. It checks the
+release channel, all six artifacts, their digests, sizes and signature assets,
+then imports the download metadata and approved version in one transaction.
+The server's existing release endpoints return GitHub URLs. The paired updater
+endpoint serves only the approved complete release; it does not follow GitHub's
+latest release automatically. Develop stacks can approve a preview; stable stacks reject it. Approvals are stored separately for stable and develop. Listing, installer download URLs and the updater manifest all enforce the running server version as a ceiling, including after a server downgrade.
+Approval changes metadata only and requires no rebuild of the client artifacts.
+
+Verify the stack's `/api/v1/updates/latest.json`: its version must be the approved
+version and its `platforms` must contain all four targets with signatures and
+GitHub download URLs. Removing an updater artifact suppresses the incomplete
+manifest.
+
+### Protocol baseline
+
+The newest stable `client-v<major>.<minor>.<patch>` tag is the compatibility
+baseline for `node protocol/check.mjs`. Preview tags do not replace it. Fetch
+full history and tags in release checkouts. CI refuses a missing baseline.
+
+## 5. Downloading and verifying clients
+
+The release API lists approved GitHub artifacts compatible with the server.
+`GET /api/v1/releases/{id}/download-url?channel=stable|develop` returns a GitHub
+URL. Authenticated `/download` requests redirect there after checking eligibility.
+The desktop updater verifies the artifact's minisign signature against its baked
+public key. `release.json` and `SHA256SUMS` contain artifact digests for manual
+verification. Guild stores metadata and channel approvals; GitHub stores bytes.
 
 ## 6. Verification matrix (honest limits)
 
@@ -292,19 +269,24 @@ Rules this release follows:
 |---|---|
 | `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) |
 
-It is idempotent: it deletes and replaces existing artifacts of the same
-version/platform, verifies sha256 server-side, and aborts on any mismatch.
+Published GitHub versions are immutable by convention. A new preview gets a new
+build number; the publisher only resumes drafts. Enable GitHub release immutability
+to enforce asset and tag immutability at the repository level.
 
 ## Desktop auto-updater (v0.3.0+)
 
 The desktop app self-updates against the server it is paired/logged into:
 
-1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json`
+Each desktop installation saves a stable/develop preference in its local configuration.
+Settings → About changes it; signing out or pairing another server preserves it.
+A fresh stable build defaults to stable, and a fresh preview defaults to develop.
+
+1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json?channel=stable` or `?channel=develop`
    on the stored server URL. The endpoint is public and serves the Tauri
-   updater static-JSON manifest for the newest **fully signed** desktop
-   version: per-platform minisign signatures + short-lived signed download
-   URLs (24h expiry).
-2. If the manifest version is newer, the update downloads silently in the
+   updater static-JSON manifest for the server-approved desktop version,
+   with per-platform minisign signatures and GitHub download URLs. Without a
+   complete eligible approved GitHub release, the endpoint returns 204.
+2. The native updater requires `installed < candidate <= server_version` and a matching channel. The server version reaches the UI over `workspace_identity`; a change clears any pending offer. Before applying downloaded bytes, the updater revalidates the current server, channel, version and signature. If the eligible manifest version is newer, the update downloads silently in the
    background (VSCode/Zed-style); a toast "Update to vX ready — Restart to
    update" appears (on any screen, including the pairing screen).
 3. Clicking restart applies the update and relaunches. On Windows the NSIS
@@ -318,12 +300,7 @@ config; installs are rejected without a valid signature. Plain-HTTP servers
 are allowed (`dangerousInsecureTransportProtocol`) since signatures still
 gate every install.
 
-Release flow (per release): bump the version everywhere first with
-`scripts/bump-version.sh <version>` (see `docs/deploy-nuances.md` §10 for
-the full list of places it must land), then run
-`BASE=… TOKEN=… VERSION=… scripts/release-clients.sh` — it signs each
-artifact (AppImage, NSIS setup.exe, DMGs, `.app.tar.gz` updater bundles) and
-publishes signatures alongside. Debug builds never self-update
+The release workflow signs every artifact. Debug builds do not self-update
 (`GUILD_UPDATER_FORCE=1` opts in for testing).
 
 ---

@@ -143,6 +143,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.server-ts
+      args:
+        GUILD_BUILD_VERSION: ${GUILD_BUILD_VERSION:-}
     restart: unless-stopped
     ports:
       - "${GUILD_HTTP_PORT:-8080}:8080"

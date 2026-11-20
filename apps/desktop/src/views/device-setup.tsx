@@ -11,7 +11,6 @@ import { downloadRelease, listReleases, type Release } from "../lib/api/releases
 import { serverUrl } from "../lib/session";
 import { formatBytes } from "../lib/format";
 import { useTransientFlag } from "../lib/use-transient";
-import { compareVersions } from "./skills/version";
 
 type DesktopOs = "mac" | "windows" | "linux";
 
@@ -55,10 +54,7 @@ export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpe
       }
       const desktop = r.filter((x) => x.kind === "desktop");
       // show only the latest version's installers, one per platform
-      const latest = desktop.reduce<string | null>(
-        (acc, x) => (acc === null || compareVersions(x.version, acc) > 0 ? x.version : acc),
-        null,
-      );
+      const latest = desktop[0]?.version ?? null;
       setReleases(latest === null ? desktop : desktop.filter((x) => x.version === latest));
     });
   }, [open]);

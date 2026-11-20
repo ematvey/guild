@@ -1,8 +1,8 @@
 import { beginOidcLogin } from "./lib/oidc-login";
+import { useUpdateStatus } from "./lib/api/releases";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import Thread from "./views/thread/Thread";
 import { consumeAuthFragment, writeAddress } from "./views/thread/route";
 import { InstallPrompt } from "./views/onboarding";
@@ -136,24 +136,9 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
 /// Bottom-right toast shown when a signed update has been downloaded and is
 /// waiting; applying happens on the user's restart (VSCode/Zed-style).
 function UpdateToast() {
-  const [version, setVersion] = useState<string | null>(null);
+  const status = useUpdateStatus();
+  const version = status?.phase === "ready" ? status.pending_version : null;
   const [installing, setInstalling] = useState(false);
-  useEffect(() => {
-    // query first: the download may have finished before the webview loaded
-    invoke<string | null>("pending_update_version")
-      .then((v) => v && setVersion(v))
-      .catch(() => {});
-    // every page load (F5, navigation) asks the server immediately — the
-    // 15-minute Rust timer only covers long-lived sessions
-    invoke("check_update_now").catch(() => {});
-    const unlisteners: Promise<UnlistenFn>[] = [
-      listen<{ version: string }>("update-ready", (e) => setVersion(e.payload.version)),
-      listen("update-failed", () => setVersion(null)),
-    ];
-    return () => {
-      for (const p of unlisteners) p.then((u) => u()).catch(() => {});
-    };
-  }, []);
   if (!version) return null;
   return (
     <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-lg">

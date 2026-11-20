@@ -754,7 +754,7 @@ function compatibility(current) {
   try {
     tag = runGit(["tag", "--list", "client-v*", "--sort=-v:refname"])
       .split("\n")
-      .find((t) => t.trim() !== "");
+      .find((t) => /^client-v\d+\.\d+\.\d+$/.test(t));
   } catch {
     return { problems: [], missing: "not a git checkout" };
   }

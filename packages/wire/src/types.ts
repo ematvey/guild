@@ -177,6 +177,8 @@ export type ServerFrame =
       remote_images?: RemoteImagesPolicy;
       /** The served web bundle's identity; absent when none is served. */
       web_bundle?: string;
+      /** The running server image's product/build version. */
+      server_version?: string;
     }
   | { type: "model_list"; models: ModelOption[] }
   /** The member's own account; sent on connect and whenever its role,

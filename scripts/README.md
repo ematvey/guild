@@ -10,8 +10,10 @@ usage.
 | `check.sh` | The quality gate: every baseline check concurrently, one summary (`--fast`, `--only <name>`). |
 | `check-windows.sh` | Windows compile check for the engine; exits 2 (SKIP) without the `x86_64-pc-windows-gnu` target. Run by `check.sh`. |
 | `coherence/` | The coherence floor and domain model (`npm run coherence`); see `coherence/README.md`. |
-| `bump-version.sh <semver>` | Sets the product version in every file that carries it (`docs/deploy-nuances.md` §10). |
-| `release-clients.sh` | Builds, signs and publishes the desktop client for every OS, then tags and pushes `client-v<VERSION>` (`docs/clients.md` §4). |
+| `bump-version.sh <semver>` | Sets the committed product version on master; `--build` stamps a disposable preview (`docs/clients.md` §4). |
+| `release-clients.sh` | Local preview entry point; cross-builds all six signed desktop artifacts through the isolated release orchestrator. |
+| `release.mjs` | Version policy, isolated preview builds, native artifact collection and complete GitHub publication; `deploy-preview <directory>` rebuilds dev with the matching server version; `configure` installs the repository rule and master-only release credentials (`--help`). |
+| `release.test.mjs` | Executable version-policy and publication checks (`node --test scripts/release.test.mjs`). |
 | `zig-link-dedup.sh` | Linker wrapper `release-clients.sh` uses for the macOS builds: drops repeated `-framework` flags before zig links. |
 | `sandbox-it.sh` | Sandbox integration tests against a real runner, gVisor and the egress proxy; needs `runsc` on the host. |
 

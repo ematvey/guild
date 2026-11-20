@@ -397,6 +397,10 @@
         "web_bundle": {
           "type": "string",
           "description": "Identity of the web bundle the server serves (its entry script hash). A browser client running a different bundle reloads into the served one. Absent when the server serves no bundle."
+        },
+        "server_version": {
+          "type": "string",
+          "description": "The running server image's product version, including any temporary develop build stamp."
         }
       }
     },

@@ -965,6 +965,7 @@ describe("member-socket feed", () => {
     // the sidebar state follows on the same bootstrap.
     const info = await waitFrame(ws, (f) => f.type === "workspace_identity");
     expect(info.name).toBe("gateway test org");
+    expect(info.server_version).toBe(stack.env.config.serverVersion);
     await waitFrame(ws, (f) => f.type === "archived_thread_list");
     await waitFrame(ws, (f) => f.type === "project_list");
     await waitFrame(ws, (f) => f.type === "machine_list");
