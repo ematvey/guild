@@ -209,7 +209,10 @@ jobs:
           set -euo pipefail
           git fetch origin master develop
           version=$(node scripts/release.mjs version origin/master)
-          if [ "$(node scripts/release.mjs version origin/develop)" = "$version" ]; then exit 0; fi
+          if [ "$(node scripts/release.mjs version origin/develop)" = "$version" ]; then
+            gh workflow run release-clients.yml --ref develop
+            exit 0
+          fi
           branch="sync/client-version-$version"
           if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
             git switch --track "origin/$branch"
