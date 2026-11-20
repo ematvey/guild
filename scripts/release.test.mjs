@@ -126,10 +126,30 @@ test("master version commits require the release key's signature and change only
   }
 });
 
-test("publication uses the creation response when a new draft is absent from release listings", () => {
+test("publication handles a fresh runner without Git identity and a draft missing from listings", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "guild-release-publish-test-"));
   const version = "1.2.4-dev.42";
-  const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const globalConfig = path.join(directory, "empty-git-config");
+  writeFileSync(globalConfig, "");
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (...args) =>
+    execFileSync(realGit, args, { cwd: directory, env: gitEnv, encoding: "utf8", stdio: "pipe" });
+  git("init", "-q");
+  writeFileSync(path.join(directory, "source.txt"), "release source");
+  git("add", "source.txt");
+  git(
+    "-c",
+    "user.name=alice",
+    "-c",
+    "user.email=alice@example.test",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-qm",
+    "source",
+  );
+  const commit = git("rev-parse", "HEAD").trim();
   try {
     for (const platform of PLATFORMS)
       for (const file of filenames(version, platform)) {
@@ -142,7 +162,7 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const args = process.argv.slice(2), dir = process.env.RELEASE_TEST_DIR;
 fs.appendFileSync(path.join(dir, 'calls'), JSON.stringify(args) + '\\n');
 if (path.basename(process.argv[1]) === 'git') {
-  console.log(args[0] === 'ls-remote' ? process.env.RELEASE_TEST_COMMIT + '\\trefs/tags/client-v1.2.4-dev.42' : process.env.RELEASE_TEST_COMMIT);
+  if (args[0] !== 'ls-remote' && args[0] !== 'push') process.stdout.write(require('node:child_process').execFileSync(process.env.RELEASE_TEST_REAL_GIT, args, {cwd:dir,encoding:'utf8',stdio:'pipe'}));
 } else if (args.includes('--slurp')) console.log('[[]]');
 else if (args.includes('POST')) console.log('{"id":42,"draft":true}');
 else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
@@ -155,7 +175,8 @@ else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
     for (const program of ["git", "gh"]) writeFileSync(path.join(directory, program), fake, { mode: 0o755 });
     execFileSync(process.execPath, [new URL("./release.mjs", import.meta.url).pathname, "publish", directory], {
       env: {
-        ...process.env,
+        ...gitEnv,
+        RELEASE_TEST_REAL_GIT: realGit,
         PATH: `${directory}:${process.env.PATH}`,
         RELEASE_TEST_DIR: directory,
         RELEASE_TEST_COMMIT: commit,
@@ -165,6 +186,10 @@ else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
     const calls = readFileSync(path.join(directory, "calls"), "utf8").trim().split("\n").map(JSON.parse);
     assert.equal(calls.filter((args) => args.includes("--slurp")).length, 1);
     assert.ok(calls.some((args) => args.includes("--draft=false")));
+    assert.match(
+      git("cat-file", "-p", "client-v1.2.4-dev.42"),
+      /tagger Guild release automation <release@example.test>/,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
