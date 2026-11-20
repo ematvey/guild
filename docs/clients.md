@@ -176,10 +176,10 @@ blocks force pushes and deletion; the release deploy key has the automation exce
 the branch rule. Version commits are SSH-signed with that key; the policy checks
 its public key from `RELEASE_SIGNING_PUBLIC_KEY`, checks that only product version
 files changed, and validates the synchronized version increase. A commit author
-or message alone grants no release exception. Repository setup permits Actions to create synchronization PRs; the sync job
-has explicit pull-request and workflow-dispatch permissions. It explicitly
-dispatches the develop release after merging because token-authenticated merges
-do not trigger another push workflow. Setup is idempotent; the key stays
+or message alone grants no release exception. Repository setup permits Actions to create synchronization PRs. The sync job
+signs its version-only commit, waits for its policy check, verifies the signature
+and allowed files, then merges it with the release deploy key. The deploy-key
+push triggers both the normal develop policy check and its release workflow. Setup is idempotent; the key stays
 in GitHub's encrypted environment secret, not in the checkout.
 
 Only the master release workflow changes committed product versions. Other

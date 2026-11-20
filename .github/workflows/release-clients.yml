@@ -61,8 +61,6 @@ jobs:
             fi
             if [ -z "$RELEASE_VERSION" ]; then RELEASE_VERSION=$(node scripts/release.mjs next-version); fi
             node scripts/release.mjs check-stable "$RELEASE_VERSION"
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             test -n "$RELEASE_PUSH_KEY"
             signing_key="$RUNNER_TEMP/release-signing-key"
             umask 077
@@ -203,7 +201,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -215,22 +213,29 @@ jobs:
       - name: Synchronize the released version through a develop PR
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_PUSH_KEY: ${{ secrets.RELEASE_PUSH_KEY }}
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          test -n "$RELEASE_PUSH_KEY"
+          signing_key="$RUNNER_TEMP/sync-signing-key"
+          umask 077
+          printf '%s\n' "$RELEASE_PUSH_KEY" > "$signing_key"
+          trap 'rm -f "$signing_key"' EXIT
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config gpg.format ssh
+          git config user.signingkey "$signing_key"
+          git config commit.gpgsign true
           git fetch origin master develop
           version=$(node scripts/release.mjs version origin/master)
-          if [ "$(node scripts/release.mjs version origin/develop)" = "$version" ]; then
-            gh workflow run release-clients.yml --ref develop
-            exit 0
-          fi
+          if [ "$(node scripts/release.mjs version origin/develop)" = "$version" ]; then exit 0; fi
           branch="sync/client-version-$version"
           if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
             git switch --track "origin/$branch"
           else
             git switch -c "$branch" origin/develop
             bash scripts/bump-version.sh --sync "$version"
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/server/package.json packages/ui/package.json package-lock.json
             git -c commit.gpgsign=false commit -m "release: sync version $version from master"
             git push origin "HEAD:$branch"
@@ -249,6 +254,10 @@ jobs:
             sleep 2
           done
           if [ "$passed" != true ]; then echo "Timed out waiting for version synchronization checks" >&2; exit 1; fi
-          gh pr merge "$pr" --merge
-          # GITHUB_TOKEN merges do not emit a downstream push workflow.
-          gh workflow run release-clients.yml --ref develop
+          node scripts/release.mjs is-release-commit "$sha"
+          git fetch origin master develop
+          node scripts/release.mjs check-policy origin/develop "$sha" origin/master develop
+          git switch -c "merge/client-version-$version" origin/develop
+          git merge --no-ff "$sha" -m "Merge version synchronization $version"
+          # The deploy-key push emits both policy and release workflows.
+          git push origin HEAD:develop
