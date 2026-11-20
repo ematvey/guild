@@ -122,3 +122,47 @@ test("master version commits require the release key's signature and change only
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("publication uses the creation response when a new draft is absent from release listings", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "guild-release-publish-test-"));
+  const version = "1.2.4-dev.42";
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  try {
+    for (const platform of PLATFORMS)
+      for (const file of filenames(version, platform)) {
+        writeFileSync(path.join(directory, file), "artifact");
+        writeFileSync(path.join(directory, `${file}.sig`), "signature");
+      }
+    assemble(directory, version, "alice/guild", commit);
+    const fake = `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const args = process.argv.slice(2), dir = process.env.RELEASE_TEST_DIR;
+fs.appendFileSync(path.join(dir, 'calls'), JSON.stringify(args) + '\\n');
+if (path.basename(process.argv[1]) === 'git') {
+  console.log(args[0] === 'ls-remote' ? process.env.RELEASE_TEST_COMMIT + '\\trefs/tags/client-v1.2.4-dev.42' : process.env.RELEASE_TEST_COMMIT);
+} else if (args.includes('--slurp')) console.log('[[]]');
+else if (args.includes('POST')) console.log('{"id":42,"draft":true}');
+else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
+  console.log(JSON.stringify({ assets: fs.readdirSync(dir).filter(n => /^(Guild|release\\.json|latest\\.json|SHA256SUMS)/.test(n)).map(name => {
+    const bytes = fs.readFileSync(path.join(dir, name));
+    return {name, size:bytes.length, digest:'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex')};
+  })}));
+} else if (args[0] !== 'release') process.exit(1);
+`;
+    for (const program of ["git", "gh"]) writeFileSync(path.join(directory, program), fake, { mode: 0o755 });
+    execFileSync(process.execPath, [new URL("./release.mjs", import.meta.url).pathname, "publish", directory], {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        RELEASE_TEST_DIR: directory,
+        RELEASE_TEST_COMMIT: commit,
+      },
+      stdio: "pipe",
+    });
+    const calls = readFileSync(path.join(directory, "calls"), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(calls.filter((args) => args.includes("--slurp")).length, 1);
+    assert.ok(calls.some((args) => args.includes("--draft=false")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

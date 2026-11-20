@@ -310,26 +310,28 @@ async function publishGithub(directory) {
     run("git", ["push", "origin", `refs/tags/${meta.tag}`], { stdio: "inherit" });
   }
   if (!release) {
-    run(
-      "gh",
-      [
-        "release",
-        "create",
-        meta.tag,
-        "--repo",
-        meta.repository,
-        "--verify-tag",
-        "--draft",
-        "--title",
-        `Guild ${meta.version}`,
-        "--notes",
-        `Guild ${meta.version}. Source revision: ${meta.commit}.`,
-        ...(PREVIEW.test(meta.version) ? ["--prerelease"] : []),
-      ],
-      { stdio: "inherit" },
+    // The creation response owns the ID: a newly created draft may not yet
+    // appear in GitHub's release listing.
+    release = JSON.parse(
+      run("gh", [
+        "api",
+        "--method",
+        "POST",
+        `repos/${meta.repository}/releases`,
+        "-f",
+        `tag_name=${meta.tag}`,
+        "-f",
+        `name=Guild ${meta.version}`,
+        "-f",
+        `body=Guild ${meta.version}. Source revision: ${meta.commit}.`,
+        "-F",
+        "draft=true",
+        "-F",
+        `prerelease=${PREVIEW.test(meta.version)}`,
+      ]),
     );
-    release = findRelease();
   }
+  assert(release?.id, "GitHub did not return the release ID");
   const files = [
     ...meta.artifacts.flatMap((a) => [a.filename, `${a.filename}.sig`]),
     "release.json",
