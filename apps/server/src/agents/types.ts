@@ -154,6 +154,8 @@ export interface AgentThread {
 }
 
 export interface AgentRun {
+  /** Internal coordination histories are not member-visible runs. */
+  internal?: true;
   id: string;
   agent_id: string;
   /** The user on whose behalf the run happens. */

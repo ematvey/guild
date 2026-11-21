@@ -42,6 +42,7 @@ export interface ChatOwner {
 
 /** A chat's tenant, owner, machine binding and archive state. */
 export interface ChatIdentity {
+  internal?: boolean;
   org_id: string;
   user_id: string;
   machine_id: string | null;
@@ -173,10 +174,10 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
  *  children are execution transcripts, reachable by direct link but never
  *  listed. The HTTP lists and the socket's thread_list push share this one
  *  predicate. */
-export const USER_THREAD = `NOT EXISTS (
+export const USER_THREAD = `NOT c.internal AND (EXISTS (SELECT 1 FROM agent_threads st WHERE st.chat_id=c.id AND st.surfaced) OR NOT EXISTS (
     SELECT 1 FROM agent_threads xt
     WHERE xt.chat_id = c.id AND xt.type <> 'user'
-  )`;
+  ))`;
 
 /** The sidebar lists sort by recent activity, not creation: a chat's place
  *  follows its latest thread event (creation is its initial activity), so a
@@ -355,7 +356,7 @@ export class ChatStore {
    *  deletes a chat must return the row it changed. */
   async getChatListRow(orgId: string, userId: string, chatId: string): Promise<ChatListRow | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.id = $3`,
+      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.id = $3 AND NOT c.internal`,
       [orgId, userId, chatId],
     );
     const row = res.rows[0];
@@ -367,7 +368,7 @@ export class ChatStore {
    *  transcript stays reachable by link). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)`,
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND NOT internal AND (user_id = $3 OR $4)`,
       [orgId, chatId, caller.id, readsWholeOrg(caller)],
     );
     const row = res.rows[0];
@@ -381,7 +382,7 @@ export class ChatStore {
    *  to acting inside a member's conversation. */
   async getOwnChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND user_id = $3 AND NOT internal AND deleted_at IS NULL`,
       [orgId, chatId, caller.id],
     );
     const row = res.rows[0];
@@ -406,7 +407,7 @@ export class ChatStore {
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
-       WHERE c.org_id = $1
+       WHERE c.org_id = $1 AND NOT c.internal
          AND ($2::uuid IS NULL OR c.user_id = $2)
          AND ($3::text IS NULL OR u.email ILIKE '%' || $3 || '%')
          AND ($4::uuid IS NULL OR xt.agent_id = $4)
@@ -458,7 +459,7 @@ export class ChatStore {
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
-       WHERE c.org_id = $1`,
+       WHERE c.org_id = $1 AND NOT c.internal`,
       [orgId, since],
     );
     const row = res.rows[0] ?? {};
@@ -893,7 +894,7 @@ export class ChatStore {
    *  when the chat is gone. */
   async identityOf(chatId: string): Promise<ChatIdentity | null> {
     const res = await this.pool.query<ChatIdentity>(
-      "SELECT org_id, user_id, machine_id, archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
+      "SELECT org_id, user_id, machine_id, internal, archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
       [chatId],
     );
     return res.rows[0] ?? null;

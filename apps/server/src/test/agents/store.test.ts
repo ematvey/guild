@@ -21,10 +21,7 @@ dbDescribe("AgentStore", () => {
   let admin: UserRow;
   let teamId: string;
 
-  async function makeUser(
-    email: string,
-    role: "admin" | "member",
-  ): Promise<UserRow> {
+  async function makeUser(email: string, role: "admin" | "member"): Promise<UserRow> {
     const id = randomUUID();
     const res = await env!.db.query(
       `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
@@ -32,10 +29,7 @@ dbDescribe("AgentStore", () => {
       [id, orgId, email, role],
     );
     return {
-      ...(res.rows[0] as Omit<
-        UserRow,
-        "display_name" | "avatar_url" | "onboarded_at"
-      >),
+      ...(res.rows[0] as Omit<UserRow, "display_name" | "avatar_url" | "onboarded_at">),
       display_name: null,
       avatar_url: null,
       onboarded_at: null,
@@ -46,22 +40,13 @@ dbDescribe("AgentStore", () => {
     if (env === null) return;
     store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     orgId = randomUUID();
-    await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, $2)", [
-      orgId,
-      "agents-store-org",
-    ]);
+    await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, $2)", [orgId, "agents-store-org"]);
     owner = await makeUser("agents-owner@example.test", "member");
     member = await makeUser("agents-member@example.test", "member");
     admin = await makeUser("agents-admin@example.test", "admin");
     teamId = randomUUID();
-    await env.db.query(
-      "INSERT INTO teams (id, org_id, name) VALUES ($1, $2, 'agents-team')",
-      [teamId, orgId],
-    );
-    await env.db.query(
-      "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)",
-      [teamId, member.id],
-    );
+    await env.db.query("INSERT INTO teams (id, org_id, name) VALUES ($1, $2, 'agents-team')", [teamId, orgId]);
+    await env.db.query("INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)", [teamId, member.id]);
   }, 60_000);
 
   afterAll(async () => {
@@ -79,16 +64,12 @@ dbDescribe("AgentStore", () => {
     expect(agent.description).toBe("");
     expect(agent.tools).toContain("send_message");
 
-    const threads = (await store.threads.listThreads(agent.id, owner.id))
-      .threads;
+    const threads = (await store.threads.listThreads(agent.id, owner.id)).threads;
     expect(threads).toHaveLength(1);
     expect(threads[0]!.type).toBe("user");
     expect(threads[0]!.is_default).toBe(true);
     expect(threads[0]!.title).toBe("Main thread");
-    const chat = await env!.db.query(
-      "SELECT user_id, title FROM chats WHERE id = $1",
-      [threads[0]!.chat_id],
-    );
+    const chat = await env!.db.query("SELECT user_id, title FROM chats WHERE id = $1", [threads[0]!.chat_id]);
     expect(chat.rows[0]!.user_id).toBe(owner.id);
     expect(chat.rows[0]!.title).toBe("Main thread");
   });
@@ -100,9 +81,7 @@ dbDescribe("AgentStore", () => {
       description: "Writes launch notes.",
     });
     expect(agent.description).toBe("Writes launch notes.");
-    expect((await store.fetchAgent(agent.id)).description).toBe(
-      "Writes launch notes.",
-    );
+    expect((await store.fetchAgent(agent.id)).description).toBe("Writes launch notes.");
 
     const updated = await store.update(owner, agent.id, {
       description: "Reviews launch notes.",
@@ -113,17 +92,13 @@ dbDescribe("AgentStore", () => {
   });
 
   it("derives a short, word-bounded title from the first line", () => {
-    expect(deriveTitleFromMessage("  # Plan the launch  ")).toBe(
-      "Plan the launch",
-    );
+    expect(deriveTitleFromMessage("  # Plan the launch  ")).toBe("Plan the launch");
     expect(
       deriveTitleFromMessage(
         "Create memories/hello.md with a short note about yourself, then list the workspace and tell me what you wrote.",
       ),
     ).toBe("Create memories/hello.md with a short note…");
-    expect(
-      deriveTitleFromMessage("oneverylongwordwithoutspaces".repeat(3)),
-    ).toHaveLength(60);
+    expect(deriveTitleFromMessage("oneverylongwordwithoutspaces".repeat(3))).toHaveLength(60);
   });
 
   it("filters private agents by owner and explicit grants", async () => {
@@ -137,10 +112,10 @@ dbDescribe("AgentStore", () => {
     expect((await store.list(member)).map((a) => a.id)).not.toContain(agent.id);
 
     // A `read` entry shows the agent and lets the member use it, not manage.
-    await env!.db.query(
-      "INSERT INTO agent_access (agent_id, user_id, level) VALUES ($1, $2, 'read')",
-      [agent.id, member.id],
-    );
+    await env!.db.query("INSERT INTO agent_access (agent_id, user_id, level) VALUES ($1, $2, 'read')", [
+      agent.id,
+      member.id,
+    ]);
     const visible = await store.get(member, agent.id);
     expect(await store.access(member, visible)).toMatchObject({
       role: "user",
@@ -149,13 +124,11 @@ dbDescribe("AgentStore", () => {
     });
 
     // An `edit` entry manages it.
-    await env!.db.query(
-      "UPDATE agent_access SET level = 'edit' WHERE agent_id = $1 AND user_id = $2",
-      [agent.id, member.id],
-    );
-    expect(
-      await store.access(member, await store.get(member, agent.id)),
-    ).toMatchObject({
+    await env!.db.query("UPDATE agent_access SET level = 'edit' WHERE agent_id = $1 AND user_id = $2", [
+      agent.id,
+      member.id,
+    ]);
+    expect(await store.access(member, await store.get(member, agent.id))).toMatchObject({
       role: "editor",
       can_use: true,
       can_manage: true,
@@ -167,9 +140,7 @@ dbDescribe("AgentStore", () => {
       name: "Member Assistant",
       model: "GLM-Test",
     });
-    await env!.db.query("UPDATE agents SET is_personal = true WHERE id = $1", [
-      personal.id,
-    ]);
+    await env!.db.query("UPDATE agents SET is_personal = true WHERE id = $1", [personal.id]);
     await expect(store.get(owner, personal.id)).rejects.toMatchObject({
       status: 404,
     });
@@ -183,18 +154,13 @@ dbDescribe("AgentStore", () => {
       model: "GLM-Test",
       visibility: "org",
     });
-    const orgAccess = await store.access(
-      member,
-      await store.get(member, orgAgent.id),
-    );
+    const orgAccess = await store.access(member, await store.get(member, orgAgent.id));
     expect(orgAccess).toMatchObject({
       role: "user",
       can_use: true,
       can_manage: false,
     });
-    await expect(
-      store.update(member, orgAgent.id, { name: "Nope" }),
-    ).rejects.toMatchObject({ status: 403 });
+    await expect(store.update(member, orgAgent.id, { name: "Nope" })).rejects.toMatchObject({ status: 403 });
 
     const teamAgent = await store.create(owner, {
       name: "Team",
@@ -203,24 +169,18 @@ dbDescribe("AgentStore", () => {
     await expect(store.get(member, teamAgent.id)).rejects.toMatchObject({
       status: 404,
     });
-    await env!.db.query(
-      "INSERT INTO agent_access (agent_id, team_id, level) VALUES ($1, $2, 'read')",
-      [teamAgent.id, teamId],
-    );
-    const teamAccess = await store.access(
-      member,
-      await store.get(member, teamAgent.id),
-    );
+    await env!.db.query("INSERT INTO agent_access (agent_id, team_id, level) VALUES ($1, $2, 'read')", [
+      teamAgent.id,
+      teamId,
+    ]);
+    const teamAccess = await store.access(member, await store.get(member, teamAgent.id));
     expect(teamAccess).toMatchObject({
       role: "user",
       can_use: true,
       can_manage: false,
     });
 
-    const adminAccess = await store.access(
-      admin,
-      await store.get(admin, orgAgent.id),
-    );
+    const adminAccess = await store.access(admin, await store.get(admin, orgAgent.id));
     expect(adminAccess).toMatchObject({ role: "owner", can_manage: true });
     const renamed = await store.update(admin, orgAgent.id, {
       name: "Org renamed",
@@ -243,16 +203,10 @@ dbDescribe("AgentStore", () => {
     const archived = await store.lifecycle.archive(owner, agent.id);
     expect(archived.status).toBe("archived");
     expect((await store.list(owner)).map((a) => a.id)).not.toContain(agent.id);
-    expect(
-      (await store.list(owner, { includeArchived: true })).map((a) => a.id),
-    ).toContain(agent.id);
+    expect((await store.list(owner, { includeArchived: true })).map((a) => a.id)).toContain(agent.id);
 
-    expect((await store.lifecycle.restore(owner, agent.id)).status).toBe(
-      "active",
-    );
-    await expect(
-      store.lifecycle.restore(owner, agent.id),
-    ).rejects.toMatchObject({ status: 400 });
+    expect((await store.lifecycle.restore(owner, agent.id)).status).toBe("active");
+    await expect(store.lifecycle.restore(owner, agent.id)).rejects.toMatchObject({ status: 400 });
 
     const deleting = await store.lifecycle.markDeleted(owner, agent.id);
     expect(deleting.status).toBe("deleting");
@@ -262,18 +216,13 @@ dbDescribe("AgentStore", () => {
     expect(days).toBeGreaterThan(29);
     expect(days).toBeLessThan(31);
 
-    await expect(store.lifecycle.purge(member, agent.id)).rejects.toMatchObject(
-      { status: 403 },
-    );
-    const threads = (await store.threads.listThreads(agent.id, owner.id))
-      .threads;
+    await expect(store.lifecycle.purge(member, agent.id)).rejects.toMatchObject({ status: 403 });
+    const threads = (await store.threads.listThreads(agent.id, owner.id)).threads;
     await store.lifecycle.purge(owner, agent.id);
     await expect(store.fetchAgent(agent.id)).rejects.toMatchObject({
       status: 404,
     });
-    const leftover = await env!.db.query("SELECT id FROM chats WHERE id = $1", [
-      threads[0]!.chat_id,
-    ]);
+    const leftover = await env!.db.query("SELECT id FROM chats WHERE id = $1", [threads[0]!.chat_id]);
     expect(leftover.rowCount).toBe(0);
   });
 
@@ -282,31 +231,19 @@ dbDescribe("AgentStore", () => {
       name: "Threads",
       model: "GLM-Test",
     });
-    const extra = await store.threads.createThread(
-      agent.id,
-      owner.id,
-      "Second conversation",
-    );
+    const extra = await store.threads.createThread(agent.id, owner.id, "Second conversation");
     expect(extra.type).toBe("user");
     expect(extra.is_default).toBe(false);
     expect(extra.title).toBe("Second conversation");
     expect(extra.chat_id).toBeTruthy();
 
-    const threads = (await store.threads.listThreads(agent.id, owner.id))
-      .threads;
+    const threads = (await store.threads.listThreads(agent.id, owner.id)).threads;
     expect(threads.some((thread) => thread.is_default)).toBe(true);
 
-    const renamed = await store.threads.renameThread(
-      agent.id,
-      owner.id,
-      extra.id,
-      "Renamed",
-    );
+    const renamed = await store.threads.renameThread(agent.id, owner.id, extra.id, "Renamed");
     expect(renamed.title).toBe("Renamed");
     expect(renamed.title_locked).toBe(true);
-    const chat = await env!.db.query("SELECT title FROM chats WHERE id = $1", [
-      extra.chat_id,
-    ]);
+    const chat = await env!.db.query("SELECT title FROM chats WHERE id = $1", [extra.chat_id]);
     expect(chat.rows[0]!.title).toBe("Renamed");
 
     // Age the stamp so the touch moves it whatever the clock's resolution.
@@ -314,13 +251,9 @@ dbDescribe("AgentStore", () => {
       "UPDATE agent_threads SET last_activity_at = last_activity_at - interval '1 minute' WHERE id = $1",
       [extra.id],
     );
-    const before = (await store.threads.getThread(agent.id, owner.id, extra.id))
-      .last_activity_at;
+    const before = (await store.threads.getThread(agent.id, owner.id, extra.id)).last_activity_at;
     await store.threads.touchThread(agent.id, extra.id);
-    expect(
-      (await store.threads.getThread(agent.id, owner.id, extra.id))
-        .last_activity_at > before,
-    ).toBe(true);
+    expect((await store.threads.getThread(agent.id, owner.id, extra.id)).last_activity_at > before).toBe(true);
   });
 
   it("keeps each user's threads private inside a shared agent", async () => {
@@ -329,33 +262,13 @@ dbDescribe("AgentStore", () => {
       model: "GLM-Test",
       visibility: "org",
     });
-    const mine = await store.threads.createThread(
-      agent.id,
-      owner.id,
-      "Owner thread",
-    );
-    const theirs = await store.threads.createThread(
-      agent.id,
-      member.id,
-      "Member thread",
-    );
+    const mine = await store.threads.createThread(agent.id, owner.id, "Owner thread");
+    const theirs = await store.threads.createThread(agent.id, member.id, "Member thread");
 
-    expect(
-      (await store.threads.listThreads(agent.id, owner.id)).threads.map(
-        (t) => t.id,
-      ),
-    ).not.toContain(theirs.id);
-    expect(
-      (await store.threads.listThreads(agent.id, member.id)).threads.map(
-        (t) => t.id,
-      ),
-    ).not.toContain(mine.id);
-    await expect(
-      store.threads.getThread(agent.id, member.id, mine.id),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      store.threads.renameThread(agent.id, member.id, mine.id, "Hijack"),
-    ).rejects.toMatchObject({
+    expect((await store.threads.listThreads(agent.id, owner.id)).threads.map((t) => t.id)).not.toContain(theirs.id);
+    expect((await store.threads.listThreads(agent.id, member.id)).threads.map((t) => t.id)).not.toContain(mine.id);
+    await expect(store.threads.getThread(agent.id, member.id, mine.id)).rejects.toMatchObject({ status: 404 });
+    await expect(store.threads.renameThread(agent.id, member.id, mine.id, "Hijack")).rejects.toMatchObject({
       status: 404,
     });
   });
@@ -396,15 +309,9 @@ dbDescribe("AgentStore", () => {
     });
     expect((await store.list(admin)).map((a) => a.id)).toContain(personal!.id);
 
-    await expect(
-      store.lifecycle.archive(owner, personal!.id),
-    ).rejects.toMatchObject({ status: 400 });
-    await expect(
-      store.lifecycle.markDeleted(owner, personal!.id),
-    ).rejects.toMatchObject({ status: 400 });
-    await expect(
-      store.update(owner, personal!.id, { visibility: "org" }),
-    ).rejects.toMatchObject({
+    await expect(store.lifecycle.archive(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
+    await expect(store.lifecycle.markDeleted(owner, personal!.id)).rejects.toMatchObject({ status: 400 });
+    await expect(store.update(owner, personal!.id, { visibility: "org" })).rejects.toMatchObject({
       status: 400,
     });
   });
@@ -412,9 +319,7 @@ dbDescribe("AgentStore", () => {
   it("does not cap the number of agents in an organization", async () => {
     const created = [];
     for (let i = 0; i < 30; i += 1) {
-      created.push(
-        await store.create(owner, { name: `Bulk ${i}`, model: "GLM-Test" }),
-      );
+      created.push(await store.create(owner, { name: `Bulk ${i}`, model: "GLM-Test" }));
     }
     expect(created).toHaveLength(30);
   });
@@ -424,8 +329,7 @@ dbDescribe("AgentStore", () => {
       name: "Leaving",
       model: "GLM-Test",
     });
-    const main = (await store.threads.listThreads(agent.id, owner.id))
-      .threads[0]!;
+    const main = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
     const side = await store.threads.createThread(agent.id, owner.id, "Side");
     const live = await store.runs.createRun({
       agent_id: agent.id,
@@ -457,11 +361,11 @@ dbDescribe("AgentStore", () => {
       name: "Runs",
       model: "GLM-Test",
     });
-    const thread = (await store.threads.listThreads(agent.id, owner.id))
-      .threads[0]!;
+    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
     const run = await store.runs.createRun({
       agent_id: agent.id,
       thread_id: thread.id,
+      user_id: owner.id,
       trigger: "message",
     });
     expect(run.status).toBe("queued");
@@ -475,24 +379,12 @@ dbDescribe("AgentStore", () => {
     expect(finished.status).toBe("succeeded");
     expect(finished.summary).toBe("done");
     expect((await store.runs.getRun(run.id)).tokens).toBe(12);
-    expect(
-      (await store.runs.listRuns(agent.id, { status: "succeeded" })).map(
-        (r) => r.id,
-      ),
-    ).toEqual([run.id]);
+    expect((await store.runs.listRuns(agent.id, { status: "succeeded" })).map((r) => r.id)).toEqual([run.id]);
 
-    const activity = await store.runs.listActivity(
-      orgId,
-      { agent_id: agent.id },
-      owner,
-    );
+    const activity = await store.runs.listActivity(orgId, { agent_id: agent.id }, owner);
     expect(activity).toHaveLength(1);
     expect(activity[0]!.agent_name).toBe("Runs");
-    const hidden = await store.runs.listActivity(
-      orgId,
-      { agent_id: agent.id },
-      member,
-    );
+    const hidden = await store.runs.listActivity(orgId, { agent_id: agent.id }, member);
     expect(hidden).toHaveLength(0);
 
     const notice = await store.notices.createNotice({
@@ -504,12 +396,8 @@ dbDescribe("AgentStore", () => {
     });
     expect(notice.read_at).toBeNull();
     expect(await store.notices.listNotices(owner.id, orgId)).toHaveLength(1);
-    expect(
-      (await store.notices.markNoticeRead(owner.id, notice.id)).read_at,
-    ).not.toBeNull();
-    await expect(
-      store.notices.markNoticeRead(member.id, notice.id),
-    ).rejects.toMatchObject({ status: 404 });
+    expect((await store.notices.markNoticeRead(owner.id, notice.id)).read_at).not.toBeNull();
+    await expect(store.notices.markNoticeRead(member.id, notice.id)).rejects.toMatchObject({ status: 404 });
 
     await insertChunks(env!.db, [
       {

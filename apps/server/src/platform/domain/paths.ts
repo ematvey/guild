@@ -20,3 +20,12 @@ export function relativeDestination(path: string): { ok: true; path: string } | 
   if (parts.length === 0) return { ok: false, reason: "path must name a file" };
   return { ok: true, path: parts.join("/") };
 }
+
+/** Memory guidance is reconciled through native file tools, not imported bytes. */
+export function isProtectedMemoryPath(relativePath: string): boolean {
+  return (
+    ["MEMORY.md", "AGENTS.md", "AGENTS.override.md"].includes(relativePath) ||
+    relativePath.startsWith("memories/") ||
+    relativePath.startsWith("notes/")
+  );
+}

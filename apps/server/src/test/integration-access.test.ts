@@ -181,6 +181,13 @@ describe("turn scope", () => {
   const offered = (s: IntegrationScope, info: IntegrationToolInfo, role = "member") =>
     toolOffered(turn, info, scopeCeiling(s, turn.slug, info), role);
 
+  it("rejects account impersonation for every shared Agent even with admin read grants", () => {
+    const impersonated = { ...turn, impersonated: true };
+    const read = tool("hubspot_search_deals", "read");
+    for (const role of ["member", "admin"]) expect(toolOffered(impersonated, read, "admin", role, true)).toBe(false);
+    expect(toolOffered(impersonated, read, "read", "member", false)).toBe(true);
+  });
+
   it("an Integration outside the agent's list offers nothing", () => {
     expect(offered(scope([]), tool("hubspot_search_deals", "read"))).toBe(false);
   });
@@ -308,9 +315,11 @@ describe("integration access over HTTP", () => {
     expect(created.statusCode).toBe(200);
     const agentId = (JSON.parse(created.body) as { agent: { id: string } }).agent.id;
     const read = async () =>
-      (JSON.parse((await call(stack.memberToken, "GET", `/api/v1/agents/${agentId}`)).body) as {
-        agent: { integrations: { slug: string; ceiling: string }[]; integration_warnings: unknown[] };
-      }).agent;
+      (
+        JSON.parse((await call(stack.memberToken, "GET", `/api/v1/agents/${agentId}`)).body) as {
+          agent: { integrations: { slug: string; ceiling: string }[]; integration_warnings: unknown[] };
+        }
+      ).agent;
     expect((await read()).integrations.find((e) => e.slug === "crm2")).toBeUndefined();
 
     await call(stack.adminToken, "PUT", `/api/v1/admin/integrations/${crmId}/access`, {

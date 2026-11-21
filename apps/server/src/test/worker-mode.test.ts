@@ -647,7 +647,10 @@ describe("worker-per-chat (fork supervisor)", () => {
       ws.on("error", reject);
     });
     try {
-      await waitFor(async () => stack.env.app.platform.hub.machineOnline(machineId));
+      await waitFor(async () => {
+        const owner = await stack.env.app.platform.machines.ownerOf(machineId);
+        return owner !== null && owner[0] === stack.memberId && stack.env.app.platform.hub.machineOnline(machineId);
+      });
       const chatId = await createChat("cancel machine tool");
       await stack.env.db.query("UPDATE chats SET approval=$2 WHERE id=$1", [
         chatId,

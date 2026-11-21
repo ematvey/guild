@@ -67,6 +67,7 @@ export async function searchChunks(
      JOIN agent_threads t ON t.id = c.thread_id
      CROSS JOIN q
      WHERE c.agent_id = $1 AND t.user_id = $5 AND c.tsv @@ q.tsq
+       AND NOT EXISTS (SELECT 1 FROM chats internal_chat WHERE internal_chat.id=t.chat_id AND internal_chat.internal)
      ORDER BY rank DESC, c.ts DESC
      LIMIT $3`,
     [args.agentId, args.query, args.limit, args.snippetChars, args.userId],

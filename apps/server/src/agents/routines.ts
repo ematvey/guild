@@ -25,6 +25,7 @@ export const MIN_INTERVAL_MS = 60_000;
 export const MAX_PENDING_REMINDERS = 20;
 
 export interface CreateRoutineInput {
+  id?: string;
   created_by_user_id: string;
   name: string;
   kind: AgentRoutineKind;
@@ -210,6 +211,7 @@ export async function createRoutine(
   const runAt = kind === "once" ? parseRunAt(input.run_at ?? "").toISOString() : null;
   const next = nextRunAt({ kind, schedule, timezone, run_at: runAt, enabled });
   return insertRoutine(pool, agentId, {
+    ...(input.id === undefined ? {} : { id: input.id }),
     created_by_user_id: input.created_by_user_id,
     name,
     kind,

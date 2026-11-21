@@ -12,11 +12,7 @@ export type IntegrationAudienceKind = "org" | "team" | "admins";
 /** A grant's ceiling: `admin`-class tools are admin-only whatever a grant says. */
 export type GrantCeiling = "read" | "write";
 
-export const AUDIENCES: readonly IntegrationAudienceKind[] = [
-  "org",
-  "team",
-  "admins",
-];
+export const AUDIENCES: readonly IntegrationAudienceKind[] = ["org", "team", "admins"];
 
 export function isAudience(value: unknown): value is IntegrationAudienceKind {
   return value === "org" || value === "team" || value === "admins";
@@ -70,7 +66,7 @@ function maxClass(a: ToolClass | null, b: ToolClass | null): ToolClass | null {
   return classRank(a) >= classRank(b) ? a : b;
 }
 
-function minClass(a: ToolClass, b: ToolClass): ToolClass {
+export function minClass(a: ToolClass, b: ToolClass): ToolClass {
   return classRank(a) <= classRank(b) ? a : b;
 }
 
@@ -86,22 +82,16 @@ export function memberCeiling(
   if (access.audience === "admins") return null;
   let best: ToolClass | null = null;
   for (const grant of access.grants) {
-    if (member.team_ids.has(grant.team_id))
-      best = maxClass(best, grant.ceiling);
+    if (member.team_ids.has(grant.team_id)) best = maxClass(best, grant.ceiling);
   }
   return best;
 }
 
 /** The ceiling the audience grants every member of one team. */
-function teamCeiling(
-  access: IntegrationAudience,
-  teamId: string,
-): ToolClass | null {
+function teamCeiling(access: IntegrationAudience, teamId: string): ToolClass | null {
   if (access.audience === "org") return access.org_ceiling;
   if (access.audience === "admins") return null;
-  return (
-    access.grants.find((grant) => grant.team_id === teamId)?.ceiling ?? null
-  );
+  return access.grants.find((grant) => grant.team_id === teamId)?.ceiling ?? null;
 }
 
 /** Whether a tool of `cls` falls within `ceiling`. */
@@ -142,10 +132,7 @@ interface AgentSubject {
 /** The people who can use an Agent: its owner, members granted it by name,
  *  its granted Teams, or every member (`org` visibility). A personal Agent
  *  has its owner only. */
-function agentSubjects(
-  agent: Omit<WarnedAgent, "integrations"> & { id: string },
-  ctx: AccessContext,
-): AgentSubject[] {
+function agentSubjects(agent: Omit<WarnedAgent, "integrations"> & { id: string }, ctx: AccessContext): AgentSubject[] {
   const out: AgentSubject[] = [];
   const asMember = (member: AccessMember): AgentSubject => ({
     subject: "member",
@@ -163,8 +150,7 @@ function agentSubjects(
       id: null,
       label: "Every member",
       admin: false,
-      granted: (access) =>
-        access.audience === "org" ? access.org_ceiling : null,
+      granted: (access) => (access.audience === "org" ? access.org_ceiling : null),
     });
   } else {
     for (const teamId of agent.team_ids ?? []) {
@@ -190,19 +176,14 @@ function agentSubjects(
  *  reaches `admin`-class tools, so the Agent's ceiling is capped at `write`
  *  for them. An Integration that is no longer installed warns nothing: its
  *  entry is gone with it. */
-export function agentWarnings(
-  agent: WarnedAgent & { id: string },
-  ctx: AccessContext,
-): IntegrationWarning[] {
+export function agentWarnings(agent: WarnedAgent & { id: string }, ctx: AccessContext): IntegrationWarning[] {
   const out: IntegrationWarning[] = [];
   const subjects = agentSubjects(agent, ctx);
   for (const entry of agent.integrations) {
     const access = ctx.audiences.get(entry.slug);
     if (access === undefined) continue;
     for (const subject of subjects) {
-      const gives = subject.admin
-        ? entry.ceiling
-        : minClass(entry.ceiling, "write");
+      const gives = subject.admin ? entry.ceiling : minClass(entry.ceiling, "write");
       const granted = subject.granted(access);
       if (granted !== null && classRank(gives) <= classRank(granted)) continue;
       out.push({
@@ -253,9 +234,7 @@ export function agentIntegrations(
   agent: WarnedAgent & { id: string; tools_mode: string },
   ctx: AccessContext,
 ): AgentIntegrationEntry[] {
-  return agent.tools_mode === "all"
-    ? allModeIntegrations(agent, ctx)
-    : agent.integrations;
+  return agent.tools_mode === "all" ? allModeIntegrations(agent, ctx) : agent.integrations;
 }
 
 /** The Integrations one member may attach, with the class they may grant. */
