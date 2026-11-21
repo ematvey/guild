@@ -1333,7 +1333,10 @@ export class GuildRuntime {
         {
           type: "write",
           requestId: input.requestId,
-          entry: { kind: "guild.posted-turn", model: [{ role: "user", content, timestamp: Date.now() }] },
+          entry: {
+            ...(input.entry ?? { kind: "guild.posted-turn" }),
+            model: [{ role: "user", content, timestamp: Date.now() }],
+          },
         },
         BACKGROUND_CONTEXT,
       );

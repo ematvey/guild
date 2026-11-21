@@ -69,8 +69,13 @@ interface TurnSnapshot {
 
 /** Whether a snapshot's Turn may call one tool. */
 function offered(snapshot: TurnSnapshot, turn: IntegrationTurn, info: IntegrationToolInfo): boolean {
-  if (snapshot.sharedAgent && turn.impersonated) return false;
-  return toolOffered(turn, info, scopeCeiling(snapshot.scope, turn.slug, info), snapshot.caller?.role ?? "member");
+  return toolOffered(
+    turn,
+    info,
+    scopeCeiling(snapshot.scope, turn.slug, info),
+    snapshot.caller?.role ?? "member",
+    snapshot.sharedAgent,
+  );
 }
 
 /** The narrow gateway slice the runtime needs (structurally the

@@ -194,7 +194,11 @@ export class AgentCoordination {
     const { pool, store, runtime } = this.deps;
     const agent = await store.fetchAgent(input.agent_id);
     const coordinator = await ensureCoordinationThread(pool, store, agent, agent.owner_user_id, "coordinator");
-    const content = coordinationPreamble(input);
+    const sourceThread =
+      input.source_thread_id === null ? null : await store.threads.threadById(input.source_thread_id);
+    const content = coordinationPreamble(
+      sourceThread?.type === "subagent" && !input.wake ? { ...input, kind: "worker_thread_observation" } : input,
+    );
     if (input.wake) {
       await runtime.submitTurn(coordinator.chat_id, agent.org_id, {
         orgId: agent.org_id,

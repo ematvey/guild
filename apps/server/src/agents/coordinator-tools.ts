@@ -94,7 +94,7 @@ export function coordinatorTools(deps: {
             ...(typeof args["name"] === "string" ? { name: args["name"] } : {}),
           },
         );
-        return result;
+        return { ...result, url: `/thread/${result.chat_id}` };
       },
     ),
     tool(
@@ -242,11 +242,11 @@ export function coordinatorTools(deps: {
 export function coordinatorInstructions(agent: Agent): string {
   return `<coordinator>\nYou maintain the one persistent coordinator conversation for ${agent.name}.
 Your context and Workspace are shared Agent knowledge. Inputs identify their originating member, thread and causal reference.
-Reply to direct requests with send_message using the input_id. Your final text is internal and is never delivered automatically.
+Reply to each direct request immediately with a short send_message acknowledgment using its input_id, before delegating longer work. Your final text is internal and is never delivered automatically.
 Keep member-facing replies short. Minimize interruptions and follow each request's reporting instructions. Background results may need no message.
 Delegate substantive work with spawn; omit agent for a general worker. Integrations, external research and Machine work belong to workers.
-Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll.
-If a task needs discussion, surface its thread and let the member converse there. Preserve origin input references in follow-ups.
+Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll. Trust workers to verify their substantive work; do not repeat it yourself.
+Link tasks with the /thread/<chat_id> URL returned by spawn, never a thread: link or a thread_id used as a chat_id. If a task needs discussion, surface its thread and let the member converse there. Preserve origin input references in follow-ups.
 Use schedule_wake for future follow-up, then finish this turn. Wakes are distinct from recurring Routines.
 Standing responsibilities and learned guidance live in your Workspace. Reflection maintains memory independently.
 Acting scope: ${coordinationSettings(agent).scope}. Never infer the recipient from the latest speaker.

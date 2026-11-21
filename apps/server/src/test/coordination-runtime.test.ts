@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -61,11 +62,12 @@ describe("configured coordinator conversation", () => {
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string; agent_id: string };
     stack.mock.setResponses([{ body: final("INTERNAL ONLY") }]);
+    const userMessageId = randomUUID();
     const posted = await app.inject({
       method: "POST",
       url: `/api/v1/agents/${inbox.agent_id}/threads/${inbox.thread_id}/turns`,
       headers,
-      payload: { message: "Please check the project and only report problems." },
+      payload: { message: "Please check the project and only report problems.", user_message_id: userMessageId },
     });
     expect(posted.statusCode, posted.body).toBeLessThan(300);
     await waitFor(
@@ -158,6 +160,11 @@ describe("configured coordinator conversation", () => {
       inbox.chat_id,
     ]);
     expect(JSON.stringify(rows.rows)).not.toContain("INTERNAL ONLY");
+    const visibleRequest = await stack.env.db.query(
+      "SELECT id FROM thread_events WHERE chat_id=$1 AND type='user_message' AND payload->>'content'=$2",
+      [inbox.chat_id, "Please check the project and only report problems."],
+    );
+    expect(visibleRequest.rows.map((row) => row.id)).toEqual([userMessageId]);
     const coordinator = (
       await stack.env.db.query<{ chat_id: string }>(
         "SELECT chat_id FROM agent_threads WHERE agent_id=$1 AND execution_role='coordinator'",
