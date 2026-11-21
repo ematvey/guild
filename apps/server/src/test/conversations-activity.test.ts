@@ -49,7 +49,7 @@ async function seedConversation(opts: {
     [threadId, agentId, opts.userId, chatId, opts.title, opts.parentThreadId ?? null],
   );
   const runIds = [randomUUID(), randomUUID()];
-  const base = Date.parse("2026-11-01T10:00:00Z");
+  const base = Date.now() - 60 * 60 * 1000;
   const times = [0, 60_000];
   for (let i = 0; i < runIds.length; i++) {
     const start = new Date(base + times[i]!).toISOString();

@@ -249,7 +249,7 @@ export class ConversationHistoryStore {
    *  owner filter; a member reads only their own rows. */
   async list(filter: ConversationFilters): Promise<{ rows: ConversationRow[]; total: number }> {
     const params: unknown[] = [filter.orgId];
-    const where: string[] = ["c.org_id = $1", "c.deleted_at IS NULL"];
+    const where: string[] = ["c.org_id = $1", "c.deleted_at IS NULL", "NOT c.internal"];
     if (filter.userId !== undefined) {
       params.push(filter.userId);
       where.push(`c.user_id = $${params.length}`);
@@ -300,7 +300,7 @@ export class ConversationHistoryStore {
        FROM chats c
        JOIN users u ON u.id = c.user_id
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
-       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id
+       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id AND pt.execution_role <> 'coordinator'
        LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
@@ -343,7 +343,7 @@ export class ConversationHistoryStore {
        FROM chats c
        JOIN users u ON u.id = c.user_id
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
-       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id
+       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id AND pt.execution_role <> 'coordinator'
        LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
@@ -358,7 +358,7 @@ export class ConversationHistoryStore {
                 count(*) FILTER (WHERE r.status = 'failed')::int AS failed_runs
          FROM agent_runs r WHERE r.thread_id = xt.id
        ) runs ON true
-       WHERE c.org_id = $1 AND c.id = $2`,
+       WHERE c.org_id = $1 AND c.id = $2 AND NOT c.internal`,
       [orgId, chatId],
     );
     const row = res.rows[0];
@@ -413,8 +413,8 @@ export class ConversationHistoryStore {
       `SELECT t.id, t.chat_id, t.type, t.parent_thread_id, pt.chat_id AS parent_chat_id, pt.title AS parent_title
        FROM agent_threads t
        JOIN chats c ON c.id = t.chat_id
-       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
-       WHERE c.org_id = $1 AND t.id = $2`,
+       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id AND pt.execution_role <> 'coordinator'
+       WHERE c.org_id = $1 AND t.id = $2 AND NOT c.internal`,
       [orgId, threadId],
     );
     const row = res.rows[0];

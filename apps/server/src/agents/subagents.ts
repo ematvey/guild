@@ -1,3 +1,5 @@
+import { readWorkerCoordination } from "./store/coordination.js";
+import { uuidv5 } from "../platform/time.js";
 // Subagent tree tools: one grantable group that spawns child threads and
 // sends, reads, lists, cancels and closes them. A spawn returns at once; the
 // child reports back by ending its turn.
@@ -56,6 +58,7 @@ export interface SubagentsToolContext {
   /** Tree limits from config (never constants in this module). */
   maxDepth: number;
   maxChildrenPerNode: number;
+  coordination?: { sourceInputId?: string; managed: boolean; actionKey?: string };
 }
 
 /** Longest spawner-chosen session name. */
@@ -226,6 +229,9 @@ async function startDelegatedRun(
       failureCode,
       recordStack: true,
       run: {
+        ...(context.coordination?.actionKey === undefined
+          ? {}
+          : { id: uuidv5(agentId, context.coordination.actionKey) }),
         user_id: parentRun.user_id ?? context.requester.id,
         parent_run_id: parentRun.id,
         delegate_agent_id: agentId,
@@ -263,7 +269,7 @@ export async function spawn(
     );
   }
   const children = await context.store.tree.childCount(parentThreadId);
-  if (children >= context.maxChildrenPerNode) {
+  if (context.coordination?.actionKey === undefined && children >= context.maxChildrenPerNode) {
     throw new SubagentError(
       "child_limit",
       `this thread already has ${children} children; the limit is ${context.maxChildrenPerNode} per thread`,
@@ -290,22 +296,27 @@ export async function spawn(
       title,
       titleLocked,
       context.maxChildrenPerNode,
+      context.coordination,
     );
   } catch (error) {
     if (error instanceof ChildLimitReached) throw new SubagentError("child_limit", error.message);
     throw error;
   }
   const { run: childRun } = await startDelegatedRun(context, thread, target.id, task, "spawn_submit_failed");
-  await context.threads.appendEvent(parentThread.chat_id, {
-    type: "child_spawned",
-    thread_id: thread.id,
-    run_id: childRun.id,
-    chat_id: thread.chat_id,
-    agent_name: target.name,
-    title: thread.title ?? title,
-    status: "running",
-    task,
-  });
+  await context.threads.appendEvent(
+    parentThread.chat_id,
+    {
+      type: "child_spawned",
+      thread_id: thread.id,
+      run_id: childRun.id,
+      chat_id: thread.chat_id,
+      agent_name: target.name,
+      title: thread.title ?? title,
+      status: "running",
+      task,
+    },
+    context.coordination?.actionKey === undefined ? undefined : uuidv5(childRun.id, "spawn-display"),
+  );
   return {
     thread_id: thread.id,
     run_id: childRun.id,
@@ -489,7 +500,20 @@ export async function subagentsContextForChat(
   if (thread === null) return null;
   const requester = await requesterForChat(args, args.chatId);
   if (requester === null) return null;
+  const policy = (
+    await readWorkerCoordination<{ coordinator_managed: boolean; source_input_id: string | null }>(args.pool, [
+      thread.id,
+    ])
+  ).rows[0];
   return {
+    ...(policy?.coordinator_managed
+      ? {
+          coordination: {
+            managed: true,
+            ...(policy.source_input_id === null ? {} : { sourceInputId: policy.source_input_id }),
+          },
+        }
+      : {}),
     pool: args.pool,
     store: args.store,
     threads: args.threads,

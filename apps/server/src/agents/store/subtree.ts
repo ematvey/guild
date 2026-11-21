@@ -30,7 +30,9 @@ export class AgentTreeStore {
    *  per thread, not per run. Closed children still count. */
   async childCount(parentThreadId: string): Promise<number> {
     const res = await this.pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM agent_threads WHERE parent_thread_id = $1",
+      `SELECT count(*)::text AS count FROM agent_threads t WHERE parent_thread_id=$1
+       AND (NOT EXISTS (SELECT 1 FROM agent_threads p WHERE p.id=$1 AND p.execution_role='coordinator')
+         OR (t.closed_at IS NULL AND (NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.thread_id=t.id) OR EXISTS (SELECT 1 FROM agent_runs r WHERE r.thread_id=t.id AND r.status IN ('queued','running')))))`,
       [parentThreadId],
     );
     return Number(res.rows[0]?.count ?? 0);

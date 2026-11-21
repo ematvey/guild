@@ -22,6 +22,7 @@ import { visiblePredicate } from "./access.js";
 import { RUN_COLUMNS, toRun } from "./rows.js";
 
 export interface RunFilters {
+  userId?: string;
   status?: AgentRunStatus;
   trigger?: AgentTrigger;
   limit?: number;
@@ -38,6 +39,8 @@ export interface ActivityFilters {
 }
 
 export interface CreateRunInput {
+  /** Stable identity for a replay-safe coordination action. */
+  id?: string;
   agent_id: string;
   user_id?: string | null;
   thread_id?: string | null;
@@ -99,7 +102,12 @@ export class AgentRunStore {
 
   async listRuns(agentId: string, filters: RunFilters = {}): Promise<AgentRun[]> {
     const params: unknown[] = [agentId];
-    let where = "r.agent_id = $1";
+    let where =
+      "r.agent_id = $1 AND NOT EXISTS (SELECT 1 FROM agent_threads it JOIN chats ic ON ic.id=it.chat_id WHERE it.id=r.thread_id AND ic.internal)";
+    if ("userId" in filters && filters.userId !== undefined) {
+      params.push(filters.userId);
+      where += ` AND r.user_id=$${params.length}`;
+    }
     if (filters.status !== undefined) {
       params.push(filters.status);
       where += ` AND r.status = $${params.length}`;
@@ -246,10 +254,11 @@ export class AgentRunStore {
          INSERT INTO agent_runs
            (id, agent_id, user_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary, started_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO UPDATE SET id=EXCLUDED.id
          RETURNING *)
        SELECT ${RUN_COLUMNS} FROM r`,
       [
-        uuidv7(),
+        input.id ?? uuidv7(),
         input.agent_id,
         input.user_id ?? null,
         input.thread_id ?? null,
@@ -355,10 +364,11 @@ export class AgentRunStore {
    *  same visibility predicate as the agent list applies. */
   async listActivity(orgId: string, filters: ActivityFilters = {}, viewer?: UserRow): Promise<AgentActivityEntry[]> {
     const params: unknown[] = [orgId];
-    let where = "a.org_id = $1";
+    let where =
+      "a.org_id = $1 AND NOT EXISTS (SELECT 1 FROM agent_threads it JOIN chats ic ON ic.id=it.chat_id WHERE it.id=r.thread_id AND ic.internal)";
     if (viewer !== undefined) {
       params.push(viewer.role === "admin", viewer.id);
-      where += ` AND ${visiblePredicate("a")}`;
+      where += ` AND ${visiblePredicate("a")} AND ($2 OR r.user_id=$3)`;
     }
     if (filters.agent_id !== undefined) {
       params.push(filters.agent_id);

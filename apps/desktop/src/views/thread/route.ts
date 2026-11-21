@@ -81,6 +81,9 @@ export function writeAddress(
 
 export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | { kind: "install" } | null;
 export interface ChatRoute {
+  /** Persistent Agent inbox; personal selects the current member's Assistant. */
+  assistant?: string | null;
+  assistantView?: "conversation" | "activity";
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
   projectId: string | null;
@@ -164,6 +167,23 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     };
   }
   const parts = decoded as string[];
+  if (parts[0] === "assistant" && parts.length <= 3) {
+    return {
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      agents: null,
+      integrations: null,
+      tab: "chats",
+      newChat: false,
+      settingsSection: null,
+      settingsDetail: null,
+      usage,
+      assistant: parts[1] === "activity" ? "personal" : (parts[1] ?? "personal"),
+      assistantView: parts.at(-1) === "activity" ? "activity" : "conversation",
+    };
+  }
   // Settings → Observability folded into Activity: old deep links (and the
   // period/filter query they carried) land on the Activity page.
   if (parts[0] === "settings" && parts[1] === "observability") {
@@ -421,6 +441,8 @@ export function previewQuery(route: ChatRoute): string {
 }
 
 export interface RoutePatch {
+  assistant?: string | null;
+  assistantView?: "conversation" | "activity";
   chatId?: string | null;
   projectId?: string | null;
   overlay?: ChatOverlay;
@@ -439,7 +461,12 @@ export interface RoutePatch {
 
 /** Leaves any chat, project and overlay: the base a top-level surface
  *  (skills, agents) patches onto. */
-export const SURFACE_BASE = { chatId: null, projectId: null, overlay: null } as const satisfies RoutePatch;
+export const SURFACE_BASE = {
+  chatId: null,
+  projectId: null,
+  overlay: null,
+  assistant: null,
+} as const satisfies RoutePatch;
 
 /** The chat root: no chat, project, page or overlay open. */
 export const CHAT_ROOT = {
@@ -543,7 +570,16 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
           ? null
           : (route.preview ?? null);
   const previewFull = preview !== null && ("previewFull" in next ? !!next.previewFull : route.previewFull === true);
+  const assistant =
+    "assistant" in next
+      ? next.assistant
+      : "chatId" in next || "tab" in next || opensOther || opensIntegrations
+        ? null
+        : route.assistant;
   return {
+    ...(assistant == null
+      ? {}
+      : { assistant, assistantView: next.assistantView ?? route.assistantView ?? "conversation" }),
     chatId,
     projectId,
     overlay: ov,

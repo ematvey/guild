@@ -85,10 +85,10 @@ These terms describe roles and behavior within existing concepts. They do not es
 
 - Coordinator-managed work and Routines run unattended and do not request human tool approvals. They have no designated human approver or approval-recipient setting. Independently Member-started Threads retain their existing approval settings.
 - Where an automatic judge evaluates an action, a rejection is returned to the executing agent as a rejected tool result. It does not create a human approval card or suspend for approval.
-- The judge policy targets genuinely dangerous actions rather than broadly escalating mildly suspicious actions. Concrete criteria, examples and evaluation cases remain to be specified.
+- The judge policy targets genuinely dangerous actions rather than broadly escalating mildly suspicious actions. The default policy rejects concrete exfiltration, privilege escalation, destructive operations and unauthorized financial actions. Org policy remains configurable.
 - Agent Integration grants and static execution prohibitions remain enforcement boundaries; a judge verdict does not expand those grants.
 - A work-related question or decision can still reach a Member through normal conversation. That communication is distinct from a human tool-approval workflow.
-- Opening or conversing in a coordinator-started worker Thread does not by itself change its unattended execution policy. Treatment of existing `always_ask` tool curation, cross-Agent delegation and policy changes during work requires explicit design.
+- Opening or conversing in a coordinator-started worker Thread does not by itself change its unattended execution policy. Curated asks use the unattended judge; delegated Agents retain their own current grants and model settings.
 
 ### Initiative and capabilities
 
@@ -102,7 +102,7 @@ These terms describe roles and behavior within existing concepts. They do not es
 
 - Coordinator, general worker, reflection and compaction roles have optional separate model settings. Each defaults to the Agent's model when no override is configured.
 - A different predefined worker retains its own Agent configuration, including model settings.
-- Role model selection is configuration, not permission for an arbitrary Thread to override its model. Exact settings representation and model-change behavior during active work remain open.
+- Role model selection is configuration, not permission for an arbitrary Thread to override its model. Overrides live in `resources.assistant` and are selected on admission/provisioning for the configured role.
 
 ### Memory and reflection
 
@@ -111,7 +111,7 @@ These terms describe roles and behavior within existing concepts. They do not es
 - Reflection runs in the background, parallel to user requests and observed events. Foreground work does not wait for reflection.
 - Reflection updates memory automatically. Its default triggers batch accumulated activity with a maximum delay and a compute budget; Agents can override defaults.
 - Assessing whether a task succeeded and needs follow-up remains part of result handling. Cross-interaction learning belongs to background reflection.
-- Concurrent editing must preserve newer writes. The reconciliation mechanism, update provenance and revision-history implementation remain open.
+- Concurrent editing must preserve newer writes. Normalized protected paths use per-Thread read revisions and a shared Workspace lock; stale writes require reconciliation. Source IDs accompany reflected activity. Historical file-version browsing is not implemented.
 
 ### Proactive compaction
 
@@ -119,47 +119,19 @@ These terms describe roles and behavior within existing concepts. They do not es
 - Also trigger proactive compaction from accumulated activity, elapsed time and conversation milestones. Require enough new history and coalesce overlapping triggers.
 - Summarization runs in parallel and applies at a safe Turn boundary while preserving subsequent Inputs.
 - Reflection and compaction have separate purposes and can progress independently.
-- Exact thresholds, summary contents and failure handling remain open. Compaction model selection follows the role-model configuration.
+- Default activity/time thresholds and preserved summary fields are defined in [execution](../domain/003-execution.md#coordinator-execution). Compaction model selection follows the role-model configuration.
 
-## Existing contracts and design consequences
+## Runtime contracts
 
-| Existing contract or fact | Consequence for this design |
-| --- | --- |
-| Each Thread belongs to one Member; shared Agents share their Workspace, not their conversations | The shared internal coordinator requires an ownership and authority contract distinct from Member-facing Thread visibility; explicit deliveries reach only their intended recipients |
-| Runs currently act for a Member, and impersonating Integration calls require a Member identity | Preserve source attribution and explicitly prevent shared Agents from using account impersonation; personal Agents retain existing behavior |
-| An automatic judge rejection currently falls back to a human approval request | Unattended execution returns the rejection to the agent without creating an approval request; approval-mode and curation interactions need explicit handling |
-| Members can read and cancel child Threads but cannot post into them | Direct Member conversation with workers requires a deliberate access-contract change |
-| Spawning currently requires an explicit target Agent | Dynamic same-Agent workers need role-specific provisioning without accidentally granting coordinator restrictions to workers |
-| The current Agent has one model and rejects per-Thread overrides | Optional per-role models require a deliberate configuration-contract change while keeping arbitrary Thread overrides separate |
-| Child results are Turn ends submitted as parent Inputs | Use existing asynchronous delivery rather than a coordinator wait loop |
-| A `write` Input records context without starting a Turn | Use this existing semantic for attributed observations of ordinary Thread messages and final replies; observation fan-out still needs wiring |
-| Integration tools already support deferred disclosure and per-Integration `list_tools` | Extend existing discovery rather than add a second tool catalog |
-| Each Routine occurrence already executes in a fresh hidden Thread | Reuse scheduling and define how findings reach coordination |
-| Workspace conflict notices are best-effort warnings | They do not establish lost-update prevention for parallel memory writers |
-| Visible state arrives through the member WebSocket and navigation has URLs | Activity, worker visibility and the Assistant entry require corresponding push and route contracts |
-| Tree shape bounds delegation; explicit tree token/time budgets are rejected in the current domain model | Reflection's accepted compute budget needs precise scope and enforcement, without silently redefining tree limits |
-
-Canonical references: [execution](../domain/003-execution.md), [access](../domain/002-access.md), [capabilities](../domain/004-capabilities.md), [live state](../domain/005-live-state.md).
+The present ownership, tool scope, event delivery, replay, unattended policy and maintenance contracts are defined in [domain](../domain/001-domain.md#persistent-coordination), [access](../domain/002-access.md#coordinator-authority), [execution](../domain/003-execution.md#coordinator-execution), [capabilities](../domain/004-capabilities.md#coordinator-capability-surface) and [live state](../domain/005-live-state.md#assistant-navigation-and-visibility).
 
 ## Known limitation
 
 Shared Agents have no account-impersonation support. Integrations or operations requiring impersonation are unavailable to them, regardless of the requesting Member's access or the Agent's acting-scope setting. A future design must define account binding and authority before enabling that capability.
 
-## Implementation decisions
+## Configuration
 
-Implementation resolves these details within the accepted design:
-
-1. Judge danger criteria and unattended execution's interactions with existing tool curation, cross-Agent delegation and policy changes during work.
-2. Acting-scope rules across delegation into a different predefined Agent and policy changes during active work, preserving the shared-Agent impersonation restriction.
-3. Event delivery and scheduled coordinator Inputs, reusing timer infrastructure where suitable; storage, exact batching and duplicate-scheduling rules.
-4. Trusted source preambles, durable causal references, and how direct Member messages and worker reports inform the coordinator without duplicate notifications.
-5. Memory write reconciliation, provenance and concurrent reflection.
-6. Reflection and compaction triggers, budgets and failure recovery; role-model settings representation.
-7. Thread visibility and the Assistant navigation/Activity experience.
-8. Evaluation scenarios and measurable responsiveness and interruption criteria.
-9. Deduplication between passive observations and delegated results; explicit reply routing and causal attribution.
-
-Backend, frontend, tests and browser verification establish the design's behavior. Review takes place through a pull request; merging is a separate release decision.
+`resources.assistant` holds `enabled`, `scope` (`agent` or `member`), optional `coordinator_model`, `worker_model`, `reflection_model`, `compaction_model`, and activity/time maintenance thresholds. Agent settings expose enablement, scope and role models. Email screening is a personal Agent responsibility configured through Workspace instructions and Routines; the harness contains no email-specific behavior.
 
 ## Evidence
 

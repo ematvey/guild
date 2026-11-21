@@ -209,7 +209,9 @@ export function threadAccess(input: {
 }): ThreadAccess {
   const { chatId, chats, facts, justCreated, agentDeleting } = input;
   if (chatId === null) return "writable";
-  if (facts.type !== "user") return "readonly";
+  if (facts.type !== "user" && facts.type !== "subagent") return "readonly";
+  if (facts.type === "subagent" && facts.owned === true && !facts.archived && !facts.deleted && !agentDeleting)
+    return "writable";
   if (facts.deleted) return "readonly";
   if (agentDeleting) return "readonly";
   if (chats?.some((c) => c.id === chatId)) return "writable";

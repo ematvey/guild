@@ -16,7 +16,7 @@ import type { Context } from "@earendil-works/chord";
 import { getOrThrow, type ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { attachmentObjectKey, type AttachmentStore } from "../platform/store/attachments.js";
 import { toolArtifactObjectKey, type ToolArtifactStore } from "../platform/store/tool-artifacts.js";
-import { relativeDestination } from "../platform/domain/paths.js";
+import { relativeDestination, isProtectedMemoryPath } from "../platform/domain/paths.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { withMachineTarget } from "./agent-tools.js";
 
@@ -107,6 +107,12 @@ export async function writeIntoEnv(
 ): Promise<{ ok: true; value: WrittenFile } | { ok: false; reason: string }> {
   const destination = relativeDestination(path);
   if (!destination.ok) return { ok: false, reason: destination.reason };
+  if (isProtectedMemoryPath(destination.path)) {
+    return {
+      ok: false,
+      reason: "Protected memory must be reconciled with the read/edit/write tools. Download to another path first.",
+    };
+  }
   const absolute = getOrThrow(await env.absolutePath(destination.path, context));
   if (options.overwrite !== true) {
     const existing = await env.fileInfo(absolute, context);

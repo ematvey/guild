@@ -226,6 +226,22 @@
         {
           "where": "apps/server/src/agents/store/rows.ts",
           "role": "db"
+        },
+        {
+          "where": "apps/server/src/agents/coordination.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/coordinator-tools.ts",
+          "role": "domain"
+        },
+        {
+          "where": "apps/server/src/agents/store/coordination.ts",
+          "role": "db"
+        },
+        {
+          "where": "apps/desktop/src/views/agents/AssistantActivity.tsx",
+          "role": "ui"
         }
       ],
       "translations": [

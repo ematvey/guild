@@ -74,6 +74,7 @@ export interface IntegrationTurn {
   rowConfig: JsonObject;
   secretNames: string[];
   identityKey: string;
+  impersonated?: boolean;
 }
 
 /** The first skill slug a manifest names, or null. One resolver for a
@@ -264,6 +265,7 @@ export async function resolveIntegrations(
         rowConfig: config,
         secretNames,
         identityKey: resolved.identity_key,
+        impersonated: resolved.auth_kind === "org_secret_impersonated",
       });
       continue;
     }
@@ -307,6 +309,10 @@ export async function resolveIntegrations(
     const auth = manifest["auth"];
     out.push({
       executor: "mcp",
+      impersonated:
+        auth !== null &&
+        typeof auth === "object" &&
+        ["org_secret_impersonated", "impersonated"].includes(String((auth as JsonObject)["kind"])),
       slug: row.name,
       description: indexDescription(manifest),
       guide: firstSkill(manifest as { skills?: unknown }),

@@ -185,3 +185,17 @@ A Turn cut off mid-Step resumes from its last recorded entry. A Tool call cut of
 
 - The workspace change journal keys paths without their root, so one path written on a Machine and in the sandbox reads as one file.
 - Event sources (webhooks, chat messages) cannot trigger a Routine yet; only time can.
+
+## Coordinator execution
+
+An Assistant inbox records a Member's message without running a model there. An atomic event capture creates a durable attributed coordination Input, delivered to the Agent's single internal coordinator. Inputs carry stable IDs, Member identity, source Thread/message references and causal origin. Ordinary independently started Threads continue running normally; their Member messages and final replies enter coordinator context passively without waking it.
+
+The coordinator spawns workers asynchronously and ends its Turn without waiting. Existing child-result delivery wakes the parent; joining a worker Thread leaves that delivery active. Worker outcomes also become non-waking reflection records. Mutation identities include the durable tool task and nested call identity, making replies, worker creation, self-wakes and Routine creation replay safe. Coordinator capacity counts active and reserved workers rather than lifetime children.
+
+Standing responsibilities live in Workspace instructions. Existing Routines execute scheduled work. Self-wakes are separate durable coordinator Inputs, with independent IDs, due times and cancellation; they create no Routine object. Reporting instructions determine whether background results need a Member reply. A direct Member request receives an explicit short acknowledgment; substantive work can be linked into its worker Thread.
+
+Reflection runs on its own hidden Thread, parallel to foreground requests, after 20 unreflected Inputs or 30 minutes with pending activity by default. Each pass has at most six file operations and a two-minute wall-time budget. Successful passes mark only their captured Input IDs reflected; failed passes retain them for retry. One per-Agent database lock reserves reflection across processes. The coordinator and workers may also update memory directly.
+
+Protected memory files (`MEMORY.md`, `AGENTS.md`, `AGENTS.override.md`, `memories/`, `notes/`) use normalized paths and a Workspace revision lock. Native edits require the revision this Thread last read. Workspace shell execution shares that lock and requires fresh reads of existing protected files; stale writes return a reconciliation error. Existing path-conflict notices cover other Workspace files.
+
+Background compaction retains token-size safeguards and also starts after 60 new Inputs, or an hour with at least ten new Inputs. Thresholds are configurable in `resources.assistant`. The coordinator compaction prompt preserves source IDs, causal links, commitments, reporting preferences, pending workers and wake reasons. The durable conversation owns the compaction task and applies it at its safe boundary. Reflection and compaction are independent. Each role defaults to the Agent model and accepts an optional role model in the same settings object.

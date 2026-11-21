@@ -326,3 +326,7 @@ Admins cap monthly spend per model.
 - A turn that would exceed the quota is rejected with an explicit
   over-quota error before any model call.
 - Quota state reflects recorded usage.
+
+## Assistant
+
+The first rail destination opens a Member's personal Assistant. An enabled shared Agent also offers an Assistant inbox for each Member. One private coordinator per Agent retains shared context, delegates work to background worker Threads, receives their results and sends explicit short replies to the intended Members. Members can follow work in Assistant Activity and continue their own worker Threads. Reporting follows their instructions, including silence unless a problem is found. Personal email screening is configured as a responsibility and Routine, rather than built into the harness.

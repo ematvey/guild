@@ -1,3 +1,4 @@
+import { routePath } from "./hooks/use-thread-route";
 // Pure-logic tests for the thread view's highest-risk functions (no DOM, no
 // server). These run under `npm test` (vitest); see package.json.
 
@@ -167,14 +168,14 @@ describe("thread access", () => {
     ).toBe("writable");
   });
 
-  it("marks a subagent or routine thread read-only even before the lists load", () => {
+  it("waits for subagent ownership and keeps routine threads read-only", () => {
     expect(
       threadAccess({
         ...base,
         chats: null,
         facts: { type: "subagent", archived: false, deleted: false, owned: null },
       }),
-    ).toBe("readonly");
+    ).toBe("unknown");
     expect(
       threadAccess({
         ...base,
@@ -194,12 +195,34 @@ describe("thread access", () => {
     ).toBe("writable");
   });
 
+  it("allows a member to continue their own worker thread", () => {
+    expect(
+      threadAccess({ ...base, chats: null, facts: { type: "subagent", archived: false, deleted: false, owned: true } }),
+    ).toBe("writable");
+    expect(
+      threadAccess({
+        ...base,
+        chats: null,
+        facts: { type: "subagent", archived: false, deleted: false, owned: false },
+      }),
+    ).toBe("readonly");
+  });
   it("never marks the scratch composer read-only", () => {
     expect(threadAccess({ ...base, chatId: null })).toBe("writable");
   });
 });
 
 describe("parseChatRoute / chatRoutePath", () => {
+  it("round trips Assistant inboxes and Activity through URL routes", () => {
+    for (const url of [
+      "/assistant",
+      "/assistant/activity",
+      "/assistant/team-agent",
+      "/assistant/team-agent/activity",
+    ]) {
+      expect(routePath(parseChatRoute(url))).toBe(url);
+    }
+  });
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
     return chatRoutePath(

@@ -95,7 +95,7 @@ export async function selectRoutine(
 export async function insertRoutine(
   pool: PlatformPool,
   agentId: string,
-  fields: RoutineFields & { created_by_user_id: string },
+  fields: RoutineFields & { created_by_user_id: string; id?: string },
 ): Promise<AgentRoutine> {
   const res = await pool.query<Record<string, unknown>>(
     `WITH r AS (
@@ -103,10 +103,11 @@ export async function insertRoutine(
          (id, agent_id, created_by_user_id, name, kind, schedule, timezone, run_at, prompt, context, enabled, next_run_at,
           delivery)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, 'isolated', $10, $11::timestamptz, $12)
+       ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
        RETURNING *)
      SELECT ${ROUTINE_COLUMNS} FROM r`,
     [
-      uuidv7(),
+      fields.id ?? uuidv7(),
       agentId,
       fields.created_by_user_id,
       fields.name,

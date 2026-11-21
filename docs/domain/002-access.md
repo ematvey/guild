@@ -60,7 +60,7 @@ Child Threads follow the tree:
 
 - A child Thread belongs to the Member whose Run spawned it.
 - An Agent's tree tools reach only strict descendants of the calling Thread, and `send` needs the target open.
-- The Member reads a child Thread and can cancel or delete it, along with its subtree. They cannot post into it.
+- The Member reads a child Thread and can cancel or delete it, along with its subtree. They can post into their own worker Thread; its unattended policy and coordinator result delivery remain in force.
 - The root of a tree cannot be closed. Archiving or deleting a Thread closes its whole subtree first.
 
 A Thread binds only to a Project its Member owns. The Thread's Machine follows from the Project.
@@ -119,11 +119,19 @@ The Approval gate then decides, in this order:
 2. **Otherwise the Member's own policy** for that tool class.
 3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member, and the card shows the judge's reason.
 
-On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks wherever an interactive gate exists. One marked `always_allow` never asks.
+On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks in independently Member-started Threads. One marked `always_allow` never asks.
 
-An App data function an Agent calls with `call_app` follows the same gate. A `read`-class function runs at once; a function's class is its tool's or its own declaration (see 004). A function curated `always_ask` asks the Member, whatever the Thread's mode. A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the page's grants stay the page's.
+An App data function an Agent calls with `call_app` follows the same gate. A `read`-class function runs at once; a function's class is its tool's or its own declaration (see 004). A function curated `always_ask` asks in an interactive Thread. Coordinator-managed work and Routines instead return the automatic judge verdict as a tool result. A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the page's grants stay the page's.
 
 An Approval is answered once: the first answer wins under the Thread's lock. No answer within five minutes is a denial that tells the model not to retry. A stop ends a waiting Approval as aborted. An answer that arrives after its Turn ended is recorded as expired.
+
+## Coordinator authority
+
+The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. It has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
+
+A shared Agent defaults to Agent acting scope, using its explicit Integration grants, with read as the default grant. Member acting scope additionally intersects those grants with the originating Member's current audience. Personal Agents always act in personal scope. Shared Agents cannot call impersonating Integrations or inherit a Member's personal MCP connections. These restrictions also apply to App data functions and are checked at execution.
+
+Coordinator-managed descendants and Routines run unattended. Static denies and grants remain hard boundaries. Calls needing judgment use the Org judge, with a default policy allowing ordinary scoped work and rejecting concrete destructive, exfiltration, privilege-escalation or unauthorized financial actions. Rejection, unavailable judgment or judge failure returns a rejected tool result; it never creates a human Approval. Independently Member-started Threads retain their approval mode. Joining a managed worker does not change its policy.
 
 ## Activity and usage
 
@@ -137,7 +145,7 @@ An admin reads the whole Org's usage, Runs, traces and conversations. A Member r
 | Admins seeing personal Agents | A personal Agent is the Member's private assistant, so admins get a 404 |
 | Linking an OIDC login to a password account by email | An email match is not proof of ownership |
 | Passing credentials to a child Run | A child acts for the same Member under its own Agent's allowlist. Nothing is handed down |
-| Composing an Agent's and its caller's Integration access at call time | Two Members would get different tools from one Agent, and the Workspace carries data across them anyway. The warning makes the mismatch visible |
+| Account impersonation by a shared Agent | Shared Agents have no account binding contract; the acting-scope setting cannot enable impersonation |
 | Guild-side argument filters (repo, channel or pipeline allowlists) | Per vendor, easy to get wrong, and the raw `api` tool goes around them. The vendor token is the scope |
 | Blocking a request on the IdP recheck | An IdP outage would become a Guild outage |
 | A static allow that skips the gate for compound commands | Shell features can hide a second command, so they fall back to `prompt` |
@@ -147,4 +155,4 @@ An admin reads the whole Org's usage, Runs, traces and conversations. A Member r
 - An Agent's Workspace is shared by everyone who uses it, so what one caller's Turn fetches from an Integration and writes there, a later caller can read. The Agent is the unit of access; the audience warnings are the check.
 
 - The `deleted` Agent status exists in the type, but a purge removes the row instead.
-- Agent `resources` are recorded but not enforced. The sandbox runner applies its own limits.
+- Agent `resources.assistant` configures coordination, scope, role models and maintenance thresholds. Other resource settings are recorded but not enforced. The sandbox runner applies its own limits.

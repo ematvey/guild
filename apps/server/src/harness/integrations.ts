@@ -1,3 +1,6 @@
+import { readIntegrationAgentIdentity, readIntegrationAgentScope } from "../agents/store/coordination.js";
+import { memberCeiling, minClass } from "../platform/domain/integration-access.js";
+import { coordinationSettings } from "../agents/coordination.js";
 // The integrations chat runtime (server_tool_step + the plugin turn
 // machinery): per turn the enabled
 // plugins of the conversation's org resolve into a snapshot, one dynamic
@@ -61,10 +64,12 @@ interface TurnSnapshot {
   turns: IntegrationTurn[];
   caller: IntegrationCaller | null;
   scope: IntegrationScope;
+  sharedAgent?: boolean;
 }
 
 /** Whether a snapshot's Turn may call one tool. */
 function offered(snapshot: TurnSnapshot, turn: IntegrationTurn, info: IntegrationToolInfo): boolean {
+  if (snapshot.sharedAgent && turn.impersonated) return false;
   return toolOffered(turn, info, scopeCeiling(snapshot.scope, turn.slug, info), snapshot.caller?.role ?? "member");
 }
 
@@ -257,7 +262,15 @@ export class IntegrationsRuntime {
       throw error;
     }
     const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
-    const draft: TurnSnapshot = { orgId, chatId, turns: [], caller, scope };
+    const agentRow = (await readIntegrationAgentIdentity<{ is_personal: boolean }>(this.deps.pool, [chatId])).rows[0];
+    const draft: TurnSnapshot = {
+      orgId,
+      chatId,
+      turns: [],
+      caller,
+      scope,
+      sharedAgent: agentRow !== undefined && !agentRow.is_personal,
+    };
     const turns = resolved
       .map((turn) => ({ ...turn, tools: turn.tools.filter((info) => offered(draft, turn, info)) }))
       .filter((turn) => turn.tools.length > 0);
@@ -276,8 +289,40 @@ export class IntegrationsRuntime {
     return { extensions: [extension], tools };
   }
 
-  private scopeOf(chatId: string): Promise<IntegrationScope> {
-    return this.deps.scopeOf?.(chatId) ?? integrationScopeForChat(this.access, chatId);
+  private async scopeOf(chatId: string): Promise<IntegrationScope> {
+    const scope = await (this.deps.scopeOf?.(chatId) ?? integrationScopeForChat(this.access, chatId));
+    const row = (
+      await readIntegrationAgentScope<{
+        resources: Record<string, unknown>;
+        is_personal: boolean;
+        model: string;
+        user_id: string;
+        org_id: string;
+      }>(this.deps.pool, [chatId])
+    ).rows[0];
+    if (row === undefined || row.is_personal || coordinationSettings(row).scope !== "member") return scope;
+    const context = await this.access.context(row.org_id);
+    const member = context.members.get(row.user_id);
+    return {
+      ...scope,
+      integrations: new Map(
+        [...scope.integrations].flatMap(([slug, ceiling]) => {
+          const audience = context.audiences.get(slug);
+          const granted = member === undefined || audience === undefined ? null : memberCeiling(audience, member);
+          return granted === null ? [] : [[slug, minClass(ceiling, granted)]];
+        }),
+      ),
+    };
+  }
+
+  /** Shared execution boundary for direct tools and App data functions. */
+  async authorizeTool(conversationId: number, slug: string, name: string): Promise<string | null> {
+    const snapshot = await this.authorizedSnapshot(conversationId);
+    const turn = snapshot?.turns.find((t) => t.slug === slug);
+    const info = turn?.tools.find((t) => t.raw === name || t.spec.name === name);
+    return snapshot !== undefined && turn !== undefined && info !== undefined && offered(snapshot, turn, info)
+      ? null
+      : "Tool is outside this Agent's current Integration grants or requires unsupported account impersonation";
   }
 
   /** Resolve the chat owner's current role and acting identity. */

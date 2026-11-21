@@ -106,6 +106,17 @@ afterAll(async () => {
 });
 
 describe("download", () => {
+  it("refuses imported bytes over protected memory, including equivalent path spellings", async () => {
+    const objects = new FakeObjects();
+    objects.seedAttachment(statement, "replacement");
+    const { call } = harness([statement], [], objects, new NodeExecutionEnv({ cwd: sandbox }));
+    await writeFile(path.join(sandbox, "MEMORY.md"), "newer notes");
+    for (const destination of ["MEMORY.md", "./MEMORY.md", "notes/lesson.md", "memories/lesson.md"]) {
+      const result = await call({ file: statement.id, path: destination, overwrite: true });
+      expect(result.isError).toBe(true);
+    }
+    expect(await readFile(path.join(sandbox, "MEMORY.md"), "utf8")).toBe("newer notes");
+  });
   it("writes an attachment to the path the caller names", async () => {
     const objects = new FakeObjects();
     objects.seedAttachment(statement, "pdf-bytes\n");

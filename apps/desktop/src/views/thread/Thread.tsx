@@ -1,3 +1,6 @@
+import { AssistantActivity } from "../agents/AssistantActivity";
+import { request } from "../../lib/api/request";
+import { openAssistant } from "../agents/agents-api";
 // The thread view: transcript, composer and sidebar for one chat. State
 // lives in the hooks under thread/hooks/ and the chat stores, pure
 // derivations in the sibling modules, the parts in their own components, and
@@ -163,6 +166,27 @@ function ThreadView(props: ThreadProps) {
     () => pushRoute({ preview: previewRef, previewFull: !(route.previewFull === true) }),
     [pushRoute, previewRef, route.previewFull],
   );
+  const [assistantError, setAssistantError] = useState<string | null>(null);
+  useEffect(() => {
+    if (route.assistant == null || route.chatId !== null) return;
+    setAssistantError(null);
+    let live = true;
+    const selected = route.assistant;
+    void openAssistant(selected === "personal" ? undefined : selected)
+      .then((result) => {
+        if (live) pushRoute({ chatId: result.chat_id, assistant: selected }, { replace: true });
+      })
+      .catch((error) => {
+        if (live) setAssistantError(error instanceof Error ? error.message : "Could not open assistant");
+      });
+    return () => {
+      live = false;
+    };
+  }, [route.assistant, route.chatId, pushRoute]);
+  useEffect(() => {
+    if (route.chatId === null) return;
+    void request("POST", `/api/v1/chats/${route.chatId}/surface`, {}).catch(() => {});
+  }, [route.chatId]);
   const chatId = route.chatId;
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
@@ -573,18 +597,24 @@ function ThreadView(props: ThreadProps) {
   // The skills and agents pages raise their own rail entry while their URL
   // is live.
   const railTab: RailTab =
-    route.skills !== null
-      ? "skills"
-      : route.integrations !== null
-        ? "integrations"
-        : (route.apps ?? null) !== null
-          ? "apps"
-          : route.agents !== null
-            ? agentsRailTab(route.agents)
-            : route.tab;
+    route.assistant != null
+      ? "assistant"
+      : route.skills !== null
+        ? "skills"
+        : route.integrations !== null
+          ? "integrations"
+          : (route.apps ?? null) !== null
+            ? "apps"
+            : route.agents !== null
+              ? agentsRailTab(route.agents)
+              : route.tab;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
+    if (tab === "assistant") {
+      pushRoute({ ...CHAT_ROOT, agents: null, assistant: "personal" });
+      return;
+    }
     // The skills and agents tabs are URL routes, not persisted panel state:
     // entering them navigates to their root, leaving returns to the chat
     // root — so back/forward crosses surfaces like any other route pair,
@@ -708,8 +738,22 @@ function ThreadView(props: ThreadProps) {
 
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
+  const assistantAgentId = route.assistant === "personal" ? agent.personalAgent?.id : route.assistant;
   const routePage =
-    route.agents !== null ? (
+    route.assistant != null && route.chatId === null ? (
+      <div
+        className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground"
+        role={assistantError ? "alert" : "status"}
+      >
+        {assistantError ?? "Opening assistant…"}
+      </div>
+    ) : route.assistant != null && route.assistantView === "activity" && assistantAgentId != null ? (
+      <AssistantActivity
+        agentId={assistantAgentId}
+        onOpenChat={openChat}
+        onBack={() => pushRoute({ assistantView: "conversation" })}
+      />
+    ) : route.agents !== null ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
         <AgentsPage
           route={route.agents}
@@ -862,6 +906,18 @@ function ThreadView(props: ThreadProps) {
                 onDelete={headerDelete}
               />
 
+              {route.assistant != null && (
+                <div className="flex items-center gap-3 border-b px-4 py-2 text-xs">
+                  <span className="font-medium">Assistant</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => pushRoute({ assistantView: "activity" })}
+                  >
+                    Activity
+                  </button>
+                </div>
+              )}
               {offlineMachineBanner && (
                 <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
                   {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
