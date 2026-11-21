@@ -255,16 +255,20 @@ export class AgentThreadStore {
   }
 
   /** The complete private display index; socket snapshots must not strand older tasks. */
-  async displayThreads(agentId: string, userId: string): Promise<AgentThread[]> {
+  async displayThreads(agentId: string, userId: string): Promise<ThreadPage["threads"]> {
     const result = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS}
+      `SELECT ${THREAD_COLUMNS}, c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
       FROM agent_threads t JOIN chats c ON c.id=t.chat_id
       WHERE (t.agent_id=$1 OR t.parent_thread_id IN (SELECT id FROM agent_threads WHERE agent_id=$1 AND execution_role='coordinator'))
         AND t.user_id=$2 AND NOT c.internal AND c.deleted_at IS NULL
       ORDER BY t.last_activity_at DESC,t.id DESC`,
       [agentId, userId],
     );
-    return result.rows.map(toThread);
+    return result.rows.map((row) => ({
+      ...toThread(row),
+      archived: Boolean(row.archived),
+      deleted: Boolean(row.deleted),
+    }));
   }
 
   /** One page of the caller's threads with this agent. Type, archive and
