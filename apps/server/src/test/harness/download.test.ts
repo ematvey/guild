@@ -106,6 +106,17 @@ afterAll(async () => {
 });
 
 describe("download", () => {
+  it("allows notes and guidance imports into an explicit Machine project", async () => {
+    const objects = new FakeObjects();
+    objects.seedAttachment(statement, "project document");
+    const machine = { dir: project, requests: [] as Array<{ machine: string; cwd?: string }> };
+    const { call } = harness([statement], [], objects, new NodeExecutionEnv({ cwd: sandbox }), machine);
+    for (const destination of ["notes/report.pdf", "AGENTS.md"]) {
+      const result = await call({ file: statement.id, path: destination, machine: "WORKSTATION-A", overwrite: true });
+      expect(result.isError).toBeUndefined();
+      expect(await readFile(path.join(project, destination), "utf8")).toBe("project document");
+    }
+  });
   it("refuses imported bytes over protected memory, including equivalent path spellings", async () => {
     const objects = new FakeObjects();
     objects.seedAttachment(statement, "replacement");
