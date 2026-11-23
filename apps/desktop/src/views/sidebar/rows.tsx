@@ -228,12 +228,14 @@ export function ChatListItem({
         )}
         <RowStatus status={status} />
       </button>
-      <RowActions
-        onRename={onRename ? () => setEditing(true) : undefined}
-        onArchive={onArchive}
-        onDelete={onDelete}
-        archiveLabel={archiveLabel}
-      />
+      {!assistantInbox && (
+        <RowActions
+          onRename={onRename ? () => setEditing(true) : undefined}
+          onArchive={onArchive}
+          onDelete={onDelete}
+          archiveLabel={archiveLabel}
+        />
+      )}
     </div>
   );
 }

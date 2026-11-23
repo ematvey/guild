@@ -519,6 +519,7 @@ function ThreadView(props: ThreadProps) {
   // An archived thread is in the archived list, not the active one; its row
   // still supplies the title.
   const listedChat = activeChat ?? archivedChats?.find((c) => c.id === viewChatId);
+  const assistantInbox = listedChat?.assistant_inbox === true;
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
@@ -886,7 +887,10 @@ function ThreadView(props: ThreadProps) {
                 titleLoading={threadLoading && blocks.length === 0}
                 childTree={childTree}
                 isSubagent={facts.type === "subagent"}
-                showMenu={!!viewChatId && facts.type === "user" && !facts.deleted}
+                showMenu={
+                  !!viewChatId && (listedChat !== undefined || foreignChat) &&
+                  facts.type === "user" && !facts.deleted && !assistantInbox
+                }
                 foreign={foreignChat}
                 archived={chatArchived}
                 renameSeed={activeChat?.title ?? ""}
@@ -936,6 +940,7 @@ function ThreadView(props: ThreadProps) {
               </PreviewProvider>
 
               <ThreadComposer
+                assistantInbox={assistantInbox}
                 composer={composer}
                 sending={outgoing}
                 agent={agent}

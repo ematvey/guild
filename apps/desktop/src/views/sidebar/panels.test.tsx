@@ -145,6 +145,9 @@ describe("panels", () => {
           chatId={null}
           onNewChat={() => {}}
           onOpenChat={() => {}}
+          onRenameChat={() => {}}
+          onArchiveChat={() => {}}
+          onDeleteChat={() => {}}
         />,
       );
     const html = render([ordinary, inbox]);
@@ -152,6 +155,7 @@ describe("panels", () => {
     expect(html.indexOf(">My renamed assistant<")).toBeLessThan(html.indexOf(">Assistant<"));
     expect(html.split(">My renamed assistant<")).toHaveLength(2);
     expect(html).toContain("lucide-sparkles");
+    expect(html.match(/title="Row actions"/g)).toHaveLength(1);
     expect(render([ordinary])).not.toContain("lucide-sparkles");
     expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
   });

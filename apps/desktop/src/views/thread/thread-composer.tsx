@@ -239,6 +239,7 @@ export interface ComposerSend {
 }
 
 export function ThreadComposer({
+  assistantInbox,
   composer,
   sending,
   agent,
@@ -258,6 +259,7 @@ export function ThreadComposer({
   setComposerEl,
   onManageAgents,
 }: {
+  assistantInbox: boolean;
   composer: ComposerHandle;
   sending: ComposerSend;
   agent: AgentPick;
@@ -591,8 +593,12 @@ export function ThreadComposer({
               {models !== null && models.length === 0 && <span className="text-muted-foreground">no models</span>}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <ContextRing chatId={viewChatId} model={model} />
-              <AgentChip agent={agent} onManageAgents={onManageAgents} />
+              {!assistantInbox && (
+                <>
+                  <ContextRing chatId={viewChatId} model={model} />
+                  <AgentChip agent={agent} onManageAgents={onManageAgents} />
+                </>
+              )}
               <Button
                 size="icon"
                 className="size-8 rounded-full pointer-coarse:size-10"
