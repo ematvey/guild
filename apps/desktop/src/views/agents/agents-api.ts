@@ -32,6 +32,7 @@ export interface AgentRunStep {
 /** A run as the run-detail endpoint returns it: the wire row plus its
  *  derived steps and the files they wrote. */
 export interface AgentRun extends WireAgentRun {
+  internal?: boolean;
   steps?: AgentRunStep[];
   files?: string[];
 }
@@ -505,6 +506,7 @@ export interface ConversationThread {
 
 /** One conversation row in the Activity list. */
 export interface ConversationRow {
+  internal?: boolean;
   id: string;
   title: string | null;
   owner: ConversationOwner;
@@ -565,6 +567,7 @@ export type ConversationItem = ConversationMessageItem | ConversationRunItem;
 /** One conversation as the reader sees it: header, page items, paging flag. */
 export interface ConversationDetail {
   conversation: ConversationRow;
+  related_threads?: { id: string; title: string | null; internal: boolean }[];
   items: ConversationItem[];
   has_more: boolean;
 }
@@ -607,6 +610,7 @@ export interface ActivitySummary {
 }
 
 export interface ActivityQuery {
+  background?: boolean;
   from?: string;
   to?: string;
   agent?: string;

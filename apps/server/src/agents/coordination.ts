@@ -300,7 +300,7 @@ export class AgentCoordination {
                 thread,
                 failureCode: "reflection_failed",
                 content:
-                  "Review the activity below. Update MEMORY.md and supporting notes with durable lessons, decisions and user corrections. Use read/edit/write for memory changes; inspect files before editing and reconcile conflicts. Keep summaries concise with source IDs. Do not change permissions, message users or perform external work. Finish within six file operations.\n" +
+                  "Review the activity below for durable lessons, decisions and user corrections. If there is something to save, first read /workspace/MEMORY.md with the read tool, then update it. Keep summaries concise and include source IDs. Use supporting notes only when needed and only follow paths you know from the memory or activity. If a revision conflict occurs, reread the file and reconcile your edit. Do not change permissions, message users or perform external work.\n" +
                   JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
                 run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
               },

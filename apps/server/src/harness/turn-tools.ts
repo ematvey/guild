@@ -1,4 +1,3 @@
-import { reserveReflectionOperation } from "../agents/store/coordination.js";
 import { guardMemoryTool } from "../agents/conflict.js";
 // Per-turn tool provisioning: the org's enabled integrations, the chat
 // owner's MCP servers, the agent's conversation tools, and the machine and
@@ -166,40 +165,13 @@ export class TurnTools {
               agentRef.thread_id,
             ),
       );
-    const boundedMachineTools =
-      role?.execution_role !== "reflection" || agentRef === null
-        ? machineTools
-        : machineTools.map(
-            (tool) =>
-              ({
-                ...tool,
-                execute: async (args, api, context) => {
-                  const reserved = await reserveReflectionOperation(
-                    deps.pool,
-                    agentRef.thread_id,
-                    `${api.taskId}:${api.callId}`,
-                  );
-                  if (reserved.rowCount === 0)
-                    return {
-                      isError: true,
-                      output: [
-                        {
-                          type: "text" as const,
-                          text: "Reflection's six-operation budget is exhausted. Finish this reflection now.",
-                        },
-                      ],
-                    };
-                  return tool.execute(args, api, context);
-                },
-              }) satisfies ToolRegistration,
-          );
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
     // under a chat-scoped name and listed with the other extensions.
     const names = chatExtensionNames(chatId);
     const scoped = [
       { name: names[0], tools: agentTools },
-      { name: names[1], tools: boundedMachineTools },
+      { name: names[1], tools: machineTools },
     ].filter((extension) => extension.tools.length > 0);
     for (const extension of scoped) deps.registry.install(extension);
     await conversation.configure(

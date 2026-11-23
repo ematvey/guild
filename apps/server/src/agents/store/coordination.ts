@@ -130,7 +130,7 @@ export function expireReflectedInputContent(db: Database) {
 
 export function startReflection<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `UPDATE agent_coordination_state SET reflection_thread_id=$2,reflection_inputs=$3,reflection_operations='{}',reflection_started_at=now() WHERE agent_id=$1`,
+    `UPDATE agent_coordination_state SET reflection_thread_id=$2,reflection_inputs=$3,reflection_started_at=now() WHERE agent_id=$1`,
     values,
   );
 }
@@ -238,16 +238,5 @@ export function recordWorkerOutcome<T extends QueryResultRow = QueryResultRow>(d
       SELECT agent_id,$2,$3,$4,'worker_result',$5,false,now() FROM agent_threads WHERE chat_id=$1
       ON CONFLICT (source_event_id) DO NOTHING`,
     values,
-  );
-}
-
-/** Reserve one replay-stable file operation within a reflection's six-call budget. */
-export function reserveReflectionOperation(db: Database, threadId: string, key: string) {
-  return db.query(
-    `UPDATE agent_coordination_state SET reflection_operations =
-    CASE WHEN $2=ANY(reflection_operations) THEN reflection_operations ELSE array_append(reflection_operations,$2) END
-    WHERE reflection_thread_id=$1 AND ($2=ANY(reflection_operations) OR cardinality(reflection_operations)<6)
-    RETURNING agent_id`,
-    [threadId, key],
   );
 }

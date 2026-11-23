@@ -7,6 +7,7 @@ import { ensureCoordinationThread, coordinationSettings } from "../../agents/coo
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
+import { canReadOwned, readsWholeOrg } from "../domain/access.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import { submitTurn } from "../../chats/submit-turn.js";
@@ -968,8 +969,10 @@ export function registerAgentRoutes(
   app.get("/api/v1/runs/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const run = await store.runs.getRun(parseUuidParam(req, "id"));
-    if (run.internal || (run.user_id !== user.id && user.role !== "admin")) throw ApiError.notFound("no such run");
-    await store.requireAccess(user, run.agent_id, "use");
+    if (!canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) {
+      throw ApiError.notFound("no such run");
+    }
+    await store.fetchInOrg(user.org_id, run.agent_id);
     const steps = await store.runs.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
     const mapped = steps.map((step) => ({
@@ -989,7 +992,7 @@ export function registerAgentRoutes(
       is_error: step.is_error ?? null,
     }));
     const thread =
-      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id);
+      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
     return sendJson(reply, {
       run: { ...run, steps: mapped, files },
       steps,
@@ -1000,8 +1003,10 @@ export function registerAgentRoutes(
   app.get("/api/v1/runs/:id/children", async (req, reply) => {
     const user = await requireUser(auth, req);
     const run = await store.runs.getRun(parseUuidParam(req, "id"));
-    if (run.internal || (run.user_id !== user.id && user.role !== "admin")) throw ApiError.notFound("no such run");
-    await store.requireAccess(user, run.agent_id, "use");
+    if (!canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) {
+      throw ApiError.notFound("no such run");
+    }
+    await store.fetchInOrg(user.org_id, run.agent_id);
     return sendJson(reply, { children: await store.runs.childRuns(run.id) });
   });
 
