@@ -1,4 +1,3 @@
-import { writeAddress } from "../thread/route";
 // The agent's Settings tab: the editable configuration for managers, the
 // read-only configuration for everyone else.
 
@@ -33,6 +32,7 @@ import {
   exportAgent,
   groupTools,
   listAgentTools,
+  openAssistant,
   restoreAgent,
   updateAgent,
   type Agent,
@@ -50,11 +50,13 @@ export function AgentSettings({
   manage,
   viewer,
   onDeleted,
+  onOpenChat,
 }: {
   agent: Agent;
   manage: boolean;
   viewer: Viewer;
   onDeleted: () => void;
+  onOpenChat?: (chatId: string) => void;
 }) {
   const agentResources = (
     agent.resources && typeof agent.resources === "object" && !Array.isArray(agent.resources) ? agent.resources : {}
@@ -140,9 +142,11 @@ export function AgentSettings({
             <Button
               className="mt-3"
               variant="outline"
+              disabled={onOpenChat === undefined}
               onClick={() => {
-                writeAddress(`/assistant/${agent.id}`);
-                window.dispatchEvent(new PopStateEvent("popstate"));
+                void openAssistant(agent.id)
+                  .then(({ chat_id }) => onOpenChat?.(chat_id))
+                  .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)));
               }}
             >
               Open assistant

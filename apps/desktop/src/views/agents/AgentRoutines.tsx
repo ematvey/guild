@@ -331,7 +331,7 @@ function RoutineDetail({
           </p>
         </div>
         <p className="mt-3 text-2xs text-muted-foreground">
-          The run gets these instructions, this prompt and the workspace. It does not see the default thread.
+          The run gets these instructions, this prompt and the workspace. It does not see the other threads.
         </p>
       </Section>
 

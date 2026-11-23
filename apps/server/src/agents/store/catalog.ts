@@ -1,4 +1,4 @@
-// The agent rows: create (with the default thread and its chat), the
+// The agent rows: create (with its first thread and that thread's chat), the
 // personal agent, visibility-filtered reads, and configuration updates, and
 // the authorization check every agent route and tool runs. Access entries
 // live in `agent_access` and are read and written by the shared access
@@ -104,7 +104,7 @@ export class AgentCatalog {
     }
   }
 
-  /** Creates the agent, its default thread and that thread's chat journal
+  /** Creates the agent, its first thread and that thread's chat journal
    *  row in one transaction. The owner is the caller. */
   async create(user: UserRow, input: CreateAgentInput): Promise<Agent> {
     const id = uuidv7();
@@ -132,17 +132,11 @@ export class AgentCatalog {
             input.generative_ui ?? true,
           ],
         );
-        const chat = await this.chats.createChatOn(
-          client,
-          user.org_id,
-          user.id,
-          "Main thread",
-          null,
-        );
+        const chat = await this.chats.createChatOn(client, user.org_id, user.id, input.name, null);
         await client.query(
-          `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type, is_default)
-           VALUES ($1, $2, $3, $4, 'Main thread', false, 'user', true)`,
-          [uuidv7(), id, user.id, chat.id],
+          `INSERT INTO agent_threads (id, agent_id, user_id, chat_id, title, title_locked, type)
+           VALUES ($1, $2, $3, $4, $5, false, 'user')`,
+          [uuidv7(), id, user.id, chat.id, input.name],
         );
       });
     } catch (error) {

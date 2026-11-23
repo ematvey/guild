@@ -24,11 +24,6 @@ export type PushRoute = (next: RoutePatch, options?: RouteNavOptions) => void;
 
 /** The address a resolved route lives at. */
 export function routePath(resolved: ChatRoute): string {
-  if (resolved.assistant != null)
-    return (
-      (resolved.assistant === "personal" ? "/assistant" : `/assistant/${encodeURIComponent(resolved.assistant)}`) +
-      (resolved.assistantView === "activity" ? "/activity" : "")
-    );
   const path = chatRoutePath(
     resolved.chatId,
     resolved.projectId,

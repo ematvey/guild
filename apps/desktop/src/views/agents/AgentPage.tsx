@@ -34,7 +34,6 @@ import {
   RunStatusBadge,
   Section,
   TabBar,
-  ToneBadge,
   VisibilityBadge,
 } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
@@ -300,6 +299,7 @@ export function AgentPage({
               agent={agent}
               manage={manage}
               viewer={viewer}
+              onOpenChat={onOpenChat}
               onDeleted={() => onNavigate({ view: "directory" })}
             />
           )}
@@ -365,7 +365,6 @@ function AgentOverview({
 
         <Section
           title="Recent threads"
-          description="The default thread is pinned first."
         >
           {threadSlice.error !== null ? (
             <ErrorState
@@ -398,9 +397,6 @@ function AgentOverview({
                     <span className="min-w-0 flex-1 truncate">
                       {thread.title}
                     </span>
-                    {thread.is_default && (
-                      <ToneBadge tone="info">Default</ToneBadge>
-                    )}
                     <span className="text-xs text-muted-foreground">
                       {relativeTime(thread.last_activity_at)}
                     </span>

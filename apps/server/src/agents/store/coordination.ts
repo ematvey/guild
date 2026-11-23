@@ -23,7 +23,9 @@ export function findCoordinationThread<T extends QueryResultRow = QueryResultRow
 
 export function readCoordinationRole<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT execution_role, coordinator_managed, source_input_id FROM agent_threads WHERE chat_id = $1`,
+    `SELECT t.execution_role, t.coordinator_managed, t.source_input_id,
+            t.coordinator_managed AND p.agent_id = t.agent_id AS general_worker
+     FROM agent_threads t LEFT JOIN agent_threads p ON p.id = t.parent_thread_id WHERE t.chat_id = $1`,
     values,
   );
 }
@@ -45,7 +47,15 @@ export function claimCoordinationInputs<T extends QueryResultRow = QueryResultRo
       ), claimed AS (
         UPDATE agent_coordination_inputs i SET lease_until = now() + interval '2 minutes'
         FROM due WHERE i.id = due.id RETURNING i.*
-      ) SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email FROM claimed c JOIN users u ON u.id=c.user_id ORDER BY c.seq`,
+      )
+      SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email, provenance.routine_id, provenance.occurrence_id
+      FROM claimed c JOIN users u ON u.id=c.user_id
+      LEFT JOIN LATERAL (
+        SELECT r.routine_id, o.id AS occurrence_id
+        FROM agent_runs r LEFT JOIN agent_routine_occurrences o ON o.run_id=r.id
+        WHERE c.kind='routine' AND r.thread_id=c.source_thread_id AND r.routine_id IS NOT NULL
+        ORDER BY r.created_at DESC,r.id DESC LIMIT 1
+      ) provenance ON true ORDER BY c.seq`,
     values,
   );
 }
@@ -101,9 +111,21 @@ export function clearReflection<T extends QueryResultRow = QueryResultRow>(db: D
 
 export function pendingReflectionInputs<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT id,seq,content,kind FROM agent_coordination_inputs WHERE agent_id=$1 AND delivered_at IS NOT NULL AND reflected_at IS NULL ORDER BY seq LIMIT 50`,
+    `SELECT id,seq,content,kind,count(*) OVER () AS pending_count
+     FROM agent_coordination_inputs WHERE agent_id=$1 AND delivered_at IS NOT NULL AND reflected_at IS NULL
+     ORDER BY seq LIMIT 50`,
     values,
   );
+}
+
+/** Keep reference IDs for replay and clear payloads in bounded batches. */
+export function expireReflectedInputContent(db: Database) {
+  return db.query(`WITH expired AS (
+    SELECT id FROM agent_coordination_inputs
+    WHERE reflected_at < now() - interval '30 days' AND content <> ''
+    ORDER BY reflected_at,id LIMIT 200 FOR UPDATE SKIP LOCKED
+  )
+  UPDATE agent_coordination_inputs i SET content='' FROM expired WHERE i.id=expired.id`);
 }
 
 export function startReflection<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {

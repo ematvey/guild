@@ -11,6 +11,7 @@ import {
   markInputsReflected,
   clearReflection,
   pendingReflectionInputs,
+  expireReflectedInputContent,
   startReflection,
   resetReflection,
   uncompactedInputs,
@@ -70,6 +71,8 @@ export interface CoordinationInput {
   user_id: string;
   source_thread_id: string | null;
   source_event_id: string | null;
+  routine_id?: string | null;
+  occurrence_id?: string | null;
   kind: string;
   content: string;
   wake: boolean;
@@ -84,7 +87,14 @@ export function coordinationPreamble(input: CoordinationInput): string {
     user: { id: input.user_id, name: input.name, email: input.email },
     thread_id: input.source_thread_id,
     message_id: input.source_event_id,
+    ...(input.kind === "routine" ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null } : {}),
   })}\n</coordination_input>\n${input.content}`;
+}
+
+/** The inbox thread's title: the member's own assistant is "Your
+ *  assistant"; a shared agent's inbox carries the agent's name. */
+function inboxTitle(agent: Agent): string {
+  return agent.is_personal ? "Your assistant" : agent.name;
 }
 
 /** Serializes first creation across processes. Coordinator history is an
@@ -105,8 +115,8 @@ export async function ensureCoordinationThread(
     return await store.threads.createThread(
       agent.id,
       role === "coordinator" ? agent.owner_user_id : userId,
-      role === "coordinator" ? "Coordinator" : agent.name,
-      role === "coordinator" ? "routine" : "user",
+      role === "coordinator" ? "Coordinator" : inboxTitle(agent),
+      "user",
       { executionRole: role, internal: role === "coordinator" },
     );
   } finally {
@@ -122,6 +132,7 @@ export async function coordinationRole(
   execution_role: string;
   coordinator_managed: boolean;
   source_input_id: string | null;
+  general_worker: boolean | null;
 } | null> {
   return (
     (
@@ -129,6 +140,7 @@ export async function coordinationRole(
         execution_role: string;
         coordinator_managed: boolean;
         source_input_id: string | null;
+        general_worker: boolean | null;
       }>(pool, [chatId])
     ).rows[0] ?? null
   );
@@ -221,6 +233,7 @@ export class AgentCoordination {
 
   private async maintain(): Promise<void> {
     const { pool, store, runtime } = this.deps;
+    await expireReflectedInputContent(pool);
     await initializeCoordinationState(pool, []);
     const agents = await listCoordinators<{ agent_id: string; chat_id: string }>(pool, []);
     for (const row of agents.rows) {
@@ -259,19 +272,23 @@ export class AgentCoordination {
             await clearReflection(lock, [agent.id]);
           }
         }
-        const recent = await pendingReflectionInputs<{ id: string; seq: string; content: string; kind: string }>(lock, [
-          agent.id,
-        ]);
+        const recent = await pendingReflectionInputs<{
+          id: string;
+          seq: string;
+          content: string;
+          kind: string;
+          pending_count: string;
+        }>(lock, [agent.id]);
         if (
           !active &&
           recent.rows.length > 0 &&
-          (recent.rows.length >= settings.reflection_events || state.reflection_age >= settings.reflection_seconds)
+          (Number(recent.rows[0]?.pending_count ?? 0) >= settings.reflection_events || state.reflection_age >= settings.reflection_seconds)
         ) {
           const thread = await store.threads.createThread(
             agent.id,
             agent.owner_user_id,
             "Memory reflection",
-            "routine",
+            "user",
             { executionRole: "reflection", internal: true },
           );
           await startReflection(lock, [agent.id, thread.id, recent.rows.map((x) => x.id)]);
@@ -284,7 +301,7 @@ export class AgentCoordination {
                 failureCode: "reflection_failed",
                 content:
                   "Review the activity below. Update MEMORY.md and supporting notes with durable lessons, decisions and user corrections. Use read/edit/write for memory changes; inspect files before editing and reconcile conflicts. Keep summaries concise with source IDs. Do not change permissions, message users or perform external work. Finish within six file operations.\n" +
-                  JSON.stringify(recent.rows),
+                  JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
                 run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
               },
             );

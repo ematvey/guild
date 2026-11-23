@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
 import { AgentCoordination, coordinationSettings, ensureCoordinationThread } from "../../agents/coordination.js";
+import { expireReflectedInputContent } from "../../agents/store/coordination.js";
+import { runTraceRow } from "../../agents/store/run-finish.js";
 import { AgentStore } from "../../agents/store.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
@@ -80,6 +82,10 @@ suite("persistent coordination", () => {
     const ia = await ensureCoordinationThread(env!.db, store, agent, alice.id, "inbox");
     const ib = await ensureCoordinationThread(env!.db, store, agent, bob.id, "inbox");
     expect(ia.id).not.toBe(ib.id);
+    const ordinary = await store.threads.createThread(agent.id, alice.id, "Assistant");
+    const rows = await chats.listChats(agent.org_id, alice.id);
+    expect(rows.find((row) => row.id === ia.chat_id)?.assistant_inbox).toBe(true);
+    expect(rows.find((row) => row.id === ordinary.chat_id)?.assistant_inbox).toBeUndefined();
     expect((await chats.listChats(agent.org_id, alice.id)).map((c) => c.id)).not.toContain(a.chat_id);
     await expect(chats.getChat(agent.org_id, ib.chat_id, alice)).rejects.toThrow();
   });
@@ -107,7 +113,7 @@ suite("persistent coordination", () => {
     expect(JSON.stringify(calls.at(-1)?.content)).toContain("Independent work");
   });
 
-  it("keeps older unsurfaced tasks in the complete private display index", async () => {
+  it("keeps recent unsurfaced tasks in the private display index", async () => {
     const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
     const tasks: AgentThread[] = [];
     for (let n = 0; n < 23; n++)
@@ -121,6 +127,49 @@ suite("persistent coordination", () => {
     expect(
       (await store.threads.displayThreads(agent.id, bob.id)).some((row) => tasks.some((task) => task.id === row.id)),
     ).toBe(false);
+  });
+
+  it("excludes archived conversations and hidden routine executions from the display list", async () => {
+    const routine = await store.threads.createThread(agent.id, alice.id, "Hidden routine", "routine");
+    const archived = await store.threads.createThread(agent.id, alice.id, "Archived conversation");
+    await env!.db.query("UPDATE chats SET archived_at=now() WHERE id=$1", [archived.chat_id]);
+    const rows = await store.threads.displayThreads(agent.id, alice.id);
+    expect(rows.map((row) => row.id)).not.toContain(routine.id);
+    expect(rows.map((row) => row.id)).not.toContain(archived.id);
+  });
+
+  it("clears reflected payloads and cascades inputs on member removal", async () => {
+    const userId = randomUUID();
+    await env!.db.query(
+      "INSERT INTO users(id,org_id,email,password_hash,role,identity_type) VALUES($1,$2,$3,'','member','managed')",
+      [userId, agent.org_id, "departing@example.test"],
+    );
+    const { rows: [input] } = await env!.db.query<{ id: string }>(
+      `INSERT INTO agent_coordination_inputs(agent_id,user_id,content,delivered_at,reflected_at)
+       VALUES($1,$2,'expired text',now()-interval '32 days',now()-interval '31 days') RETURNING id`,
+      [agent.id, userId],
+    );
+    await expireReflectedInputContent(env!.db);
+    const readInput = () => env!.db.query<{ content: string }>(
+      "SELECT content FROM agent_coordination_inputs WHERE id=$1", [input!.id],
+    );
+    expect((await readInput()).rows).toEqual([{ content: "" }]);
+    await env!.db.query("DELETE FROM users WHERE id=$1", [userId]);
+    expect((await readInput()).rows).toEqual([]);
+  });
+
+  it("keeps the coordinator run summary out of the Activity trace mirror", async () => {
+    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    expect(coordinator.type).toBe("user");
+    const run = await store.runs.createRun({
+      agent_id: agent.id,
+      user_id: alice.id,
+      thread_id: coordinator.id,
+      trigger: "message",
+      status: "succeeded",
+      summary: "Internal coordination output",
+    });
+    expect(await runTraceRow(env!.db, run.id)).toBeNull();
   });
 
   it("preserves newer memory across equivalent paths and workspace shell calls", async () => {

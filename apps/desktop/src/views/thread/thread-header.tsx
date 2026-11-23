@@ -1,8 +1,8 @@
 // The open thread's header: the mobile drawer button, the title (or a child
-// thread's back link), the working badge, and the chat menu with its rename
+// thread's back link), and the chat menu with its rename
 // and delete dialogs.
 import { useState } from "react";
-import { Archive, ArchiveRestore, EllipsisVertical, Link2, Loader2, Menu, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, EllipsisVertical, Link2, Menu, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
@@ -37,7 +37,6 @@ export function ThreadHeader({
   titleLoading,
   childTree,
   isSubagent,
-  showWorking,
   showMenu,
   foreign,
   archived,
@@ -54,8 +53,6 @@ export function ThreadHeader({
   titleLoading: boolean;
   childTree: ChatTree | null;
   isSubagent: boolean;
-  /** A descendant run works while the chat's own turn does not. */
-  showWorking: boolean;
   /** The chat menu: a user thread that still exists. */
   showMenu: boolean;
   /** Another member's chat: every write is the owner's. */
@@ -99,17 +96,6 @@ export function ThreadHeader({
         <ChildThreadHeader tree={childTree} onBack={onOpenChat} />
       ) : (
         <ThreadTitle chatId={chatId} title={title} loading={titleLoading} />
-      )}
-      {showWorking && (
-        <span
-          className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
-          title="Working"
-          aria-label="Working"
-          role="status"
-        >
-          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-          <span>Working</span>
-        </span>
       )}
       {showMenu && (
         <DropdownMenu>

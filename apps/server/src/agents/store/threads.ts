@@ -1,8 +1,9 @@
 // The agent thread index: each thread owns one chats row (agent_threads.
-// chat_id) holding its transcript. Create (top-level, default and delegated
-// child), the caller's paged thread list, lookups, rename, activity and the
-// derived title.
+// chat_id) holding its transcript. Create (top-level and delegated child),
+// the caller's paged thread list, lookups, rename, activity and the derived
+// title.
 
+import type { AgentThread as WireThread } from "@guild/wire/rest";
 import { ApiError } from "../../platform/errors.js";
 import { withTransaction, type PlatformPool } from "../../platform/db.js";
 import { uuidv7, uuidv5 } from "../../platform/time.js";
@@ -49,6 +50,13 @@ export interface ListedThread extends AgentThread {
 export interface ThreadPage {
   threads: ListedThread[];
   next_cursor: string | null;
+}
+
+/** A thread as the wire carries it. `is_default` is false for every thread:
+ *  the contract keeps the field for clients built before a thread stopped
+ *  being its agent's default. */
+export function wireThread(thread: ListedThread): WireThread {
+  return { ...thread, is_default: false };
 }
 
 function encodeThreadCursor(sort: ThreadSort, at: string, id: string): string {
@@ -123,7 +131,6 @@ export class AgentThreadStore {
       originThreadId?: string;
       executionRole?: "coordinator" | "inbox" | "reflection";
       internal?: boolean;
-      isDefault?: boolean;
       /** The routine whose output this thread is. */
       routineId?: string;
       /** This thread is the routine's feed: thread-mode deliveries append here. */
@@ -143,19 +150,18 @@ export class AgentThreadStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id,
+           (id, agent_id, user_id, chat_id, title, title_locked, type, origin_thread_id,
             routine_id, routine_feed)
-         VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           id,
           agentId,
           userId,
           chat.id,
           title,
-          type,
-          options.isDefault === true,
-          options.originThreadId ?? null,
           options.titleLocked === true,
+          type,
+          options.originThreadId ?? null,
           options.routineId ?? null,
           options.routineFeed === true,
         ],
@@ -243,26 +249,17 @@ export class AgentThreadStore {
     );
   }
 
-  /** The user's Main thread with this agent, when they have one. */
-  async mainThread(agentId: string, userId: string): Promise<AgentThread | null> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.is_default`,
-      [agentId, userId],
-    );
-    const row = res.rows[0];
-    return row === undefined ? null : toThread(row);
-  }
-
-  /** The complete private display index; socket snapshots must not strand older tasks. */
+  /** Recent active conversations and coordinator tasks owned by this Member. */
   async displayThreads(agentId: string, userId: string): Promise<ThreadPage["threads"]> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT ${THREAD_COLUMNS}, c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
       FROM agent_threads t JOIN chats c ON c.id=t.chat_id
-      WHERE (t.agent_id=$1 OR t.parent_thread_id IN (SELECT id FROM agent_threads WHERE agent_id=$1 AND execution_role='coordinator'))
-        AND t.user_id=$2 AND NOT c.internal AND c.deleted_at IS NULL
-      ORDER BY t.last_activity_at DESC,t.id DESC`,
-      [agentId, userId],
+      LEFT JOIN agent_threads parent ON parent.id=t.parent_thread_id
+      WHERE (t.agent_id=$1 OR (parent.agent_id=$1 AND parent.execution_role='coordinator'))
+        AND t.user_id=$2 AND agent_display_thread(t.type, c.internal, parent.execution_role)
+        AND c.archived_at IS NULL AND c.deleted_at IS NULL
+      ORDER BY t.last_activity_at DESC,t.id DESC LIMIT $3`,
+      [agentId, userId, MAX_THREAD_PAGE],
     );
     return result.rows.map((row) => ({
       ...toThread(row),

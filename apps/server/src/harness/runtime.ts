@@ -1289,7 +1289,7 @@ export class GuildRuntime {
             ? models.coordinator_model
             : role?.execution_role === "reflection"
               ? models.reflection_model
-              : role?.coordinator_managed
+              : role?.general_worker
                 ? models.worker_model
                 : configured.model,
         passive: role?.execution_role === "inbox" || input.passive === true,

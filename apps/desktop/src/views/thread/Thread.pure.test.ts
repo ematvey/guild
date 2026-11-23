@@ -1,4 +1,3 @@
-import { routePath } from "./hooks/use-thread-route";
 // Pure-logic tests for the thread view's highest-risk functions (no DOM, no
 // server). These run under `npm test` (vitest); see package.json.
 
@@ -213,16 +212,6 @@ describe("thread access", () => {
 });
 
 describe("parseChatRoute / chatRoutePath", () => {
-  it("round trips Assistant inboxes and Activity through URL routes", () => {
-    for (const url of [
-      "/assistant",
-      "/assistant/activity",
-      "/assistant/team-agent",
-      "/assistant/team-agent/activity",
-    ]) {
-      expect(routePath(parseChatRoute(url))).toBe(url);
-    }
-  });
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
     return chatRoutePath(

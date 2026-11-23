@@ -10,8 +10,8 @@ import type { Project } from "../../lib/api/projects";
 // ---- sidebar grouping ----
 
 export interface SidebarGrouping {
-  /** Stateless (projectless) chats, most recently active first — the Recents
-   *  list; chats bound to a project live only under that project's row. */
+  /** Projectless chats and persistent Assistant inboxes, most recently
+   *  active first. The Chats panel pins inboxes in their own section. */
   visible: ChatSummary[];
   /** Each project's chats, most recently active first — the fold-out under
    *  the project row (Recents does not repeat them). */
@@ -41,7 +41,7 @@ export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
   const chatsByProject: Record<string, ChatSummary[]> = {};
   const stateless: ChatSummary[] = [];
   for (const chat of list) {
-    if (!chat.project_id) {
+    if (chat.assistant_inbox || !chat.project_id) {
       stateless.push(chat);
       continue;
     }

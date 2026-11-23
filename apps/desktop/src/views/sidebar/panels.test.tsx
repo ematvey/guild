@@ -1,3 +1,5 @@
+import type { ChatSummary } from "../../lib/api/chats";
+import { sidebarGrouping } from "../projects/projects";
 // Sidebar markup contracts: the chat row's status affordances, the project
 // row's machine label and fold-out toggle, and the panel headers' controls.
 
@@ -110,6 +112,48 @@ describe("ProjectHeader", () => {
 });
 
 describe("panels", () => {
+  it("pins a renamed Assistant inbox above a newer ordinary chat named Assistant", () => {
+    const ordinary: ChatSummary = {
+      id: "regular",
+      org_id: "org",
+      user_id: "member",
+      title: "Assistant",
+      created_at: "2026-11-21T10:00:00Z",
+      last_activity_at: "2026-11-21T12:00:00Z",
+      generating: false,
+      working: false,
+      unread: false,
+      blocked: false,
+      machine_online: false,
+      type: "user",
+      archived: false,
+      deleted: false,
+    };
+    const inbox: ChatSummary = {
+      ...ordinary,
+      id: "inbox",
+      title: "My renamed assistant",
+      assistant_inbox: true,
+      project_id: "project",
+      last_activity_at: "2026-11-21T09:00:00Z",
+    };
+    const render = (chats: ChatSummary[]) =>
+      renderToStaticMarkup(
+        <ChatsPanel
+          grouping={sidebarGrouping(chats)}
+          loadingChats={false}
+          chatId={null}
+          onNewChat={() => {}}
+          onOpenChat={() => {}}
+        />,
+      );
+    const html = render([ordinary, inbox]);
+    expect(html).toContain('aria-label="Assistant conversations"');
+    expect(html.indexOf(">My renamed assistant<")).toBeLessThan(html.indexOf(">Assistant<"));
+    expect(html.split(">My renamed assistant<")).toHaveLength(2);
+    expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
+  });
+
   it("names each tab and offers the new-chat control", () => {
     const chats = renderToStaticMarkup(
       <ChatsPanel

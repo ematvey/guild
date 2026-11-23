@@ -87,10 +87,11 @@ export class OrgModels {
       {
         selfBaseUrl: this.deps.config.selfBaseUrl,
         internalKey: this.deps.config.internalKey,
-        traceHeaders: async (sessionId) => {
+        traceHeaders: async (sessionId): Promise<Record<string, string>> => {
           const source = sessionId === undefined ? undefined : this.sessions.get(sessionId);
           if (!source) return {};
           const owner = await this.deps.chats.ownerOf(source.chatId);
+          if (owner?.internal === true) return { "x-guild-internal-caller": "coordination" };
           const runId = await this.runningRunId(source.chatId);
           return {
             "x-guild-chat-id": source.chatId,

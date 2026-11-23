@@ -155,6 +155,7 @@ export interface LlmTraceCall {
 
 export interface TraceFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   /** Member scoping: when set, only this user's traces. */
   userId?: string;
   from?: Date;
@@ -173,6 +174,7 @@ export interface TraceFilters {
 
 export interface SpanFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   userId?: string;
   from?: Date;
   to?: Date;
@@ -190,12 +192,23 @@ export interface SpanFilters {
 
 export interface SessionFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   userId?: string;
   from?: Date;
   to?: Date;
   query?: string;
   limit: number;
   offset: number;
+}
+
+function excludeInternalSessions(
+  where: string[],
+  binds: (string | number)[],
+  ids: readonly string[] = [],
+): void {
+  if (ids.length === 0) return;
+  where.push(`(session_id IS NULL OR session_id NOT IN (${ids.map(() => "toUUID(?)").join(", ")}))`);
+  binds.push(...ids);
 }
 
 const SPAN_COLUMNS =
@@ -533,6 +546,7 @@ export class TraceStore {
   async traces(filter: TraceFilters): Promise<{ rows: Record<string, unknown>[]; total: number }> {
     const where: string[] = ["org_id = toUUID(?)"];
     const binds: (string | number)[] = [filter.orgId];
+    excludeInternalSessions(where, binds, filter.excludeSessions);
     if (filter.userId !== undefined) {
       where.push("user_id = toUUID(?)");
       binds.push(filter.userId);
@@ -640,6 +654,7 @@ export class TraceStore {
       where.push("span_type = ?");
       binds.push(filter.spanType);
     }
+    excludeInternalSessions(where, binds, filter.excludeSessions);
     if (filter.userId !== undefined) {
       where.push("user_id = toUUID(?)");
       binds.push(filter.userId);
@@ -691,6 +706,7 @@ export class TraceStore {
   async sessions(filter: SessionFilters): Promise<{ rows: Record<string, unknown>[]; total: number }> {
     const where: string[] = ["org_id = toUUID(?)", "session_id IS NOT NULL"];
     const binds: (string | number)[] = [filter.orgId];
+    excludeInternalSessions(where, binds, filter.excludeSessions);
     if (filter.userId !== undefined) {
       where.push("user_id = toUUID(?)");
       binds.push(filter.userId);
@@ -724,13 +740,14 @@ export class TraceStore {
   }
 
   /** Totals for the activity header + the daily series. */
-  async summary(filter: { orgId: string; userId?: string; from: Date; to: Date }): Promise<Record<string, unknown>> {
+  async summary(filter: { orgId: string; userId?: string; from: Date; to: Date; excludeSessions?: readonly string[] }): Promise<Record<string, unknown>> {
     const where = ["org_id = toUUID(?)", "start_time >= toDateTime64(?, 3)", "start_time <= toDateTime64(?, 3)"];
     const binds: (string | number)[] = [
       filter.orgId,
       clickhouseDateTime64(filter.from),
       clickhouseDateTime64(filter.to),
     ];
+    excludeInternalSessions(where, binds, filter.excludeSessions);
     if (filter.userId !== undefined) {
       where.push("user_id = toUUID(?)");
       binds.push(filter.userId);
@@ -751,6 +768,7 @@ export class TraceStore {
       clickhouseDateTime64(filter.from),
       clickhouseDateTime64(filter.to),
     ];
+    excludeInternalSessions(traceWhere, traceBinds, filter.excludeSessions);
     if (filter.userId !== undefined) {
       traceWhere.push("user_id = toUUID(?)");
       traceBinds.push(filter.userId);
@@ -777,8 +795,15 @@ export class TraceStore {
   }
 
   /** The stored request/response bodies for one span (admin only). */
-  async payloads(orgId: string, spanId: string): Promise<Record<string, unknown>[]> {
+  async payloads(orgId: string, spanId: string, excludeSessions: readonly string[] = []): Promise<Record<string, unknown>[]> {
     await this.ensureOnce();
+    if (excludeSessions.length > 0) {
+      const where = ["org_id = toUUID(?)", "span_id = toUUID(?)"];
+      const binds: (string | number)[] = [orgId, spanId];
+      excludeInternalSessions(where, binds, excludeSessions);
+      const visible = await this.client.query(`SELECT span_id FROM agent_spans WHERE ${where.join(" AND ")} LIMIT 1`, binds);
+      if (visible.length === 0) return [];
+    }
     const rows = await this.client.query(
       "SELECT kind, body, parent_request_id, prefix_count FROM llm_payloads " +
         "WHERE org_id = toUUID(?) AND request_id = toUUID(?) ORDER BY kind",

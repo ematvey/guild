@@ -122,11 +122,14 @@ export class ThreadBinding {
     return ref === null ? null : this.store.fetchAgent(ref.agent_id);
   }
 
-  /** A thread keeps the agent that owns it when it is that agent's Main
-   *  thread or a run transcript. Ordinary threads move with the picker. */
+  /** A thread keeps the agent that owns it when it is a run transcript or a
+   *  coordination thread (the member's assistant inbox, the coordinator's
+   *  history, a reflection). Ordinary threads move with the picker. */
   async switchAllowed(chatId: string): Promise<boolean> {
     const row = await chatThreadKind(this.pool, chatId);
-    return row === null || (row.type === "user" && !row.is_default);
+    if (row === null) return true;
+    if (row.execution_role !== "thread") return false;
+    return row.type === "user";
   }
 
   /** Closes the chat's agent-thread subtree (archive): in-flight runs stop
@@ -173,7 +176,7 @@ export class ThreadBinding {
   async titleSource(chatId: string, threadId: string): Promise<TitleSource | null> {
     const row = await titleSourceRow(this.pool, chatId, threadId);
     if (row === null) return null;
-    if (row.type !== "user" || row.is_default || row.title_locked) return null;
+    if (row.type !== "user" || row.title_locked) return null;
     if ((row.title ?? "").trim() !== "") return null;
     const first = await firstUserMessage(this.pool, chatId);
     const text = (first ?? "").trim();

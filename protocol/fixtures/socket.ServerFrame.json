@@ -44,6 +44,7 @@
     "type": "thread_list",
     "chats": [
       {
+        "assistant_inbox": true,
         "id": "018f0b7c-0000-7000-8000-000000000010",
         "org_id": "018f0b7c-0000-7000-8000-000000000020",
         "user_id": "018f0b7c-0000-7000-8000-000000000030",
@@ -372,10 +373,10 @@
         "agent_id": "018f0b7c-0000-7000-8000-000000000041",
         "user_id": "018f0b7c-0000-7000-8000-000000000002",
         "chat_id": "018f0b7c-0000-7000-8000-000000000001",
-        "title": "Main thread",
+        "title": "Assistant",
         "title_locked": false,
         "type": "user",
-        "is_default": true,
+        "is_default": false,
         "parent_thread_id": null,
         "origin_thread_id": null,
         "depth": 0,
@@ -520,7 +521,7 @@
       "depth": 1,
       "parent": {
         "chat_id": "018f0b7c-0000-7000-8000-000000000001",
-        "title": "Main thread"
+        "title": "Assistant"
       },
       "origin": null,
       "archived": false,

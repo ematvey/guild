@@ -315,11 +315,9 @@ describe("integration access over HTTP", () => {
     expect(created.statusCode).toBe(200);
     const agentId = (JSON.parse(created.body) as { agent: { id: string } }).agent.id;
     const read = async () =>
-      (
-        JSON.parse((await call(stack.memberToken, "GET", `/api/v1/agents/${agentId}`)).body) as {
-          agent: { integrations: { slug: string; ceiling: string }[]; integration_warnings: unknown[] };
-        }
-      ).agent;
+      (JSON.parse((await call(stack.memberToken, "GET", `/api/v1/agents/${agentId}`)).body) as {
+        agent: { integrations: { slug: string; ceiling: string }[]; integration_warnings: unknown[] };
+      }).agent;
     expect((await read()).integrations.find((e) => e.slug === "crm2")).toBeUndefined();
 
     await call(stack.adminToken, "PUT", `/api/v1/admin/integrations/${crmId}/access`, {

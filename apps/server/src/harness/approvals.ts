@@ -1,4 +1,4 @@
-import { isRoutineChat } from "../agents/store/coordination.js";
+import { isInternalChat, isRoutineChat } from "../agents/store/coordination.js";
 import { coordinationRole } from "../agents/coordination.js";
 // The approval gate (approval_gate + exec_and_approval_gate onto the
 // pi-durable tool-task hook):
@@ -289,6 +289,7 @@ async function judgeVerdict(
     if (attempted && deps.trace) {
       const sink = deps.trace;
       void (async () => {
+        if ((await isInternalChat(deps.pool, [chatId])).rowCount) return;
         const runId = await deps.chats.openAgentRunOf(chatId).catch(() => null);
         await sink.record({
           ts: new Date(),
@@ -321,7 +322,7 @@ async function judgeVerdict(
           await sink.recordPayload(requestId, orgId, "request", requestPayload, runId ?? chatId);
         }
         if (responsePayload !== null) await sink.recordPayload(requestId, orgId, "response", responsePayload);
-      })();
+      })().catch(() => {});
     }
   }
 }
@@ -524,8 +525,6 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           context.abortSignal,
           call.id,
         );
-        // An agent's own thread runs unattended: its integration calls take
-        // the batch contract instead of a card.
         if (decision === "ask") {
           return waitForApproval(deps, runtime, chatId, call, context);
         }

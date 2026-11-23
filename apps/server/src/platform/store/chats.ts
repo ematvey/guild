@@ -33,6 +33,7 @@ export interface ChatRow {
 
 /** The chat's tenant and owner account (ownerOf). */
 export interface ChatOwner {
+  internal?: true;
   org_id: string;
   user_id: string;
   email: string;
@@ -50,6 +51,8 @@ export interface ChatIdentity {
 }
 
 export interface ChatListRow {
+  /** The persistent Assistant inbox, distinct from ordinary Threads. */
+  assistant_inbox?: boolean;
   id: string;
   org_id: string;
   user_id: string;
@@ -155,7 +158,7 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
           WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-    COALESCE(xt.type, 'user') AS type,
+    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
     c.archived_at IS NOT NULL AS archived,
     c.deleted_at IS NOT NULL AS deleted,
     rt.id AS routine_id, rt.name AS routine_name
@@ -235,12 +238,15 @@ export class ChatStore {
    *  conversation → chat → owner mapping), with the owner's account fields.
    *  null when the chat is gone. */
   async ownerOf(chatId: string): Promise<ChatOwner | null> {
-    const res = await this.pool.query<ChatOwner>(
-      "SELECT c.org_id, c.user_id, u.email, u.display_name, u.role " +
+    const res = await this.pool.query<Omit<ChatOwner, "internal"> & { internal: boolean }>(
+      "SELECT c.org_id, c.user_id, u.email, u.display_name, u.role, c.internal " +
         "FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
       [chatId],
     );
-    return res.rows[0] ?? null;
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    const { internal, ...owner } = row;
+    return internal ? { ...owner, internal: true } : owner;
   }
 
   /** Creates a chat on a caller-supplied executor (the agent-session create
@@ -332,7 +338,7 @@ export class ChatStore {
                     WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-              COALESCE(xt.type, 'user') AS type,
+              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
               true AS archived, false AS deleted
        FROM chats c
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
@@ -1012,6 +1018,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     project_machine_label: (r.project_machine_label as string | null) ?? null,
     last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
     type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
+    ...(r.assistant_inbox === true ? { assistant_inbox: true } : {}),
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),
     routine:

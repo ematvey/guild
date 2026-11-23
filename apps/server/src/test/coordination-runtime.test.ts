@@ -25,6 +25,34 @@ afterAll(async () => {
 }, 30000);
 
 describe("configured coordinator conversation", () => {
+  it("keeps the inbox thread on its own assistant", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
+    const inbox = opened.json() as { agent_id: string; chat_id: string };
+    const read = await app.inject({ method: "GET", url: `/api/v1/threads/${inbox.chat_id}/agent`, headers });
+    expect((read.json() as { switcheable: boolean }).switcheable).toBe(false);
+    const other = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers,
+      payload: { name: "Other agent", model: "coordination-test", visibility: "org" },
+    });
+    const otherId = (other.json() as { agent: { id: string } }).agent.id;
+    const moved = await app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${inbox.chat_id}/agent`,
+      headers,
+      payload: { agent_id: otherId },
+    });
+    expect(moved.statusCode).toBe(409);
+    const after = await stack.env.db.query<{ agent_id: string }>(
+      "SELECT agent_id FROM agent_threads WHERE chat_id = $1",
+      [inbox.chat_id],
+    );
+    expect(after.rows[0]!.agent_id).toBe(inbox.agent_id);
+  }, 30000);
+
   it("rejects a stale inbox submission after coordination is disabled", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
@@ -61,6 +89,8 @@ describe("configured coordinator conversation", () => {
     const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string; agent_id: string };
+    const index = await app.inject({ method: "GET", url: "/api/v1/threads", headers });
+    expect(index.json().chats.find((row: { id: string }) => row.id === inbox.chat_id).assistant_inbox).toBe(true);
     stack.mock.setResponses([{ body: final("INTERNAL ONLY") }]);
     const userMessageId = randomUUID();
     const posted = await app.inject({
@@ -173,6 +203,31 @@ describe("configured coordinator conversation", () => {
     ).rows[0]!;
     const forbidden = await app.inject({ method: "GET", url: `/api/v1/chats/${coordinator.chat_id}`, headers });
     expect(forbidden.statusCode).toBe(404);
+    const historicalRun = randomUUID();
+    await app.platform.trace.recordTrace({
+      trace_id: historicalRun,
+      org_id: stack.orgId,
+      user_id: stack.memberId,
+      agent_id: inbox.agent_id,
+      agent_name: "Assistant",
+      session_id: coordinator.chat_id,
+      thread_id: null,
+      trigger: "message",
+      status: "succeeded",
+      name: "Assistant",
+      summary: "Historical internal summary",
+      started_at: new Date(),
+      finished_at: new Date(),
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
+      headers,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual({ traces: [], total: 0 });
+    const detail = await app.inject({ method: "GET", url: `/api/v1/activity/traces/${historicalRun}`, headers });
+    expect(detail.statusCode).toBe(404);
     const requests = stack.mock.requests.map((r) => JSON.stringify(r.body)).join("\n");
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);

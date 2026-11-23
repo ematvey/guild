@@ -275,7 +275,8 @@ export interface AgentThread {
   title: string;
   title_locked: boolean;
   type: ThreadType;
-  /** The user's Main thread with this agent. */
+  /** False for every thread. The wire keeps the field for clients built
+   *  before a thread stopped being its agent's default. */
   is_default: boolean;
   parent_thread_id: string | null;
   /** The run thread this one was opened from, when an agent delivered it. */
@@ -617,6 +618,8 @@ export interface TriggerSpec {
 export type ThreadType = "user" | "subagent" | "routine";
 
 export interface Chat {
+  /** Persistent Assistant inbox; pinned separately from ordinary Threads. */
+  assistant_inbox?: boolean;
   id: string;
   org_id: string;
   user_id: string;

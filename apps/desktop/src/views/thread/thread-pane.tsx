@@ -5,7 +5,6 @@ import { memo, useMemo, type RefObject, type UIEvent } from "react";
 import Markdown from "react-markdown";
 import { ArrowDown, CornerUpLeft, Loader2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { WorkingIndicator } from "@guild/ui/components/working-indicator";
 import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { FrameToggleContext } from "../frame";
 import { WorkedForBlock, viewEntries } from "../worked-for-block";
@@ -321,20 +320,6 @@ export function ThreadPane({
                 <span>Compacting thread…</span>
               </div>
             )}
-            {/* Working shimmer: the turn is generating but the displayed
-                tail is not already animating — the last text block streams,
-                an active work run pulses its label, a live reasoning frame
-                sits inside that run. */}
-            {busy &&
-              !(
-                blocks.length > 0 &&
-                (blocks[blocks.length - 1].kind === "text" || blocks[blocks.length - 1].kind === "reasoning")
-              ) &&
-              displayEntries[displayEntries.length - 1]?.kind !== "work" && (
-                <div className="max-w-none py-1">
-                  <WorkingIndicator label={isStopping ? "Stopping" : "Working"} />
-                </div>
-              )}
           </div>
         </div>
       </FrameToggleContext.Provider>

@@ -100,6 +100,8 @@ The client keeps server state in stores that only frames write. Seeds from HTTP 
 
 The only state the client owns is a pending send and the Member's drafts. A pending send retires when a frame speaks for that Thread. `busy` is derived from `generating` and the pending send; it is never stored.
 
+The chat header and transcript do not show a generic Working label. Actual Run details, streaming responses and Stop controls communicate execution progress.
+
 The transcript keeps the server's Turn identity on committed assistant blocks. A settled Turn keeps its final message visible and folds its intermediate messages into the work row. A steer does not split a Turn, and a child result waking an idle parent does not fold the preceding Turn's final message. Posted messages remain visible outside that grouping.
 
 On every reconnect the client clears its watermarks and syncs again. When it wakes or becomes visible, it checks the socket and syncs; it never calls HTTP.
@@ -118,6 +120,8 @@ On every reconnect the client clears its watermarks and syncs again. When it wak
 The `workspace_identity` snapshot includes `server_version`, the running server’s
 build version. Desktop clients invalidate pending update offers when it changes.
 
-## Assistant navigation and visibility
+## Assistant visibility
 
-Assistant is the first rail destination. `/assistant` opens the Member's personal inbox; `/assistant/<agent-id>` opens their inbox with a shared Agent. `/assistant/activity` and `/assistant/<agent-id>/activity` show that Member's worker activity. These views use the existing `agent_threads` socket feed, including workers delegated to another Agent. Opening or explicitly surfacing a managed task makes it a sidebar conversation at its canonical `/thread/<chat-id>` address. Internal coordinator and reflection Threads never enter display feeds or Web Push.
+The Member's assistant is an ordinary Thread at its canonical `/thread/<chat-id>` address, and the Chats tab opens on it: the tab root asks the server for the Member's inbox Thread and replaces the address with that Thread. A rail entry, a page and an activity view of their own do not exist. Internal coordinator and reflection Threads never enter display feeds or Web Push.
+
+Assistant inboxes stay pinned at the top of the Chats panel in a separate section above the scrolling Thread list, with the new-chat row between them and that list. Their identity comes from the server's `assistant_inbox` Chat field, independent of title and activity time. The existing `thread_list` and `chat_row` frames carry it. An inbox Thread keeps its Agent: its `execution_role` makes the composer's picker read-only.

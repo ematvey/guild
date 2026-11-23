@@ -340,7 +340,8 @@ export class AgentRunStore {
     const res = await this.pool.query<{ org_id: string; agent_name: string; chat_id: string | null }>(
       `SELECT a.org_id, a.name AS agent_name, t.chat_id
        FROM agents a LEFT JOIN agent_threads t ON t.id = $2
-       WHERE a.id = $1`,
+       LEFT JOIN chats c ON c.id = t.chat_id
+       WHERE a.id = $1 AND c.internal IS DISTINCT FROM true`,
       [agentId, threadId],
     );
     return res.rows[0] ?? null;
@@ -353,7 +354,8 @@ export class AgentRunStore {
        FROM agent_runs r
        JOIN agent_threads t ON t.id = r.thread_id
        JOIN agents a ON a.id = r.agent_id
-       WHERE t.chat_id = $1 AND r.status IN ('queued', 'running')
+       JOIN chats c ON c.id = t.chat_id
+       WHERE t.chat_id = $1 AND NOT c.internal AND r.status IN ('queued', 'running')
        ORDER BY r.created_at ASC, r.id ASC LIMIT 1`,
       [chatId],
     );

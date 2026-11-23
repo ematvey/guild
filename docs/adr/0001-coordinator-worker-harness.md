@@ -27,7 +27,7 @@ These terms describe roles and behavior within existing concepts. They do not es
 
 ### Scope and execution roles
 
-- Build a reusable harness primitive and apply it to each Member's personal Assistant. The Assistant occupies the first navigation entry.
+- Build a reusable harness primitive and apply it to each Member's personal Assistant. The Chats rail opens the personal Assistant inbox.
 - The coordinator handles conversation, memory and coordination. Its tools permit reading, writing and execution within its own Workspace, together with the coordination operations it needs. Integration calls and Machine execution belong to workers.
 - Coordinator capabilities include Workspace access, subagent coordination, its own history and inspection of its Agent's Threads. It does not receive the substantive-work tools offered to workers, including read-only Integration tools or Machine execution. Workspace execution serves memory and coordination rather than substituting for worker execution.
 - Tool provisioning enforces this role boundary; prompt guidance alone is insufficient.
@@ -42,7 +42,7 @@ These terms describe roles and behavior within existing concepts. They do not es
 - Members can converse directly with workers in their task Threads. The coordinator retains oversight through meaningful reports and can inspect details when needed.
 - A coordinator can process background results silently. Reporting follows the Member's instructions: direct requests receive a response, and the coordinator confirms an ongoing job's reporting expectations.
 - Minimize interruptions, user actions and message length. Substantial work or discussion takes place in a linked task Thread.
-- Every worker Thread is inspectable under the Assistant's activity view. It enters the main chat list when the Assistant surfaces it or the Member opens it.
+- A Member can inspect their workers by opening their task Threads. The Agent’s Threads tab shows recent active tasks. A task enters the main chat list when the Assistant surfaces it or the Member opens it.
 - Use the existing Routine scheduler and fresh hidden execution Thread per occurrence for scheduled work. Relevant findings can return to the coordinator. The result-delivery wiring remains to be designed.
 - The coordinator can schedule its own future wake-up with a reason and relevant context. When due, that wake-up delivers an attributed Input to the persistent coordinator conversation and can start a Turn; it does not keep a Turn waiting or depend on a worker remaining alive.
 - A coordinator self-wake is a scheduled Input, not a Routine. It is not represented or displayed as an ordinary Routine. Existing scheduler infrastructure can be reused where appropriate; its storage and direct-input delivery require design. Current reminders start isolated execution Threads and do not implement this behavior.

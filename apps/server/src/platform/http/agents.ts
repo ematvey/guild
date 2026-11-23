@@ -26,6 +26,7 @@ import { agentWire } from "../../hub/agent-state.js";
 import type { Agent as WireAgent } from "@guild/wire/rest";
 import {
   refuseDeletingAgent,
+  wireThread,
   type ActivityFilters,
   type RunFilters,
   type UpdateAgentInput,
@@ -691,7 +692,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    const threads = await store.threads.displayThreads(agentId, user.id);
+    const threads = (await store.threads.displayThreads(agentId, user.id)).map(wireThread);
     return sendJson(reply, { threads });
   });
 
@@ -746,13 +747,12 @@ export function registerAgentRoutes(
       const thread = await store.threads.getThread(agentId, user.id, requested);
       return agentTurn(req, reply, user, agent, thread);
     }
-    // The caller's own Main thread, or a new thread of theirs: a shared agent
-    // never posts into another user's conversation, and reading an agent
-    // never creates a thread.
+    // A turn without a thread names a new thread of the caller's own: a
+    // shared agent never posts into another user's conversation, and reading
+    // an agent never creates a thread.
     refuseDeletingAgent(agent);
     requiredString(jsonBody(req), "message");
-    const thread =
-      (await store.threads.mainThread(agentId, user.id)) ?? (await store.threads.createThread(agentId, user.id, ""));
+    const thread = await store.threads.createThread(agentId, user.id, "");
     return agentTurn(req, reply, user, agent, thread);
   });
 

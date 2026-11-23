@@ -238,10 +238,6 @@
         {
           "where": "apps/server/src/agents/store/coordination.ts",
           "role": "db"
-        },
-        {
-          "where": "apps/desktop/src/views/agents/AssistantActivity.tsx",
-          "role": "ui"
         }
       ],
       "translations": [
@@ -457,6 +453,10 @@
         {
           "where": "apps/server/src/chats/compaction.ts",
           "role": "wire"
+        },
+        {
+          "where": "apps/desktop/src/views/sidebar/chats-panel.tsx",
+          "role": "ui"
         }
       ],
       "translations": [
@@ -464,6 +464,11 @@
           "from": "db",
           "to": "wire",
           "at": "apps/server/src/chats/chat-wire.ts"
+        },
+        {
+          "from": "wire",
+          "to": "ui",
+          "at": "apps/desktop/src/views/sidebar/chats-panel.tsx"
         }
       ]
     }

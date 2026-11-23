@@ -32,7 +32,7 @@ export const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.descrip
   ${utcText("a.deleted_at")} AS deleted_at, ${utcText("a.purge_after")} AS purge_after,
   ${utcText("a.created_at")} AS created_at, ${utcText("a.updated_at")} AS updated_at`;
 
-export const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type, t.is_default,
+export const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type,
   t.parent_thread_id, t.origin_thread_id, t.depth, ${utcText("t.closed_at")} AS closed_at,
   ${utcText("t.created_at")} AS created_at, ${utcText("t.last_activity_at")} AS last_activity_at`;
 
@@ -89,7 +89,6 @@ export function toThread(row: Record<string, unknown>): AgentThread {
     title: (row.title as string | null) ?? "",
     title_locked: Boolean(row.title_locked),
     type: row.type as AgentThreadType,
-    is_default: Boolean(row.is_default),
     parent_thread_id: (row.parent_thread_id as string | null) ?? null,
     origin_thread_id: (row.origin_thread_id as string | null) ?? null,
     depth: Number(row.depth ?? 0),

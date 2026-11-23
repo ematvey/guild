@@ -1,4 +1,4 @@
-// AgentStore: creation (default thread + chat), visibility and grant roles,
+// AgentStore: creation (first thread + chat), visibility and grant roles,
 // lifecycle transitions, thread index and run/activity/inbox rows.
 
 import { randomUUID } from "node:crypto";
@@ -53,7 +53,7 @@ dbDescribe("AgentStore", () => {
     await env?.cleanup();
   });
 
-  it("creates the agent, its default thread and the thread's chat", async () => {
+  it("creates the agent, its first thread and the thread's chat", async () => {
     const agent = await store.create(owner, {
       name: "Writer",
       model: "GLM-Test",
@@ -67,11 +67,10 @@ dbDescribe("AgentStore", () => {
     const threads = (await store.threads.listThreads(agent.id, owner.id)).threads;
     expect(threads).toHaveLength(1);
     expect(threads[0]!.type).toBe("user");
-    expect(threads[0]!.is_default).toBe(true);
-    expect(threads[0]!.title).toBe("Main thread");
+    expect(threads[0]!.title).toBe("Writer");
     const chat = await env!.db.query("SELECT user_id, title FROM chats WHERE id = $1", [threads[0]!.chat_id]);
     expect(chat.rows[0]!.user_id).toBe(owner.id);
-    expect(chat.rows[0]!.title).toBe("Main thread");
+    expect(chat.rows[0]!.title).toBe("Writer");
   });
 
   it("stores a description on create and update", async () => {
@@ -233,12 +232,11 @@ dbDescribe("AgentStore", () => {
     });
     const extra = await store.threads.createThread(agent.id, owner.id, "Second conversation");
     expect(extra.type).toBe("user");
-    expect(extra.is_default).toBe(false);
     expect(extra.title).toBe("Second conversation");
     expect(extra.chat_id).toBeTruthy();
 
     const threads = (await store.threads.listThreads(agent.id, owner.id)).threads;
-    expect(threads.some((thread) => thread.is_default)).toBe(true);
+    expect(threads.map((thread) => thread.title)).toContain("Threads");
 
     const renamed = await store.threads.renameThread(agent.id, owner.id, extra.id, "Renamed");
     expect(renamed.title).toBe("Renamed");
@@ -271,16 +269,6 @@ dbDescribe("AgentStore", () => {
     await expect(store.threads.renameThread(agent.id, member.id, mine.id, "Hijack")).rejects.toMatchObject({
       status: 404,
     });
-  });
-
-  it("keeps the Main thread its creator's alone", async () => {
-    const agent = await store.create(owner, {
-      name: "Defaults",
-      model: "GLM-Test",
-      visibility: "org",
-    });
-    expect(await store.threads.mainThread(agent.id, owner.id)).not.toBeNull();
-    expect(await store.threads.mainThread(agent.id, member.id)).toBeNull();
   });
 
   it("creates one personal agent per user and refuses to archive or delete it", async () => {

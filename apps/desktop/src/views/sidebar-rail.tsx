@@ -4,7 +4,6 @@
 
 import {
   Activity,
-  Sparkles,
   Bot,
   CircleHelp,
   FolderKanban,
@@ -25,10 +24,9 @@ import type { ChatRoute } from "./thread/route";
 /** A rail entry is a projection of the route, never stored panel state: the
  *  panel tabs come from ChatRoute.tab, and the full-page surfaces from
  *  their own route fields. */
-export type RailTab = "assistant" | ChatRoute["tab"] | "agents" | "activity" | "skills" | "apps" | "integrations";
+export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "apps" | "integrations";
 
 const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
-  { id: "assistant", label: "Assistant", icon: Sparkles },
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
