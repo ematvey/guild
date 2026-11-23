@@ -72,7 +72,7 @@ export const mdComponents: Components = {
 /// skill editor's preview.
 export const MD_CLASS =
   "[overflow-wrap:anywhere] " +
-  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_h1,&_h2,&_h3]:font-semibold [&_li]:ml-0 [&_ol]:list-decimal [&_ol]:pl-7 [&_ul]:pl-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-xs [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
+  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-base [&_h1,&_h2,&_h3]:font-semibold [&_li]:ml-0 [&_ol]:list-decimal [&_ol]:pl-7 [&_ul]:pl-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-base [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
 // Long unbreakable tokens (inline code, URLs) must wrap inside the message
 // column, never widen it into a horizontal page scroll. overflow-wrap
 // inherits, so the one declaration at the top of MD_CLASS covers every
@@ -87,4 +87,4 @@ export const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
 /// vertical letters; tables take `break-word` instead, so a column never
 /// gets narrower than its longest word.
 export const MD_TABLE_CLASS =
-  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:[overflow-wrap:break-word] [&_table]:text-xs [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
+  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:[overflow-wrap:break-word] [&_table]:text-base [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";

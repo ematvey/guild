@@ -10,10 +10,10 @@ the scale.
 
 | Role | Step | Icons | What belongs here |
 |---|---|---|---|
-| Reading | `text-base` | `size-4` | Message body, user bubble, composer input, thread title |
-| Chrome | `text-sm` | `size-4` control, `size-3.5` inline | Buttons, inputs, selects, menus, dialogs' body, list rows, sidebar rows, tool cards, settings labels, toasts |
+| Reading | `text-base` | `size-4` | Chat messages, composer input and Agent badge, message timestamps, thread title, Chats sidebar rows and rename fields, Markdown tables and code, generated UI text |
+| Chrome | `text-sm` | `size-4` control, `size-3.5` inline | Buttons, inputs, selects, menus, dialogs' body, list rows, tool cards, settings labels, toasts |
 | Section title | `text-lg` | `size-5` | Dialog title, settings section heading, empty-state heading |
-| Metadata | `text-xs` | `size-3.5` | Timestamps, run status, origin links, hints under a label, badges, code and tables inside prose, chart labels |
+| Metadata | `text-xs` | `size-3.5` | Run timestamps, run status, origin links, hints under a label, badges, chart labels |
 | Dense data | `text-2xs` | `size-3` | Trace and log tables, token and cost figures, rail captions, attachment chips |
 | Micro | `text-3xs` | `size-2.5` | Keyboard hints, counters, the sidebar rail |
 

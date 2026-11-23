@@ -47,7 +47,7 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
         }
       }}
       onClick={(e) => e.stopPropagation()}
-      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-sm outline-none"
+      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-base outline-none"
     />
   );
 }

@@ -121,7 +121,7 @@ function AgentChip({ agent, onManageAgents }: { agent: AgentPick; onManageAgents
     // names its agent and keeps it.
     return (
       <span
-        className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-xs text-secondary-foreground pointer-coarse:h-10"
+        className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-base text-secondary-foreground pointer-coarse:h-10"
         title={
           shownAgent?.visibility === "private"
             ? "Your private agent"
@@ -140,7 +140,7 @@ function AgentChip({ agent, onManageAgents }: { agent: AgentPick; onManageAgents
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-xs text-secondary-foreground pointer-coarse:h-10"
+          className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-base text-secondary-foreground pointer-coarse:h-10"
           title="Choose the agent for this chat"
         >
           <span className="truncate">{shownAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>

@@ -187,7 +187,7 @@ export function ThreadHeader({
             onKeyDown={(e) => {
               if (e.key === "Enter") void commitRename();
             }}
-            className="min-w-0 w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none"
+            className="min-w-0 w-full rounded border border-border bg-background px-2 py-1.5 text-base outline-none"
           />
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setRenameOpen(false)}>

@@ -62,7 +62,7 @@ export const Accordion: R<"Accordion"> = ({ props, renderNode }) => (
 
 export const AccordionItem: R<"AccordionItem"> = ({ props, renderNode }) => (
   <details className="group/acc" open={props.open}>
-    <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+    <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-base font-medium text-foreground [&::-webkit-details-marker]:hidden">
       <ChevronRight className="size-4 shrink-0 transition-transform group-open/acc:rotate-90" aria-hidden />
       {props.title}
     </summary>
@@ -73,7 +73,7 @@ export const AccordionItem: R<"AccordionItem"> = ({ props, renderNode }) => (
 export const Modal: R<"Modal"> = ({ props, renderNode }) => (
   <Dialog>
     <DialogTrigger asChild>
-      <Button type="button" size="sm" variant="outline" className="w-fit">
+      <Button type="button" size="sm" variant="outline" className="w-fit text-base">
         {props.label}
       </Button>
     </DialogTrigger>
@@ -81,7 +81,7 @@ export const Modal: R<"Modal"> = ({ props, renderNode }) => (
       <DialogHeader>
         <DialogTitle>{props.title}</DialogTitle>
       </DialogHeader>
-      <div className="flex flex-col gap-3 text-sm">{renderNode(props.children)}</div>
+      <div className="flex flex-col gap-3 text-base">{renderNode(props.children)}</div>
     </DialogContent>
   </Dialog>
 );
@@ -124,10 +124,10 @@ export const Step: R<"Step"> = ({ props }) => {
         {STEP_ICON[status]}
       </span>
       <div className="min-w-0 pt-0.5">
-        <p className={`text-sm font-medium ${status === "pending" ? "text-muted-foreground" : "text-foreground"}`}>
+        <p className={`text-base font-medium ${status === "pending" ? "text-muted-foreground" : "text-foreground"}`}>
           {props.title}
         </p>
-        {props.description && <p className="text-xs text-muted-foreground">{props.description}</p>}
+        {props.description && <p className="text-base text-muted-foreground">{props.description}</p>}
       </div>
     </li>
   );
@@ -142,7 +142,7 @@ export const Image: R<"Image"> = ({ props }) => (
       alt={props.alt}
       className="max-h-[28rem] w-auto max-w-full self-start rounded-lg border border-border object-contain"
     />
-    {props.caption && <figcaption className="text-xs text-muted-foreground">{props.caption}</figcaption>}
+    {props.caption && <figcaption className="text-base text-muted-foreground">{props.caption}</figcaption>}
   </figure>
 );
 
@@ -156,7 +156,7 @@ export const ImageGallery: R<"ImageGallery"> = ({ props }) => (
           className="aspect-square w-full rounded-lg border border-border object-cover"
         />
         {img.props.caption && (
-          <figcaption className="truncate text-xs text-muted-foreground">{img.props.caption}</figcaption>
+          <figcaption className="truncate text-base text-muted-foreground">{img.props.caption}</figcaption>
         )}
       </figure>
     ))}
@@ -178,14 +178,14 @@ export const Entity: R<"Entity"> = ({ props }) => (
     )}
     <div className="min-w-0 flex-1">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="truncate text-sm font-medium text-foreground">{props.title}</p>
-        {props.meta && <span className="shrink-0 text-xs text-muted-foreground">{props.meta}</span>}
+        <p className="truncate text-base font-medium text-foreground">{props.title}</p>
+        {props.meta && <span className="shrink-0 text-base text-muted-foreground">{props.meta}</span>}
       </div>
-      {props.description && <p className="text-xs text-muted-foreground">{props.description}</p>}
+      {props.description && <p className="text-base text-muted-foreground">{props.description}</p>}
       {props.tags && props.tags.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {props.tags.map((t) => (
-            <span key={t} className="rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground">
+            <span key={t} className="rounded-md border border-border px-1.5 py-0.5 text-base text-muted-foreground">
               {t}
             </span>
           ))}
@@ -202,12 +202,12 @@ export const CodeBlock: R<"CodeBlock"> = ({ props }) => {
   return (
     <div className="overflow-hidden rounded-lg border border-border">
       {(props.title || props.language) && (
-        <div className="flex justify-between gap-2 border-b border-border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="flex justify-between gap-2 border-b border-border bg-muted/50 px-3 py-1.5 text-base text-muted-foreground">
           <span className="truncate">{props.title}</span>
           <span className="font-mono">{props.language}</span>
         </div>
       )}
-      <pre className="m-0 overflow-x-auto bg-muted p-3 font-mono text-xs leading-relaxed">
+      <pre className="m-0 overflow-x-auto bg-muted p-3 font-mono text-base leading-relaxed">
         <code>{JS_LANGS.has(lang) ? highlightJs(props.code) : props.code}</code>
       </pre>
     </div>
@@ -253,7 +253,7 @@ export const ScatterChartView: R<"ScatterChart"> = ({ props }) => {
           label={props.yLabel ? { value: props.yLabel, angle: -90, position: "insideLeft" } : undefined}
         />
         <ZAxis range={[40, 40]} />
-        <ChartTooltip content={<ChartTooltipContent />} />
+        <ChartTooltip content={<ChartTooltipContent className="text-base" />} />
         {series.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
         {series.map((s) => (
           <Scatter key={s.key} name={s.key} data={s.data} fill={`var(--color-${s.key})`} />
@@ -284,7 +284,7 @@ export const RadarChartView: R<"RadarChart"> = ({ props }) => {
       <RadarChart data={rows}>
         <PolarGrid />
         <PolarAngleAxis dataKey="label" />
-        <ChartTooltip content={<ChartTooltipContent />} />
+        <ChartTooltip content={<ChartTooltipContent className="text-base" />} />
         {keys.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
         {keys.map((k) => (
           <Radar key={k} dataKey={k} stroke={`var(--color-${k})`} fill={`var(--color-${k})`} fillOpacity={0.25} />
@@ -307,7 +307,7 @@ export const RadialChartView: R<"RadialChart"> = ({ props }) => {
   return (
     <ChartContainer config={config} className={CHART_CLASS}>
       <RadialBarChart data={rows} innerRadius="25%" outerRadius="100%" startAngle={90} endAngle={-270}>
-        <ChartTooltip content={<ChartTooltipContent nameKey="key" hideLabel />} />
+        <ChartTooltip content={<ChartTooltipContent nameKey="key" hideLabel className="text-base" />} />
         <RadialBar dataKey="value" background cornerRadius={4} />
         <ChartLegend content={<ChartLegendContent nameKey="key" />} />
         {/* The domain of every ring: values are out of `max`. */}
@@ -336,7 +336,7 @@ export const StackedBar: R<"StackedBar"> = ({ props }) => {
           ) : null,
         )}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-base text-muted-foreground">
         {props.labels.map((label, i) => (
           <span key={i} className="flex items-center gap-1.5">
             <span className="size-2 rounded-sm" style={{ background: seriesColor(i) }} />
@@ -369,7 +369,7 @@ export const FollowUps: R<"FollowUps"> = ({ props }) => {
             disabled={inert}
             aria-pressed={chosen || undefined}
             onClick={() => void triggerAction(text)}
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors disabled:cursor-default ${
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-base transition-colors disabled:cursor-default ${
               chosen
                 ? "border-foreground text-foreground"
                 : "border-border text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-60"
@@ -393,7 +393,7 @@ export const RadioGroup: R<"RadioGroup"> = ({ props }) => {
   return (
     <div role="radiogroup" className="flex flex-col gap-1.5">
       {props.options.map((o) => (
-        <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
+        <label key={o} className="flex cursor-pointer items-center gap-2 text-base">
           <input
             type="radio"
             name={field.name}
@@ -416,7 +416,7 @@ export const CheckBoxGroup: R<"CheckBoxGroup"> = ({ props }) => {
   return (
     <div className="flex flex-col gap-1.5">
       {props.options.map((o) => (
-        <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
+        <label key={o} className="flex cursor-pointer items-center gap-2 text-base">
           <input
             type="checkbox"
             className="size-4 accent-foreground"
@@ -436,7 +436,7 @@ export const Switch: R<"Switch"> = ({ props }) => {
   const inert = useInert();
   const on = field.value === true;
   return (
-    <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+    <label className="flex cursor-pointer items-center gap-2.5 text-base">
       <button
         type="button"
         role="switch"
@@ -474,7 +474,7 @@ export const Slider: R<"Slider"> = ({ props }) => {
         onChange={(e) => field.setValue(Number(e.target.value))}
         className="h-2 flex-1 cursor-pointer accent-foreground disabled:opacity-60"
       />
-      <span className="min-w-14 text-right text-sm tabular-nums text-foreground">
+      <span className="min-w-14 text-right text-base tabular-nums text-foreground">
         {value}
         {props.unit ? ` ${props.unit}` : ""}
       </span>
@@ -497,7 +497,7 @@ export const DatePicker: R<"DatePicker"> = ({ props }) => {
       value={(field.value as string | undefined) ?? ""}
       disabled={inert}
       onChange={(e) => field.setValue(e.target.value)}
-      className="w-fit"
+      className="w-fit text-base"
     />
   );
 };
@@ -533,11 +533,11 @@ export const OptionCards: R<"OptionCards"> = ({ props }) => {
               on ? "border-foreground bg-accent" : "border-border enabled:hover:bg-accent/50"
             } ${inert && !on ? "opacity-60" : ""}`}
           >
-            <span className="flex w-full items-center justify-between gap-2 text-sm font-medium text-foreground">
+            <span className="flex w-full items-center justify-between gap-2 text-base font-medium text-foreground">
               {o.title}
               {on && <Check className="size-4 shrink-0" aria-hidden />}
             </span>
-            {o.description && <span className="text-xs text-muted-foreground">{o.description}</span>}
+            {o.description && <span className="text-base text-muted-foreground">{o.description}</span>}
           </button>
         );
       })}
@@ -546,7 +546,7 @@ export const OptionCards: R<"OptionCards"> = ({ props }) => {
 };
 
 export const OptionCard: R<"OptionCard"> = ({ props }) => (
-  <div className="rounded-lg border border-border px-3 py-2 text-sm">{props.title}</div>
+  <div className="rounded-lg border border-border px-3 py-2 text-base">{props.title}</div>
 );
 
 export const Chips: R<"Chips"> = ({ props }) => {
@@ -564,7 +564,7 @@ export const Chips: R<"Chips"> = ({ props }) => {
             aria-pressed={on}
             disabled={inert}
             onClick={() => field.setValue(toggle(selected, o, !!props.multiple))}
-            className={`rounded-full border px-3 py-1 text-sm transition-colors disabled:cursor-default ${
+            className={`rounded-full border px-3 py-1 text-base transition-colors disabled:cursor-default ${
               on
                 ? "border-foreground bg-foreground text-background"
                 : "border-border text-muted-foreground enabled:hover:bg-accent"
@@ -593,11 +593,11 @@ export const EditableTable: R<"EditableTable"> = ({ props }) => {
   return (
     <div className="flex flex-col gap-2">
       <div className="max-w-full overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-xs">
+        <table className="w-full text-base">
           <thead>
             <tr>
               {props.columns.map((c, i) => (
-                <th key={i} className="border-b-2 border-border px-2 py-1.5 text-left font-semibold">
+                <th key={i} className="border-b-2 border-border px-2 py-1.5 text-left text-base font-semibold">
                   {c}
                 </th>
               ))}
@@ -614,7 +614,7 @@ export const EditableTable: R<"EditableTable"> = ({ props }) => {
                       disabled={inert}
                       onChange={(e) => set(r, c, e.target.value)}
                       aria-label={`${props.columns[c]} row ${r + 1}`}
-                      className="w-full min-w-20 bg-transparent px-2 py-1.5 text-xs outline-none focus:bg-accent disabled:cursor-default"
+                      className="w-full min-w-20 bg-transparent px-2 py-1.5 text-base outline-none focus:bg-accent disabled:cursor-default"
                     />
                   </td>
                 ))}
@@ -640,7 +640,7 @@ export const EditableTable: R<"EditableTable"> = ({ props }) => {
           type="button"
           size="sm"
           variant="ghost"
-          className="w-fit"
+          className="w-fit text-base"
           onClick={() => field.setValue([...rows, props.columns.map(() => "")])}
         >
           <Plus className="size-3.5" aria-hidden />
