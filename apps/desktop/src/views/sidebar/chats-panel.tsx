@@ -83,7 +83,7 @@ export const ChatsPanel = memo(function ChatsPanel({
       </div>
       {!loadingChats && (
         <div
-          className={`relative z-10 shrink-0 space-y-0.5 px-2 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
+          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-1.5 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
         >
           {assistants.length > 0 && (
             <div role="group" aria-label="Assistant conversations" className="space-y-0.5">
