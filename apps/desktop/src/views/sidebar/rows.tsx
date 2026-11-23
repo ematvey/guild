@@ -3,12 +3,12 @@ import {
   Archive,
   ArchiveRestore,
   ChevronRight,
+  Circle,
   EllipsisVertical,
   Loader2,
   Pencil,
   Plus,
   Repeat,
-  Sparkles,
   Trash2,
 } from "lucide-react";
 import {
@@ -209,7 +209,7 @@ export function ChatListItem({
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
         {assistantInbox ? (
-          <Sparkles aria-hidden="true" className="size-4 shrink-0" />
+          <Circle aria-hidden="true" className="size-4 shrink-0" />
         ) : routine !== undefined ? (
           <Repeat
             data-routine-mark

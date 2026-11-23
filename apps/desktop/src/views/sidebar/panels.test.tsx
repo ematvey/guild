@@ -154,9 +154,9 @@ describe("panels", () => {
     expect(html).toContain('aria-label="Assistant conversations"');
     expect(html.indexOf(">My renamed assistant<")).toBeLessThan(html.indexOf(">Assistant<"));
     expect(html.split(">My renamed assistant<")).toHaveLength(2);
-    expect(html).toContain("lucide-sparkles");
+    expect(html).toContain("lucide-circle");
     expect(html.match(/title="Row actions"/g)).toHaveLength(1);
-    expect(render([ordinary])).not.toContain("lucide-sparkles");
+    expect(render([ordinary])).not.toContain("lucide-circle");
     expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
   });
 
