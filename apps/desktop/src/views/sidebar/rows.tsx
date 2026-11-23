@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   Repeat,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import {
@@ -157,11 +158,13 @@ export function ChatListItem({
   onArchive,
   onDelete,
   archiveLabel,
+  assistantInbox,
   routine,
 }: {
   title: string;
   active: boolean;
   status: RowState;
+  assistantInbox?: boolean;
   /** The routine whose output this chat is: the row leads with its mark. */
   routine?: string;
   onClick: () => void;
@@ -205,7 +208,9 @@ export function ChatListItem({
         title={title}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
-        {routine !== undefined && (
+        {assistantInbox ? (
+          <Sparkles aria-hidden="true" className="size-4 shrink-0" />
+        ) : routine !== undefined ? (
           <Repeat
             data-routine-mark
             aria-label={`Routine: ${routine}`}
@@ -213,7 +218,7 @@ export function ChatListItem({
           >
             <title>{`Routine: ${routine}`}</title>
           </Repeat>
-        )}
+        ) : null}
         {title === "" ? (
           <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
             New thread

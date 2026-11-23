@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronDown, ChevronUp, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, SquarePen } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
@@ -50,6 +50,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   onUnarchiveChat?: (id: string) => void;
   onDeleteChat?: (id: string) => void;
 }) {
+  const [scrolled, setScrolled] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const assistants = grouping.visible.filter((chat) => chat.assistant_inbox);
@@ -58,6 +59,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     <ChatListItem
       key={c.id}
       title={c.title ?? ""}
+      assistantInbox={c.assistant_inbox}
       routine={c.routine?.name}
       active={c.id === chatId}
       status={{ generating: !!c.generating, working: !!c.working, unread: !!c.unread, blocked: !!c.blocked }}
@@ -79,28 +81,32 @@ export const ChatsPanel = memo(function ChatsPanel({
           {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
         </span>
       </div>
-      {!loadingChats && assistants.length > 0 && (
-        <div role="group" aria-label="Assistant conversations" className="shrink-0 space-y-0.5 px-2 py-2">
-          {assistants.map(renderChat)}
-        </div>
-      )}
       {!loadingChats && (
-        <div className="shrink-0 px-2 pb-2">
-          <DesktopTooltip label="New thread" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
+        <div
+          className={`relative z-10 shrink-0 space-y-0.5 px-2 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
+        >
+          {assistants.length > 0 && (
+            <div role="group" aria-label="Assistant conversations" className="space-y-0.5">
+              {assistants.map(renderChat)}
+            </div>
+          )}
+          <DesktopTooltip label="New chat" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
             <button
               type="button"
-              aria-label="New thread"
               onClick={onNewChat}
               className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
-              <Plus className="size-4 shrink-0" />
+              <SquarePen aria-hidden="true" className="size-4 shrink-0" />
               <span>New chat</span>
             </button>
           </DesktopTooltip>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        <div className="space-y-0.5 pb-2 pt-2">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-2"
+        onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+      >
+        <div className={`space-y-0.5 pb-2 ${loadingChats ? "pt-2" : "pt-0.5"}`}>
           {loadingChats &&
             [0, 1, 2, 3, 4].map((i) => <SkeletonRows key={i} rows={1} className="[&>div]:h-8 [&>div]:px-2" />)}
           {!loadingChats && threads.map(renderChat)}
@@ -126,6 +132,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                   <ChatListItem
                     key={c.id}
                     title={c.title ?? ""}
+                    assistantInbox={c.assistant_inbox}
                     routine={c.routine?.name}
                     active={c.id === chatId}
                     status={{ generating: !!c.generating, working: !!c.working, unread: false }}

@@ -151,6 +151,8 @@ describe("panels", () => {
     expect(html).toContain('aria-label="Assistant conversations"');
     expect(html.indexOf(">My renamed assistant<")).toBeLessThan(html.indexOf(">Assistant<"));
     expect(html.split(">My renamed assistant<")).toHaveLength(2);
+    expect(html).toContain("lucide-sparkles");
+    expect(render([ordinary])).not.toContain("lucide-sparkles");
     expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
   });
 
@@ -165,7 +167,8 @@ describe("panels", () => {
       />,
     );
     expect(chats).toContain(">Chats<");
-    expect(chats).toContain("New thread");
+    expect(chats).toContain(">New chat<");
+    expect(chats).toContain("lucide-square-pen");
     expect(chats).toContain("No conversations yet.");
 
     const work = renderToStaticMarkup(
