@@ -173,9 +173,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
   /** Admins see the org; members see their own traces and calls. */
   const viewer = async (req: FastifyRequest) => requireUser(ctx, req);
 
-  const internalSessions = async (orgId: string) =>
-    (await infra.pool.query<{ id: string }>("SELECT id FROM chats WHERE org_id=$1 AND internal", [orgId]))
-      .rows.map(({ id }) => id);
+  const internalSessions = (orgId: string) => infra.conversationHistory.internalChatIds(orgId);
 
   /** The page's token, cost and error totals, keyed by chat id. An
    *  unreachable ClickHouse degrades to no totals, like every activity

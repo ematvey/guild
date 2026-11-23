@@ -247,6 +247,12 @@ export function groupConversation(
 export class ConversationHistoryStore {
   constructor(private readonly pool: PlatformPool) {}
 
+  /** The org's internal chats: coordinator and reflection histories. */
+  async internalChatIds(orgId: string): Promise<string[]> {
+    const res = await this.pool.query<{ id: string }>(`SELECT id FROM chats WHERE org_id=$1 AND internal`, [orgId]);
+    return res.rows.map(({ id }) => id);
+  }
+
   /** The org's conversations, newest activity first. Admin scope has no
    *  owner filter; a member reads only their own rows. */
   async list(filter: ConversationFilters): Promise<{ rows: ConversationRow[]; total: number }> {
