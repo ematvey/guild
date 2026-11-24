@@ -829,7 +829,18 @@ export function ConversationPage({
   onOpenChat?: (chatId: string) => void;
 }) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
-  const [items, setItems] = useState<ConversationItem[]>([]);
+  const [seedItems, setItems] = useState<ConversationItem[]>([]);
+  const [liveRuns, setLiveRuns] = useState<
+    Map<string, { run: AgentRun; counts: Pick<ConversationRow, "runs" | "open_runs" | "failed_runs"> | null }>
+  >(new Map());
+  useActivityRunUpdates(({ run, counts }) => {
+    if (run.thread_id === null || (detail !== null && run.thread_id !== detail.conversation.thread?.id)) return;
+    setLiveRuns((previous) => {
+      const next = new Map(previous);
+      next.delete(run.id);
+      return next.set(run.id, { run, counts: counts ?? previous.get(run.id)?.counts ?? null });
+    });
+  });
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -840,6 +851,7 @@ export function ConversationPage({
     setError(null);
     setDetail(null);
     setItems([]);
+    setLiveRuns(new Map());
     void getConversation(chatId, { limit: CONVERSATION_PAGE })
       .then((value) => {
         if (!live) return;
@@ -859,7 +871,7 @@ export function ConversationPage({
 
   // An older page prepends; a run the newer page already showed is skipped.
   const loadOlder = () => {
-    const oldestSeq = items.reduce<number | null>((min, item) => {
+    const oldestSeq = seedItems.reduce<number | null>((min, item) => {
       if (item.kind !== "message") return min;
       return min === null ? item.seq : Math.min(min, item.seq);
     }, null);
@@ -884,7 +896,54 @@ export function ConversationPage({
   };
 
   const admin = role === "admin";
-  const conversation = detail?.conversation ?? null;
+  const conversationSeed = detail?.conversation ?? null;
+  const threadId = conversationSeed?.thread?.id;
+  const { items, counts } = useMemo(() => {
+    const runIds = new Set<string>();
+    const patchRun = (item: ConversationRunItem, run: AgentRun): ConversationRunItem => ({
+      ...item,
+      run: {
+        ...item.run,
+        status: run.status,
+        summary: run.summary ?? "",
+        tokens: run.tokens,
+        error_message: run.error_message ?? "",
+        started_at: run.started_at ?? run.created_at,
+        finished_at: run.finished_at,
+      },
+      call_count: run.call_count ?? item.call_count,
+      tool_count: run.tool_count ?? item.tool_count,
+      steps: (run.call_count ?? item.call_count) + (run.tool_count ?? item.tool_count),
+    });
+    const items = seedItems.map((item) => {
+      if (item.kind !== "run") return item;
+      runIds.add(item.run.id);
+      const pushed = liveRuns.get(item.run.id)?.run;
+      return pushed === undefined ? item : patchRun(item, pushed);
+    });
+    let counts: Pick<ConversationRow, "runs" | "open_runs" | "failed_runs"> | null = null;
+    if (threadId !== undefined) {
+      for (const update of liveRuns.values()) {
+        const { run } = update;
+        if (run.thread_id !== threadId) continue;
+        counts = update.counts ?? counts;
+        if (runIds.has(run.id)) continue;
+        const ts = run.started_at ?? run.created_at;
+        items.push(patchRun({
+          kind: "run",
+          ts,
+          run: { ...run, agent_name: run.agent_name ?? "", summary: "", error_message: "", started_at: ts },
+          trigger: null,
+          steps: 0,
+          call_count: 0,
+          tool_count: 0,
+          reply: false,
+        }, run));
+      }
+    }
+    return { items, counts };
+  }, [seedItems, liveRuns, threadId]);
+  const conversation = conversationSeed === null ? null : { ...conversationSeed, ...counts };
   const totals = useMemo(() => {
     const runItems = items.filter((item): item is ConversationRunItem => item.kind === "run");
     return {

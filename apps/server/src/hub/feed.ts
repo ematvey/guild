@@ -35,6 +35,7 @@ import {
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import { contextUsageMsg, type ContextUsageReads } from "../chats/context-usage.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
+import type { UserRow } from "../platform/store/identity.js";
 import type { SocketSink } from "./sink.js";
 import type { LiveHub } from "./live.js";
 import { sendChanged, sendChatList } from "./sent-frames.js";
@@ -188,15 +189,18 @@ export class FeedForwarder implements GenerationStreamSink {
    *  subtree; the captures compare against the last value sent. */
   private resync = (): void => {
     if (this.stopped) return;
+    const runChats = new Set<string>();
     for (const { userId, orgId } of this.ctx.hub.memberUsers()) {
       void this.pushWorkspace(orgId, userId, ALL_PARTS);
       void this.agentState.connect(orgId, userId);
       for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
+        if (typeof sink.runViewChat === "string") runChats.add(sink.runViewChat);
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
         this.subagentTree(sink.view);
       }
     }
+    for (const chatId of runChats) this.track("resync_activity_run", chatId, this.agentState.committedRunSteps(chatId));
   };
 
   // -- notify fan-in ------------------------------------------------------------
@@ -207,6 +211,7 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_thread_committed: (chatId) => {
       if (this.stopped) return;
       this.track("guild_thread_committed", chatId, this.committed(chatId));
+      this.track("guild_thread_committed", chatId, this.agentState.committedRunSteps(chatId));
     },
     guild_chat_status: (status) => {
       if (this.stopped) return;
@@ -309,6 +314,10 @@ export class FeedForwarder implements GenerationStreamSink {
   connectMember(orgId: string, userId: string): Promise<void> {
     if (this.stopped) return Promise.resolve();
     return this.agentState.connect(orgId, userId);
+  }
+
+  syncRun(user: UserRow, sink: SocketSink, runId: string): Promise<void> {
+    return this.agentState.syncRun(user, sink, runId);
   }
 
   /** One chat's thread subtree and header facts, pushed to its owner's

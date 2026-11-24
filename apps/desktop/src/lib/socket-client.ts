@@ -252,6 +252,7 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
 export function startSocket(
   opts: SocketHandlers & {
     getOpenChatId: () => string | null;
+    getOpenRunId?: () => string | null;
     socketFactory?: SocketFactory;
   },
 ): { stop: () => void; resync: () => void; markRead: (chatId: string) => boolean } {
@@ -329,7 +330,8 @@ export function startSocket(
     if (socket?.readyState !== 1) return;
     const chatId = opts.getOpenChatId();
     traceEvent("socket.sync_sent", { attempt, chat: chatId ?? "-" });
-    socket.send(serializeClientFrame({ type: "sync", chat_id: chatId }));
+    const runId = opts.getOpenRunId?.();
+    socket.send(serializeClientFrame({ type: "sync", chat_id: chatId, ...(runId == null ? {} : { run_id: runId }) }));
   };
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null || connecting) return;

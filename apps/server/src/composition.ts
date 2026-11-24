@@ -267,6 +267,7 @@ export class PlatformContext implements PlatformStores {
         runtime: this.runtime,
         gatewayStore: this.gatewayStore,
       }),
+      syncRun: (user, sink, runId) => this.feed.syncRun(user, sink, runId),
       toolResult: async ({ member, frame }) => {
         this.machineDispatch.resolveToolResult(member, frame);
       },

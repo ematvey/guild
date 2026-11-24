@@ -20,6 +20,8 @@ pub enum WsClientMsg {
     Ping {},
     Sync {
         chat_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<Uuid>,
     },
     /// The member socket's duplex read-mark: moves the caller's marker to
     /// the chat's newest event (the REST POST /chats/:id/read, on the wire
@@ -275,6 +277,8 @@ pub enum WsServerMsg {
     /// Run and thread counts visible to the activity viewer.
     ActivityRun {
         run: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<Vec<serde_json::Value>>,
         counts: Option<serde_json::Value>,
     },
     /// The member's open user threads with one agent, newest activity first.
@@ -344,6 +348,7 @@ mod tests {
     fn client_msgs_round_trip() {
         let sync = WsClientMsg::Sync {
             chat_id: Some(Uuid::nil()),
+            run_id: None,
         };
         let json = serde_json::to_string(&sync).unwrap();
         assert!(json.contains(r#""type":"sync""#));

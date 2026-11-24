@@ -52,6 +52,7 @@
     "AgentIntegration": { "$ref": "#/$defs/AgentIntegration" },
     "IntegrationWarning": { "$ref": "#/$defs/IntegrationWarning" },
     "AttachableIntegration": { "$ref": "#/$defs/AttachableIntegration" },
+    "AgentRunStep": { "$ref": "#/$defs/AgentRunStep" },
     "AgentRun": { "$ref": "#/$defs/AgentRun" },
     "AgentThread": { "$ref": "#/$defs/AgentThread" },
     "AgentRoutine": { "$ref": "#/$defs/AgentRoutine" },
@@ -974,6 +975,20 @@
         "purge_after": { "type": ["string", "null"], "format": "date-time" },
         "created_at": { "$ref": "#/$defs/DateTime" },
         "updated_at": { "$ref": "#/$defs/DateTime" }
+      }
+    },
+    "AgentRunStep": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "status": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] },
+        "at": { "type": ["string", "null"] },
+        "call_id": { "type": ["string", "null"] },
+        "is_error": { "type": ["boolean", "null"] }
       }
     },
     "AgentRun": {

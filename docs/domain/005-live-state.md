@@ -105,6 +105,8 @@ The chat header and transcript do not show a generic Working label. Actual Run d
 
 The transcript keeps the server's Turn identity on committed assistant blocks. A settled Turn keeps its final message visible and folds its intermediate messages into the work row. A steer does not split a Turn, and a child result waking an idle parent does not fold the preceding Turn's final message. Posted messages remain visible outside that grouping.
 
+The Activity Run address adds its Run ID to the member socket's `sync` frame. Authorized sockets watching that Run receive its durable transcript steps on `activity_run`, on sync and when its Run or committed Thread events change. Other Activity views receive Run rows and Thread counts without the transcript steps.
+
 On every reconnect the client clears its watermarks and syncs again. When it wakes or becomes visible, it checks the socket and syncs; it never calls HTTP.
 
 ## Rejected

@@ -237,6 +237,17 @@ export interface AttachableIntegration {
   ceiling: ToolClass;
 }
 
+/** One durable transcript step in a Run detail. */
+export interface AgentRunStep {
+  kind: string;
+  name?: string | null;
+  status?: string | null;
+  detail?: string | null;
+  at?: string | null;
+  call_id?: string | null;
+  is_error?: boolean | null;
+}
+
 /** One agent run. `agent_name` and `routine_name` are joined display names. */
 export interface AgentRun {
   /** The Run belongs to a background Thread visible in admin Activity. */

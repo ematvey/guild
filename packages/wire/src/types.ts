@@ -13,6 +13,7 @@ import type {
   AttachableIntegration,
   AgentRoutine,
   AgentRun,
+  AgentRunStep,
   AgentThread,
   Chat,
   ChatTree,
@@ -191,6 +192,8 @@ export type ServerFrame =
   | {
       type: "activity_run";
       run: AgentRun;
+      /** Durable steps appear only on the socket watching this Run. */
+      steps?: AgentRunStep[];
       counts: { runs: number; open_runs: number; failed_runs: number } | null;
     }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
@@ -225,7 +228,7 @@ export interface ModelOption {
 /** Client → server. */
 export type ClientFrame =
   | { type: "ping" }
-  | { type: "sync"; chat_id?: string | null }
+  | { type: "sync"; chat_id?: string | null; run_id?: Uuid }
   | { type: "read"; chat_id: Uuid }
   | {
       type: "machine_response";

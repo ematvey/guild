@@ -197,6 +197,7 @@ describe("agent and skill state frames", () => {
   it("pushes org-wide Activity updates to admins while keeping background Runs out of Member and Agent feeds", async () => {
     const admin = await memberSocket(stack.adminToken);
     const owner = await memberSocket(stack.memberToken);
+    const idleAdmin = await memberSocket(stack.adminToken);
     try {
       const agentId = await createAgent(stack.memberToken, `activity-${crypto.randomUUID().slice(0, 8)}`, "private");
       const { thread } = await api<{ thread: { id: string; chat_id: string } }>(
@@ -215,6 +216,18 @@ describe("agent and skill state frames", () => {
       const running = await waitFrame(admin, (frame) => frame.type === "activity_run" && isRun(frame, internalRun));
       expect(running.run).toMatchObject({ internal: true, status: "running" });
       expect(running.counts).toEqual({ runs: 1, open_runs: 1, failed_runs: 0 });
+      for (const socket of [admin, owner]) socket.send(JSON.stringify({ type: "sync", run_id: internalRun }));
+      await waitFrame(admin, (frame) => isRun(frame, internalRun) && Array.isArray(frame.steps));
+      await stack.env.app.platform.threads.appendEvent(thread.chat_id, {
+        type: "user_message",
+        content: "Durable background request",
+        attachments: [],
+      });
+      await waitFrame(admin, (frame) => isRun(frame, internalRun) &&
+        (frame.steps as unknown[] | undefined)?.some((step) =>
+          (step as { detail: string }).detail === "Durable background request") === true);
+      await idleAdmin.pingBarrier();
+      expect(textFrames(idleAdmin).some((frame) => isRun(frame, internalRun) && frame.steps !== undefined)).toBe(false);
 
       await stack.env.db.query("UPDATE agent_runs SET status = 'failed', finished_at = now() WHERE id = $1", [
         internalRun,
@@ -232,6 +245,7 @@ describe("agent and skill state frames", () => {
       expect(textFrames(admin).some((frame) => frame.type === "agent_run" && isRun(frame, ordinaryRun))).toBe(false);
     } finally {
       admin.end();
+      idleAdmin.end();
       owner.end();
     }
   });
