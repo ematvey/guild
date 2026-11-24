@@ -295,6 +295,11 @@ To publish on default dev, pass `--default-dev` to the importer with
 `GUILD_MCP_CONNECTOR_IMAGE` set to the installed Guild server image and
 `GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer. Set `GUILD_MCP_HOST_GATEWAY_IP` when
 the Firecrawl connection uses the host-side Docker address.
+For credential-only changes on an existing tenant connector, add
+`--refresh-tenant SLUG` to the importer. It verifies the published target,
+updates only that connector's settings, and keeps the gateway transport
+key and tool grants in place. A configuration change requires a reviewed
+inventory publication.
 `verify-mcp-service-grants.sh` and `verify-shared-mcp-connector.sh` exercise the
 experiment gateway with temporary routes. Validate vendor and authorization
 parity for the actual org inventory before switching Guild's execution.
