@@ -159,4 +159,62 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     );
     expect(result.content).toMatch(/HOME=\/home\/sandbox/);
   }, 180_000);
+
+  it("materializes inbox attachments for the internal coordinator's file tools", async () => {
+    const { app, db } = stack.env;
+    const inbox = await app.inject({ method: "POST", url: "/api/v1/assistant", headers: auth(), payload: {} });
+    expect(inbox.statusCode, inbox.body).toBe(200);
+    const { agent_id, chat_id, thread_id } = inbox.json() as { agent_id: string; chat_id: string; thread_id: string };
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/v1/chats/${chat_id}/attachments?filename=evidence.dat&content_type=application/octet-stream`,
+      headers: { authorization: `Bearer ${stack.memberToken}`, "content-type": "application/octet-stream" },
+      payload: Buffer.from("coordinator attachment fixture"),
+    });
+    expect(upload.statusCode, upload.body).toBe(200);
+    const attachmentId = upload.json().id as string;
+    stack.mock.setResponses([
+      {
+        body: async () => {
+          const run = await db.query<{ id: string }>(
+            `SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+             WHERE t.agent_id=$1 AND t.execution_role='coordinator' AND r.status='running'`,
+            [agent_id],
+          );
+          return toolCallSse("read", JSON.stringify({ path: `/tmp/attachments/${run.rows[0]!.id}/evidence.dat` }));
+        },
+      },
+      { body: finalSse },
+    ]);
+    const submitted = await app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${agent_id}/threads/${thread_id}/turns`,
+      headers: auth(),
+      payload: { message: "Read the attached evidence", attachment_ids: [attachmentId] },
+    });
+    expect(submitted.statusCode, submitted.body).toBeLessThan(300);
+    await waitFor(
+      async () =>
+        (
+          await db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE agent_id=$1 AND source_thread_id=$2 AND kind='request'",
+            [agent_id, thread_id],
+          )
+        ).rowCount === 1,
+      10000,
+    );
+    await app.platform.coordination.tick();
+    let result: { content: string; is_error: boolean } | undefined;
+    await waitFor(async () => {
+      const rows = await db.query<{ payload: { content: string; is_error: boolean; name: string } }>(
+        `SELECT e.payload FROM thread_events e JOIN agent_threads t ON t.chat_id=e.chat_id
+         WHERE t.agent_id=$1 AND t.execution_role='coordinator' AND e.type='tool_result' AND e.payload->>'name'='read'`,
+        [agent_id],
+      );
+      result = rows.rows[0]?.payload;
+      return result !== undefined;
+    }, 20000);
+    expect(result?.is_error, result?.content).toBe(false);
+    expect(result?.content).toContain("coordinator attachment fixture");
+  }, 45000);
 });
