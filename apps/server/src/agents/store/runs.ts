@@ -104,7 +104,7 @@ export class AgentRunStore {
   async listRuns(agentId: string, filters: RunFilters = {}): Promise<AgentRun[]> {
     const params: unknown[] = [agentId];
     let where =
-      "r.agent_id = $1 AND NOT EXISTS (SELECT 1 FROM agent_threads it JOIN chats ic ON ic.id=it.chat_id WHERE it.id=r.thread_id AND ic.internal)";
+      "r.agent_id = $1 AND NOT r.internal";
     if ("userId" in filters && filters.userId !== undefined) {
       params.push(filters.userId);
       where += ` AND r.user_id=$${params.length}`;
@@ -315,7 +315,7 @@ export class AgentRunStore {
         return trace.recordTrace({
           trace_id: run.id,
           org_id: ctx.org_id,
-          user_id: run.user_id,
+          user_id: run.internal ? null : run.user_id,
           agent_id: run.agent_id,
           agent_name: ctx.agent_name,
           session_id: ctx.chat_id,
@@ -350,7 +350,8 @@ export class AgentRunStore {
   /** The chat's running run with the trace context the tool hook needs. */
   async runningRunTraceForChat(chatId: string): Promise<RunTraceContext | null> {
     const res = await this.pool.query<RunTraceContext>(
-      `SELECT r.id AS run_id, a.org_id, r.user_id, t.chat_id AS session_id, r.agent_id, a.name AS agent_name
+      `SELECT r.id AS run_id, a.org_id, CASE WHEN r.internal THEN NULL ELSE r.user_id END AS user_id,
+              t.chat_id AS session_id, r.agent_id, a.name AS agent_name
        FROM agent_runs r
        JOIN agent_threads t ON t.id = r.thread_id
        JOIN agents a ON a.id = r.agent_id
@@ -366,7 +367,7 @@ export class AgentRunStore {
   async listActivity(orgId: string, filters: ActivityFilters = {}, viewer?: UserRow): Promise<AgentActivityEntry[]> {
     const params: unknown[] = [orgId];
     let where =
-      "a.org_id = $1 AND NOT EXISTS (SELECT 1 FROM agent_threads it JOIN chats ic ON ic.id=it.chat_id WHERE it.id=r.thread_id AND ic.internal)";
+      "a.org_id = $1 AND NOT r.internal";
     if (viewer !== undefined) {
       params.push(viewer.role === "admin", viewer.id);
       where += ` AND ${visiblePredicate("a")} AND ($2 OR r.user_id=$3)`;

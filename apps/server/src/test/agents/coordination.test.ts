@@ -218,6 +218,7 @@ suite("persistent coordination", () => {
     expect(await runTraceRow(env!.db, run.id)).toMatchObject({
       id: run.id,
       chat_id: coordinator.chat_id,
+      user_id: null,
       summary: "Internal coordination output",
     });
   });

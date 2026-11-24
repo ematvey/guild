@@ -996,7 +996,10 @@ export function registerAgentRoutes(
       throw ApiError.notFound("no such run");
     }
     await store.fetchInOrg(user.org_id, run.agent_id);
-    return sendJson(reply, { children: await store.runs.childRuns(run.id) });
+    const children = await store.runs.childRuns(run.id);
+    return sendJson(reply, {
+      children: children.filter((child) => canReadOwned(user, child.user_id) && (!child.internal || readsWholeOrg(user))),
+    });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {
