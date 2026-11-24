@@ -162,10 +162,7 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		if err := c.ensureEgress(ctx, name); err != nil {
 			return err
 		}
-		if existing.GetStatus().GetState() == ate.ActorState_ACTOR_STATE_CRASHED {
-			_, err = c.ate.RevertActor(ctx, &ate.RevertActorRequest{Actor: ref(name)})
-		}
-		return err
+		return c.recoverActor(ctx, existing)
 	}
 	if status.Code(err) != codes.NotFound {
 		return err
@@ -207,6 +204,17 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		return err
 	}
 	return c.ensureEgress(ctx, name)
+}
+
+func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {
+	switch actor.GetStatus().GetState() {
+	case ate.ActorState_ACTOR_STATE_CRASHED, ate.ActorState_ACTOR_STATE_REVERTING:
+		// Revert is restartable and preserves the last completed snapshot and external workspace.
+		_, err := c.ate.RevertActor(ctx, &ate.RevertActorRequest{Actor: ref(actor.GetMetadata().GetName())})
+		return err
+	default:
+		return nil
+	}
 }
 
 func (c controller) ensureEgress(ctx context.Context, name string) error {

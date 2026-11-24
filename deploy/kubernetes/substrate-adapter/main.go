@@ -266,7 +266,11 @@ func (s *server) proxy(w http.ResponseWriter, r *http.Request, name string) {
 	var upstream *websocket.Conn
 	actorCtx, err := actorContext(ctx)
 	if err == nil {
-		_, err = s.control.ate.GetActor(actorCtx, &ate.GetActorRequest{Actor: ref(name)})
+		var actor *ate.Actor
+		actor, err = s.control.ate.GetActor(actorCtx, &ate.GetActorRequest{Actor: ref(name)})
+		if err == nil {
+			err = s.control.recoverActor(actorCtx, actor)
+		}
 	}
 	if err == nil {
 		upstream, err = dialActor(ctx, name)
