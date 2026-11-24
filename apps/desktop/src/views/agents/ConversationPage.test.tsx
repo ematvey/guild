@@ -113,6 +113,24 @@ describe("conversation page", () => {
     expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c0" });
   });
 
+  it("overlays a pushed Run status even when the conversation seed arrives later", async () => {
+    let showSnapshot!: (value: ConversationDetail) => void;
+    api.getConversation.mockReturnValueOnce(new Promise((resolve) => { showSnapshot = resolve; }));
+    render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} />);
+    const run = detail.items.find((item) => item.kind === "run")!;
+    act(() => applyActivityRun({
+      type: "activity_run",
+      run: makeRun({ id: "r1", thread_id: detail.conversation.thread!.id, status: "failed" }),
+      counts: { runs: 1, open_runs: 0, failed_runs: 1 },
+    }));
+    await act(async () => showSnapshot({
+      ...detail,
+      items: [{ ...run, run: { ...run.run, status: "running" } }],
+    }));
+    expect(await screen.findByText("Failed")).toBeTruthy();
+    expect(api.getConversation).toHaveBeenCalledTimes(1);
+  });
+
   it("hides the owner line for a member", async () => {
     api.getConversation.mockResolvedValue(detail);
     render(<ConversationPage chatId="c1" role="member" onNavigate={() => {}} />);

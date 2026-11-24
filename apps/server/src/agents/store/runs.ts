@@ -1,3 +1,4 @@
+import type { AgentRunStep as WireAgentRunStep } from "@guild/wire/rest";
 // Agent runs: create and update (mirrored into the trace store, with the
 // subagent-tree NOTIFY on a status move), the run lookups a turn resolves
 // itself by, the run's derived steps, the org activity log, and the
@@ -434,4 +435,24 @@ export class AgentRunStore {
     const lastByRoutine = new Map(res.rows.map((row) => [row.routine_id as string, toRun(row)]));
     return routines.map((routine) => ({ ...routine, last_run: lastByRoutine.get(routine.id) ?? null }));
   }
+}
+
+/** Durable steps as read in Activity over HTTP or the member socket. */
+export function runStepsWire(steps: AgentRunStep[]): WireAgentRunStep[] {
+  return steps.map((step) => ({
+    kind:
+      step.type === "user_message"
+        ? "user"
+        : step.type === "assistant_text"
+          ? "assistant"
+          : step.type === "tool_call"
+            ? "tool"
+            : "file",
+    name: step.name ?? null,
+    status: step.is_error === true ? "error" : "ok",
+    detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
+    at: step.ts,
+    call_id: step.call_id ?? null,
+    is_error: step.is_error ?? null,
+  }));
 }

@@ -492,6 +492,11 @@
       "properties": {
         "type": { "const": "activity_run" },
         "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" },
+        "steps": {
+          "description": "Durable transcript steps, sent only to the authorized socket watching this Run.",
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRunStep" }
+        },
         "counts": {
           "type": ["object", "null"],
           "required": ["runs", "open_runs", "failed_runs"],
@@ -606,6 +611,10 @@
         "chat_id": {
           "type": ["string", "null"],
           "description": "Optional. Omitted or null means no chat is open."
+        },
+        "run_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Optional. The Activity Run this socket is watching."
         }
       }
     },

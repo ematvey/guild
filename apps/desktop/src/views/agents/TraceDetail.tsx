@@ -127,12 +127,13 @@ export function RunDetailPage({
   // are ClickHouse analytics behind the trace endpoint, so the frame that
   // moves the run into a terminal status triggers one re-read of the trace
   // once per finish.
-  useActivityRunUpdates(({ run: pushed }) => {
+  useActivityRunUpdates(({ run: pushed, steps }) => {
     if (pushed.id !== runId) return;
     const finishes = runFinishes(shownStatus.current, pushed);
-    pushedRun.current = pushed;
+    const update = { ...pushedRun.current, ...pushed, ...(steps === undefined ? {} : { steps }) };
+    pushedRun.current = update;
     shownStatus.current = pushed.status;
-    setRun((prev) => (prev === null ? prev : { ...prev, ...pushed }));
+    setRun((prev) => (prev === null ? prev : { ...prev, ...update }));
     setTrace((prev) => (prev === null ? prev : traceWithRun(prev, pushed)));
     if (finishes) setTelemetryTick((t) => t + 1);
   });

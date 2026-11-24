@@ -53,6 +53,8 @@ export interface MemberSocketDeps {
   /** The open view's thread store (useThreadStore). */
   thread: ThreadStoreHandle;
   outgoing: OutgoingSettle;
+  /** The Activity Run selected by the URL. */
+  runId: string | null;
   /** The open chat no longer exists server-side. */
   recoverMissingChatRef: RefObject<() => void>;
 }
@@ -63,6 +65,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const { signOut, thread, outgoing, recoverMissingChatRef } = deps;
   const { store, retireSendPending, openChatIdRef, onThreadStateApplied, applyChatTree, cancelPending } = thread;
   const { outgoingRef, observedUserIdsRef, settleOutgoing } = outgoing;
+  const runIdRef = useRef(deps.runId);
+  runIdRef.current = deps.runId;
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
   // The newest event id whose read-marker POST already fired per chat:
@@ -333,6 +337,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onDisplaced: () => toast.error("This chat connection was replaced"),
       onAuthRequired: () => live().signOut(),
       getOpenChatId: () => openChatIdRef.current,
+      getOpenRunId: () => runIdRef.current,
     });
     socketRef.current = connection;
     return () => {

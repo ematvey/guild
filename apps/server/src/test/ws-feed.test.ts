@@ -1573,6 +1573,7 @@ function fakeContext(options: { failQueries?: boolean } = {}) {
       sinksOfUser: (userId: string) =>
         connected.has(userId) ? [{ send: (frame: unknown) => frames.push({ userId, frame }) }] : [],
       sinksOfOrg: () => [],
+      memberUsers: () => [],
       memberSinksOfUser: () => [],
     },
     pool: {

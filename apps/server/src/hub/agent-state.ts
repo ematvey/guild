@@ -33,6 +33,9 @@ import type { IdentityStore } from "../platform/store/identity.js";
 import type { SkillStore } from "../platform/store/skills.js";
 import type { AppStore } from "../platform/store/apps.js";
 import type { TraceStore } from "../platform/trace.js";
+import { runStepsWire } from "../agents/store/runs.js";
+import type { SocketSink } from "./sink.js";
+import type { UserRow } from "../platform/store/identity.js";
 import type { LiveHub } from "./live.js";
 import type { WsServerMsg } from "./protocol.js";
 import { sendChanged } from "./sent-frames.js";
@@ -47,15 +50,15 @@ import {
 
 /** The reads the agent and skill frames take. */
 export interface AgentStateDeps {
-  readonly hub: Pick<LiveHub, "memberUsersOfOrg" | "memberSinksOfUser">;
+  readonly hub: Pick<LiveHub, "memberUsers" | "memberUsersOfOrg" | "memberSinksOfUser">;
   /** The process's one agent store. */
-  readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "listForOrg"> & {
+  readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "listForOrg" | "fetchInOrg"> & {
     readonly grants: Pick<AgentGrants, "visibleUserIds" | "visibleAgentIds">;
-    readonly runs: Pick<AgentRunStore, "getRun" | "listRoutines">;
+    readonly runs: Pick<AgentRunStore, "getRun" | "listRoutines" | "runSteps">;
     readonly threads: Pick<AgentThreadStore, "displayThreads">;
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
-  readonly conversationHistory: Pick<ConversationHistoryStore, "runCounts">;
+  readonly conversationHistory: Pick<ConversationHistoryStore, "runCounts" | "threadOfRun">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   /** The Apps each member sees. */
   readonly apps: Pick<AppStore, "listVisible">;
@@ -294,6 +297,46 @@ export class AgentStateFeed {
     }
   }
 
+  /** Seed only the selected socket, ordered with changes for the same Agent. */
+  async syncRun(user: UserRow, sink: SocketSink, runId: string, seed = true): Promise<void> {
+    let agentId: string;
+    try {
+      const run = await this.store.runs.getRun(runId);
+      await this.store.fetchInOrg(user.org_id, run.agent_id);
+      agentId = run.agent_id;
+    } catch {
+      return;
+    }
+    await this.chains.run(`agent:${agentId}`, "sync_activity_run", async () => {
+      const run = await this.store.runs.getRun(runId);
+      if (sink.runView !== runId || !canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) return;
+      const thread = run.thread_id === null
+        ? null
+        : await this.ctx.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
+      if (sink.runView !== runId) return;
+      sink.runViewChat = thread?.chat_id ?? null;
+      const steps = runStepsWire(await this.store.runs.runSteps(run));
+      if (sink.runView !== runId) return;
+      const frame = { type: "activity_run", run: runWire(run), counts: null, steps } as const;
+      if (seed) sink.send(frame);
+      else sendChanged(sink, "activity_run:detail", frame);
+    });
+  }
+
+  async committedRunSteps(chatId: string): Promise<void> {
+    const readers = this.ctx.hub.memberUsers().flatMap(({ userId, orgId }) =>
+      this.ctx.hub.memberSinksOfUser(userId).flatMap((sink) =>
+        sink.runViewChat === chatId && sink.runView !== null ? [{ userId, orgId, sink, runId: sink.runView }] : [],
+      ),
+    );
+    if (readers.length === 0) return;
+    const users = await this.ctx.identity.getUsers([...new Set(readers.map((reader) => reader.userId))]);
+    await Promise.all(readers.map(({ userId, orgId, sink, runId }) => {
+      const user = users.find((candidate) => candidate.id === userId && candidate.org_id === orgId);
+      return user === undefined ? undefined : this.syncRun(user, sink, runId, false);
+    }));
+  }
+
   private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {
     const users = this.ctx.hub.memberUsersOfOrg(orgId);
     if (users.length === 0) return;
@@ -319,7 +362,17 @@ export class AgentStateFeed {
     ]);
     const wire = { ...runWire(run), ...callCounts };
     for (const userId of agentViewers) this.send(userId, { type: "agent_run", run: wire });
-    for (const { id } of members) this.send(id, { type: "activity_run", run: wire, counts });
+    const frame = { type: "activity_run", run: wire, counts } as const;
+    const detailSinks = members.flatMap(({ id }) => {
+      const sinks = this.ctx.hub.memberSinksOfUser(id);
+      for (const sink of sinks) sink.send(frame);
+      return sinks.filter((sink) => sink.runView === run.id);
+    });
+    if (detailSinks.length === 0) return;
+    const steps = runStepsWire(await this.store.runs.runSteps(run));
+    for (const sink of detailSinks) {
+      if (sink.runView === run.id) sendChanged(sink, "activity_run:detail", { ...frame, steps });
+    }
   }
 
   /** A finished run's model and tool call counts, from the same spans the

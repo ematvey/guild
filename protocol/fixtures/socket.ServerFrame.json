@@ -366,6 +366,7 @@
   },
   {
     "type": "activity_run",
+    "steps": [{ "kind": "assistant", "detail": "Posted the morning digest." }],
     "counts": { "runs": 1, "open_runs": 0, "failed_runs": 0 },
     "run": {
       "internal": true,

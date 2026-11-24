@@ -7,6 +7,7 @@ import type {
   AgentRoutine,
   AgentThread,
   AgentRun as WireAgentRun,
+  AgentRunStep,
 } from "@guild/wire/rest";
 import { request, requestResponse } from "../../lib/api/request";
 
@@ -17,17 +18,7 @@ export function agentFileResponse(path: string): Promise<Response> {
 
 /** The wire shapes: the agent, thread, run and routine rows the REST
  *  envelopes and the agent socket frames carry. */
-export type { Agent, AgentThread, AgentRoutine };
-
-export interface AgentRunStep {
-  kind: string;
-  name?: string | null;
-  status?: string | null;
-  detail?: string | null;
-  at?: string | null;
-  call_id?: string | null;
-  is_error?: boolean | null;
-}
+export type { Agent, AgentThread, AgentRoutine, AgentRunStep };
 
 /** A run as the run-detail endpoint returns it: the wire row plus its
  *  derived steps and the files they wrote. */

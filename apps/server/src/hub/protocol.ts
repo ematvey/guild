@@ -121,8 +121,10 @@ export function parseClientMsg(text: string): ParsedClientMsg | null {
       return { type: "ping" };
     case "sync": {
       const chatId = raw["chat_id"];
-      if (chatId === null || chatId === undefined) return { type: "sync", chat_id: null };
-      return typeof chatId === "string" && UUID_RE.test(chatId) ? { type: "sync", chat_id: chatId } : null;
+      const runId = raw["run_id"];
+      if (chatId != null && (typeof chatId !== "string" || !UUID_RE.test(chatId))) return null;
+      if (runId !== undefined && (typeof runId !== "string" || !UUID_RE.test(runId))) return null;
+      return { type: "sync", chat_id: chatId ?? null, ...(runId === undefined ? {} : { run_id: runId }) };
     }
     case "read": {
       const chatId = raw["chat_id"];

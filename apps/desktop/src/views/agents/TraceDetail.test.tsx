@@ -87,6 +87,21 @@ describe("run page", () => {
     expect(api.getTrace).toHaveBeenCalledTimes(2);
   });
 
+  it("renders newly durable steps from the watching socket when telemetry is unavailable", async () => {
+    api.getRun.mockResolvedValueOnce({ run: running, thread: null });
+    api.getTrace.mockRejectedValue(new Error("analytics unavailable"));
+    render(<RunDetailPage runId="r1" view="transcript" role="member" onNavigate={() => {}} />);
+    expect(await screen.findByText("Running")).toBeTruthy();
+    act(() => applyActivityRun({
+      type: "activity_run",
+      run: { ...running, status: "succeeded" },
+      counts: null,
+      steps: [{ kind: "assistant", detail: "The new durable response." }],
+    }));
+    expect(await screen.findByText("The new durable response.")).toBeTruthy();
+    expect(api.getRun).toHaveBeenCalledTimes(1);
+  });
+
   it("loads recorded telemetry for a background Run while preserving Thread navigation", async () => {
     api.getRun.mockResolvedValueOnce({
       run: {

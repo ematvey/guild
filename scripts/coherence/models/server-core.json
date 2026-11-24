@@ -238,6 +238,10 @@
           "role": "db"
         },
         {
+          "where": "packages/wire/src/rest.ts",
+          "role": "wire"
+        },
+        {
           "where": "apps/server/src/agents/trace-hook.ts",
           "role": "domain"
         },
@@ -259,6 +263,11 @@
           "from": "db",
           "to": "domain",
           "at": "apps/server/src/agents/trace-hook.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/agents/store/runs.ts"
         }
       ]
     },
