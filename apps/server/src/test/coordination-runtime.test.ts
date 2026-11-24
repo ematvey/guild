@@ -154,7 +154,8 @@ describe("configured coordinator conversation", () => {
           ).rowCount === 0,
         10000,
       );
-      return JSON.stringify(stack.mock.requests[before + 1]?.body);
+      const request = stack.mock.requests[before + 1]?.body as { messages?: { role: string; content: string }[] };
+      return request.messages?.at(-1)?.content ?? "";
     };
     const create = (input_id: string) =>
       `return await tools.create_routine(${JSON.stringify({ input_id, name: "Weekly review", schedule: "0 0 * * 1", prompt: "Review the week" })});`;
@@ -169,9 +170,10 @@ describe("configured coordinator conversation", () => {
     const useOnly = await request(member, "Change the weekly review Routine");
     const instructions = { input_id: useOnly, routine_id, prompt: "Different instructions" };
     const attempted = await execute(
-      `return [await tools.update_routine(${JSON.stringify(instructions)}), await tools.delete_routine(${JSON.stringify({ input_id: authorized, routine_id })})];`,
+      `try { await tools.update_routine(${JSON.stringify(instructions)}); } catch (error) { text(error.message); } return await tools.delete_routine(${JSON.stringify({ input_id: authorized, routine_id })});`,
     );
-    expect(attempted).toContain("Routine changes require an input from the active Turn");
+    expect(attempted.includes("you cannot manage this agent")).toBe(true);
+    expect(attempted.includes("Routine changes require an input from the active Turn")).toBe(true);
     expect((await stack.env.db.query("SELECT prompt FROM agent_routines WHERE id=$1", [routine_id])).rows).toEqual([
       { prompt: "Review the week" },
     ]);
