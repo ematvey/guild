@@ -128,7 +128,7 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     expect(result.content).toMatch(/^\/workspace$/m);
   }, 180_000);
 
-  it("plain chat: the file tools cannot reach the server's secrets", async () => {
+  it("plain chat: file tools reject paths outside the Workspace", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/chats",
@@ -157,7 +157,8 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     expect(result.content).not.toMatch(
       /GUILD_MASTER_KEY_HEX|GUILD_JWT_SECRET|GUILD_DATABASE_URL|GUILD_SANDBOX_RUNNER_TOKEN/,
     );
-    expect(result.content).toMatch(/HOME=\/home\/sandbox/);
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("absolute paths are not allowed");
   }, 180_000);
 
   it("materializes inbox attachments for the internal coordinator's file tools", async () => {
