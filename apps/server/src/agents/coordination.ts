@@ -19,7 +19,7 @@ import {
 // observations, timed wakes and background memory/context maintenance.
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
-import { withTransaction } from "../platform/db.js";
+import { withPlatformSession, withTransaction } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
 import type { Agent, AgentThread } from "./types.js";
 import type { GuildRuntime } from "../harness/runtime.js";
@@ -152,6 +152,7 @@ export class AgentCoordination {
   private maintainAfter = 0;
   constructor(
     private readonly deps: {
+      databaseUrl: string;
       pool: PlatformPool;
       store: AgentStore;
       runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat">;
@@ -232,95 +233,101 @@ export class AgentCoordination {
   }
 
   private async maintain(): Promise<void> {
-    const { pool, store, runtime } = this.deps;
+    const { databaseUrl, log, pool, store, runtime } = this.deps;
     await expireReflectedInputContent(pool);
     await initializeCoordinationState(pool, []);
     const agents = await listCoordinators<{ agent_id: string; chat_id: string }>(pool, []);
-    for (const row of agents.rows) {
-      const agent = await store.fetchAgent(row.agent_id);
-      const settings = coordinationSettings(agent);
-      if (!settings.enabled || agent.status !== "active") continue;
-      const lock = await pool.connect();
-      const key = `coordination-maintenance:${row.agent_id}`;
-      const held = (await lock.query<{ held: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS held", [key]))
-        .rows[0]?.held;
-      if (!held) {
-        lock.release();
-        continue;
-      }
-      try {
-        const state = (
-          await readCoordinationState<{
-            reflection_thread_id: string | null;
-            reflection_inputs: string[];
-            reflection_age: number;
-          }>(lock, [agent.id])
-        ).rows[0]!;
-        let active = false;
-        if (state.reflection_thread_id !== null) {
-          const run = (await readReflectionStatus<{ status: string }>(lock, [state.reflection_thread_id])).rows[0];
-          active = run?.status === "queued" || run?.status === "running";
-          if (active && state.reflection_age > 120) {
-            const thread = await store.threads.threadById(state.reflection_thread_id);
-            if (thread !== null) await runtime.stopChat(thread.chat_id);
-          }
-          if (!active && run !== undefined) {
-            if (run.status === "succeeded" || run.status === "silent") {
-              await markInputsReflected(lock, [state.reflection_inputs]);
-            }
-            await clearReflection(lock, [agent.id]);
-          }
-        }
-        const recent = await pendingReflectionInputs<{
-          id: string;
-          seq: string;
-          content: string;
-          kind: string;
-          pending_count: string;
-        }>(lock, [agent.id]);
-        if (
-          !active &&
-          recent.rows.length > 0 &&
-          (Number(recent.rows[0]?.pending_count ?? 0) >= settings.reflection_events || state.reflection_age >= settings.reflection_seconds)
-        ) {
-          const thread = await store.threads.createThread(
-            agent.id,
-            agent.owner_user_id,
-            "Memory reflection",
-            "user",
-            { executionRole: "reflection", internal: true },
-          );
-          await startReflection(lock, [agent.id, thread.id, recent.rows.map((x) => x.id)]);
+    if (agents.rows.length === 0) return;
+    // Maintenance calls the runtime and stores, which need their own pool slots.
+    // One dedicated session per pass owns the advisory locks across those calls.
+    await withPlatformSession(
+      databaseUrl,
+      (error) => log.warn({ err: error }, "coordination lock session failed"),
+      async (lock) => {
+        for (const row of agents.rows) {
+          const agent = await store.fetchAgent(row.agent_id);
+          const settings = coordinationSettings(agent);
+          if (!settings.enabled || agent.status !== "active") continue;
+          const key = `coordination-maintenance:${row.agent_id}`;
+          const result = await lock.query<{ held: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS held", [
+            key,
+          ]);
+          if (result.rows[0]?.held !== true) continue;
           try {
-            await startThreadRun(
-              { store, runtime },
-              {
-                agentId: agent.id,
-                thread,
-                failureCode: "reflection_failed",
-                content:
-                  "Review the activity below for durable lessons, decisions and user corrections. If there is something to save, first read /workspace/MEMORY.md with the read tool, then update it. Keep summaries concise and include source IDs. Use supporting notes only when needed and only follow paths you know from the memory or activity. If a revision conflict occurs, reread the file and reconcile your edit. Do not change permissions, message users or perform external work.\n" +
-                  JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
-                run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
-              },
-            );
-          } catch (error) {
-            await resetReflection(lock, [agent.id]);
-            this.deps.log.warn({ err: error, agentId: agent.id }, "reflection deferred");
+            const state = (
+              await readCoordinationState<{
+                reflection_thread_id: string | null;
+                reflection_inputs: string[];
+                reflection_age: number;
+              }>(pool, [agent.id])
+            ).rows[0]!;
+            let active = false;
+            if (state.reflection_thread_id !== null) {
+              const run = (await readReflectionStatus<{ status: string }>(pool, [state.reflection_thread_id])).rows[0];
+              active = run?.status === "queued" || run?.status === "running";
+              if (active && state.reflection_age > 120) {
+                const thread = await store.threads.threadById(state.reflection_thread_id);
+                if (thread !== null) await runtime.stopChat(thread.chat_id);
+              }
+              if (!active && run !== undefined) {
+                if (run.status === "succeeded" || run.status === "silent") {
+                  await markInputsReflected(pool, [state.reflection_inputs]);
+                }
+                await clearReflection(pool, [agent.id]);
+              }
+            }
+            const recent = await pendingReflectionInputs<{
+              id: string;
+              seq: string;
+              content: string;
+              kind: string;
+              pending_count: string;
+            }>(pool, [agent.id]);
+            if (
+              !active &&
+              recent.rows.length > 0 &&
+              (Number(recent.rows[0]?.pending_count ?? 0) >= settings.reflection_events ||
+                state.reflection_age >= settings.reflection_seconds)
+            ) {
+              const thread = await store.threads.createThread(
+                agent.id,
+                agent.owner_user_id,
+                "Memory reflection",
+                "user",
+                { executionRole: "reflection", internal: true },
+              );
+              await startReflection(pool, [agent.id, thread.id, recent.rows.map((x) => x.id)]);
+              try {
+                await startThreadRun(
+                  { store, runtime },
+                  {
+                    agentId: agent.id,
+                    thread,
+                    failureCode: "reflection_failed",
+                    content:
+                      "Review the activity below for durable lessons, decisions and user corrections. If there is something to save, first read /workspace/MEMORY.md with the read tool, then update it. Keep summaries concise and include source IDs. Use supporting notes only when needed and only follow paths you know from the memory or activity. If a revision conflict occurs, reread the file and reconcile your edit. Do not change permissions, message users or perform external work.\n" +
+                      JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
+                    run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
+                  },
+                );
+              } catch (error) {
+                await resetReflection(pool, [agent.id]);
+                this.deps.log.warn({ err: error, agentId: agent.id }, "reflection deferred");
+              }
+            }
+            const { remaining, age, retryReady } = await coordinatorCompactionActivity(pool, row.chat_id);
+            if (
+              retryReady &&
+              (remaining >= settings.compaction_events || (remaining >= 10 && age >= settings.compaction_seconds)) &&
+              !(await compactionInFlight(pool, row.chat_id))
+            ) {
+              await runtime.compactChat(row.chat_id);
+            }
+          } finally {
+            await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
           }
         }
-        const { remaining, age, retryReady } = await coordinatorCompactionActivity(lock, row.chat_id);
-        if (
-          retryReady &&
-          (remaining >= settings.compaction_events || (remaining >= 10 && age >= settings.compaction_seconds)) &&
-          !(await compactionInFlight(lock, row.chat_id))
-        ) {
-          await runtime.compactChat(row.chat_id);
-        }
-      } finally {
-        await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-        lock.release();
-      }
-    }
+      },
+    );
   }
 }

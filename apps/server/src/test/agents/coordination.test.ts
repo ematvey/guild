@@ -10,6 +10,7 @@ import { AgentCoordination, coordinationSettings, ensureCoordinationThread } fro
 import { expireReflectedInputContent } from "../../agents/store/coordination.js";
 import { runTraceRow } from "../../agents/store/run-finish.js";
 import { AgentStore } from "../../agents/store.js";
+import { createPlatformPool } from "../../platform/db.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { UserRow } from "../../platform/store/identity.js";
@@ -52,6 +53,7 @@ suite("persistent coordination", () => {
       resources: { assistant: { enabled: true } },
     });
     coordination = new AgentCoordination({
+      databaseUrl: env!.databaseUrl,
       pool: env!.db,
       store,
       log: pino({ level: "silent" }),
@@ -171,6 +173,65 @@ suite("persistent coordination", () => {
       summary: "Internal coordination output",
     });
     expect(await runTraceRow(env!.db, run.id)).toBeNull();
+  });
+
+  it("runs reflection once across two maintenance passes using a one-slot pool", async () => {
+    const single = createPlatformPool(env!.databaseUrl, 1);
+    // A regression fails quickly rather than leaving the suite's cleanup waiting for the held client.
+    single.options.connectionTimeoutMillis = 1000;
+    try {
+      const ownerStore = new AgentStore({ pool: single, chats: new ChatStore(single) });
+      const reflectingAgent = await ownerStore.create(alice, {
+        name: "Reflecting assistant",
+        model: "test",
+        visibility: "org",
+        resources: { assistant: { enabled: true, reflection_events: 1 } },
+      });
+      await ensureCoordinationThread(env!.db, store, reflectingAgent, alice.id, "coordinator");
+      await single.query(
+        `INSERT INTO agent_coordination_inputs(agent_id,user_id,content,delivered_at)
+         VALUES($1,$2,'Remember the decision',now())`,
+        [reflectingAgent.id, alice.id],
+      );
+      const reflectedChats: string[] = [];
+      const runPass = () =>
+        new AgentCoordination({
+          databaseUrl: env!.databaseUrl,
+          pool: single,
+          store: ownerStore,
+          log: pino({ level: "silent" }),
+          runtime: {
+            submitTurn: async (chatId) => {
+              await single.query("SELECT 1");
+              reflectedChats.push(chatId);
+              return 1;
+            },
+            writeEntry: async () => {},
+            compactChat: async () => null,
+            stopChat: async () => {},
+          },
+        }).tick();
+
+      await Promise.all([runPass(), runPass()]);
+      expect(reflectedChats).toHaveLength(1);
+      const { rows } = await single.query(
+        "SELECT status FROM agent_runs WHERE agent_id=$1 AND summary='Memory reflection'",
+        [reflectingAgent.id],
+      );
+      expect(rows).toEqual([{ status: "queued" }]);
+
+      // A fresh owner reads the saved reservation and settles the completed batch.
+      await single.query("UPDATE agent_runs SET status='succeeded' WHERE agent_id=$1", [reflectingAgent.id]);
+      await runPass();
+      expect(reflectedChats).toHaveLength(1);
+      const settled = await single.query(
+        "SELECT reflected_at IS NOT NULL AS reflected FROM agent_coordination_inputs WHERE agent_id=$1",
+        [reflectingAgent.id],
+      );
+      expect(settled.rows).toEqual([{ reflected: true }]);
+    } finally {
+      await single.end();
+    }
   });
 
   it("counts placed inputs until an applied compaction covers them", async () => {
