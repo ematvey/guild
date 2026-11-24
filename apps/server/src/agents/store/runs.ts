@@ -239,6 +239,15 @@ export class AgentRunStore {
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }
 
+  /** Terminal Run IDs among the sandbox attachment directories being swept. */
+  async finishedRunIds(ids: readonly string[]): Promise<string[]> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      "SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND status NOT IN ('queued', 'running')",
+      [ids],
+    );
+    return rows.map((row) => row.id);
+  }
+
   /** Direct children of one run, oldest first. */
   async childRuns(parentRunId: string): Promise<AgentRun[]> {
     const res = await this.pool.query<Record<string, unknown>>(
