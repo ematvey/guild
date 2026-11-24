@@ -29,6 +29,9 @@ spec:
           command: [/bin/sh, -ec]
           args:
             - |
+              if grep -q " /storage/volume .* - fuse.juicefs " /proc/self/mountinfo; then
+                umount -l /storage/volume
+              fi
               mkdir -p /storage/volume
               exec juicefs mount --cache-size 512 "$GUILD_JUICE_META_URL" /storage/volume
           readinessProbe:
@@ -36,7 +39,7 @@ spec:
               command:
                 - /bin/sh
                 - -ec
-                - 'grep -q " /storage/volume .* - fuse.juicefs " /proc/self/mountinfo'
+                - 'grep -q " /storage/volume .* - fuse.juicefs " /proc/self/mountinfo && stat /storage/volume >/dev/null'
             periodSeconds: 3
           volumeMounts:
             - name: storage

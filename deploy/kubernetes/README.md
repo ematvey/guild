@@ -276,7 +276,7 @@ Use it for custom API URLs, delegated connectors, and registry bundles.
 To publish on default dev, pass `--default-dev` to the importer with
 `GUILD_MCP_CONNECTOR_IMAGE` set to the installed Guild server image and
 `GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer.
-`verify-mcp-service-grants.sh` and `verify-shared-github.sh` exercise the
+`verify-mcp-service-grants.sh` and `verify-shared-mcp-connector.sh` exercise the
 experiment gateway with temporary routes. Validate vendor and authorization
 parity for the actual org inventory before switching Guild's execution.
 
