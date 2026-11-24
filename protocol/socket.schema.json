@@ -512,13 +512,19 @@
       }
     },
     "ActivityConversationFrame": {
-      "description": "The newest durable page of the Conversation selected by an authorized Activity viewer.",
+      "description": "The newest durable page of the selected Activity Conversation, or null if it is unavailable.",
       "type": "object",
-      "required": ["type", "detail"],
+      "required": ["type", "chat_id", "detail"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "activity_conversation" },
-        "detail": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ConversationSnapshot" }
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "detail": {
+          "oneOf": [
+            { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ConversationSnapshot" },
+            { "type": "null" }
+          ]
+        }
       }
     },
     "AgentThreads": {

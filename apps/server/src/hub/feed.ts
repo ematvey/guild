@@ -243,6 +243,13 @@ export class FeedForwarder implements GenerationStreamSink {
           ? ALL_PARTS
           : change.parts.filter((part): part is WorkspacePart => ALL_PARTS.includes(part as WorkspacePart));
       void this.pushWorkspace(change.org_id, change.user_id, parts.length > 0 ? parts : ALL_PARTS);
+      if (change.parts?.includes("member")) {
+        this.track(
+          "guild_workspace",
+          change.user_id,
+          this.agentState.conversationProfilesChanged(change.org_id, change.user_id),
+        );
+      }
     },
     guild_workspace_identity: ({ org_id: orgId }) => {
       if (this.stopped) return;

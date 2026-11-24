@@ -283,7 +283,8 @@ pub enum WsServerMsg {
     },
     /// The newest Activity Conversation page visible to the selected viewer.
     ActivityConversation {
-        detail: serde_json::Value,
+        chat_id: Uuid,
+        detail: Option<serde_json::Value>,
     },
     /// The member's open user threads with one agent, newest activity first.
     /// Daemons tag-peek and ignore it.

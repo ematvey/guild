@@ -197,7 +197,7 @@ export type ServerFrame =
       steps?: AgentRunStep[];
       counts: { runs: number; open_runs: number; failed_runs: number } | null;
     }
-  | { type: "activity_conversation"; detail: ConversationSnapshot }
+  | { type: "activity_conversation"; chat_id: Uuid; detail: ConversationSnapshot | null }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
