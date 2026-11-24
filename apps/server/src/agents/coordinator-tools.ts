@@ -9,7 +9,8 @@ import {
 import { createRoutine, listRoutines, getRoutine, updateRoutine, deleteRoutine } from "./routines.js";
 // Coordination capabilities operate on attributed inputs and owned Threads;
 // they do not expose Integrations, Apps or Machine execution.
-import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { LiveDoc, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
+import { inputRequestIds } from "../storage/postgres/queries.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
 import type { Agent } from "./types.js";
@@ -33,19 +34,26 @@ export function coordinatorTools(deps: {
     description: string,
     properties: Record<string, unknown>,
     required: string[],
-    run: (args: Record<string, unknown>, callId: string) => Promise<unknown>,
+    run: (
+      args: Record<string, unknown>,
+      callId: string,
+      api: ToolExecutionApi,
+      context: Parameters<ToolRegistration["execute"]>[2],
+    ) => Promise<unknown>,
   ): ToolRegistration => ({
     name,
     description,
     replay: "safe",
     parameters: { type: "object", properties, required },
-    execute: async (args, api) => {
+    execute: async (args, api, context) => {
       try {
         return {
           output: [
             {
               type: "text",
-              text: JSON.stringify(await run(args as Record<string, unknown>, `${api.taskId}:${api.callId}`)),
+              text: JSON.stringify(
+                await run(args as Record<string, unknown>, `${api.taskId}:${api.callId}`, api, context),
+              ),
             },
           ],
         };
@@ -67,6 +75,26 @@ export function coordinatorTools(deps: {
     ).rows[0];
     if (row === undefined) throw new Error("input_id must reference an input of this Agent");
     return row;
+  };
+  const routineManager = async (
+    inputId: unknown,
+    api: ToolExecutionApi,
+    context: Parameters<ToolRegistration["execute"]>[2],
+  ) => {
+    const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+    const inputs = active?.inputs.map(Number) ?? [];
+    const requests = await inputRequestIds(pool, inputs);
+    if (typeof inputId !== "string" || !requests.includes(inputId) || inputs.length !== requests.length) {
+      throw new Error("Routine changes require an input from the active Turn");
+    }
+    const origin = await source(inputId);
+    const origins = await Promise.all(requests.filter((id) => id !== inputId).map(source));
+    if (origins.some((other) => other.user_id !== origin.user_id)) {
+      throw new Error("Routine changes require a Turn attributed to one Member");
+    }
+    const member = await deps.identity.getUser(origin.user_id);
+    await store.requireAccess(member, agent.id, "manage");
+    return member;
   };
   return [
     ...createSubagentTools(deps.subagents).filter((t) =>
@@ -169,11 +197,11 @@ export function coordinatorTools(deps: {
       "Create scheduled worker work for this Agent. Its findings reach coordination. This is distinct from schedule_wake.",
       { input_id: str, name: str, schedule: str, timezone: str, prompt: str },
       ["input_id", "name", "schedule", "prompt"],
-      async (args, callId) => {
-        const origin = await source(args["input_id"]);
+      async (args, callId, api, context) => {
+        const member = await routineManager(args["input_id"], api, context);
         return createRoutine(pool, agent.id, {
           id: uuidv5(agent.id, `routine:${callId}`),
-          created_by_user_id: origin.user_id,
+          created_by_user_id: member.id,
           name: String(args["name"]),
           kind: "cron",
           schedule: String(args["schedule"]),
@@ -185,10 +213,11 @@ export function coordinatorTools(deps: {
     tool("list_routines", "List this Agent's scheduled worker work.", {}, [], async () => listRoutines(pool, agent.id)),
     tool(
       "update_routine",
-      "Update this Agent's routine instructions, schedule or enabled state.",
-      { routine_id: str, prompt: str, schedule: str, enabled: { type: "boolean" } },
-      ["routine_id"],
-      async (args) => {
+      "Update this Agent's routine using an input_id from a Member with manage access.",
+      { input_id: str, routine_id: str, prompt: str, schedule: str, enabled: { type: "boolean" } },
+      ["input_id", "routine_id"],
+      async (args, _callId, api, context) => {
+        await routineManager(args["input_id"], api, context);
         await getRoutine(pool, agent.id, String(args["routine_id"]));
         return updateRoutine(pool, agent.id, String(args["routine_id"]), {
           ...(typeof args["prompt"] === "string" ? { prompt: args["prompt"] } : {}),
@@ -199,10 +228,11 @@ export function coordinatorTools(deps: {
     ),
     tool(
       "delete_routine",
-      "Remove a scheduled routine of this Agent.",
-      { routine_id: str },
-      ["routine_id"],
-      async (args) => {
+      "Remove this Agent's routine using an input_id from a Member with manage access.",
+      { input_id: str, routine_id: str },
+      ["input_id", "routine_id"],
+      async (args, _callId, api, context) => {
+        await routineManager(args["input_id"], api, context);
         await deleteRoutine(pool, agent.id, String(args["routine_id"]));
         return { deleted: true };
       },

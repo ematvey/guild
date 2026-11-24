@@ -705,7 +705,11 @@ export function registerAgentRoutes(
     const body = jsonBody(req);
     const title = optionalString(body, "title") ?? "";
     return sendJson(reply, {
-      thread: await store.threads.createThread(agentId, user.id, title),
+      thread: wireThread({
+        ...(await store.threads.createThread(agentId, user.id, title)),
+        archived: false,
+        deleted: false,
+      }),
     });
   });
 
@@ -715,7 +719,7 @@ export function registerAgentRoutes(
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
     return sendJson(reply, {
-      thread: await store.threads.getThread(agentId, user.id, threadId),
+      thread: wireThread(await store.threads.getThread(agentId, user.id, threadId)),
     });
   });
 
@@ -726,7 +730,7 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "use");
     const title = requiredString(jsonBody(req), "title");
     return sendJson(reply, {
-      thread: await store.threads.renameThread(agentId, user.id, threadId, title),
+      thread: wireThread(await store.threads.renameThread(agentId, user.id, threadId, title)),
     });
   });
 

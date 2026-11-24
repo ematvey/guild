@@ -83,6 +83,100 @@ describe("configured coordinator conversation", () => {
     }
   });
 
+  it("authorizes Routine mutations against the active attributed Member", async () => {
+    const app = stack.env.app;
+    const admin = { authorization: `Bearer ${stack.adminToken}` };
+    const member = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: admin,
+      payload: {
+        name: "Shared Routine operator",
+        model: "coordination-test",
+        visibility: "org",
+        resources: { assistant: { enabled: true } },
+      },
+    });
+    expect(created.statusCode, created.body).toBeLessThan(300);
+    const agentId = created.json().agent.id as string;
+    const thread = await app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${agentId}/threads`,
+      headers: admin,
+      payload: { title: "Routine discussion" },
+    });
+    const threadPath = `/api/v1/agents/${agentId}/threads/${thread.json().thread.id}`;
+    expect(thread.json().thread).toMatchObject({ is_default: false, archived: false, deleted: false });
+    expect((await app.inject({ method: "GET", url: threadPath, headers: admin })).json().thread).toMatchObject({
+      is_default: false,
+    });
+    expect(
+      (await app.inject({ method: "PATCH", url: threadPath, headers: admin, payload: { title: "Renamed" } })).json()
+        .thread,
+    ).toMatchObject({ is_default: false, title: "Renamed" });
+
+    const request = async (headers: typeof admin, message: string) => {
+      const inbox = await app.inject({
+        method: "POST",
+        url: "/api/v1/assistant",
+        headers,
+        payload: { agent_id: agentId },
+      });
+      expect(inbox.statusCode, inbox.body).toBe(200);
+      const event = randomUUID();
+      const posted = await app.inject({
+        method: "POST",
+        url: `/api/v1/agents/${agentId}/threads/${inbox.json().thread_id}/turns`,
+        headers,
+        payload: { message, user_message_id: event },
+      });
+      expect(posted.statusCode, posted.body).toBeLessThan(300);
+      const input = () =>
+        stack.env.db.query<{ id: string }>("SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [
+          event,
+        ]);
+      await waitFor(async () => (await input()).rowCount === 1, 10000);
+      return (await input()).rows[0]!.id;
+    };
+    const execute = async (code: string) => {
+      const before = stack.mock.requests.length;
+      stack.mock.setResponses([{ body: call("codemode", { code }) }, { body: final("Routine action checked") }]);
+      await app.platform.coordination.tick();
+      await waitFor(() => stack.mock.requests.length >= before + 2, 10000);
+      await waitFor(
+        async () =>
+          (
+            await stack.env.db.query(
+              "SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id WHERE t.agent_id=$1 AND t.execution_role='coordinator' AND r.status IN ('queued','running')",
+              [agentId],
+            )
+          ).rowCount === 0,
+        10000,
+      );
+      return JSON.stringify(stack.mock.requests[before + 1]?.body);
+    };
+    const create = (input_id: string) =>
+      `return await tools.create_routine(${JSON.stringify({ input_id, name: "Weekly review", schedule: "0 0 * * 1", prompt: "Review the week" })});`;
+    const authorized = await request(admin, "Create a weekly review Routine");
+    await execute(create(authorized));
+    const routines = await stack.env.db.query<{ id: string; prompt: string }>(
+      "SELECT id, prompt FROM agent_routines WHERE agent_id=$1",
+      [agentId],
+    );
+    expect(routines.rows).toHaveLength(1);
+    const routine_id = routines.rows[0]!.id;
+    const useOnly = await request(member, "Change the weekly review Routine");
+    const instructions = { input_id: useOnly, routine_id, prompt: "Different instructions" };
+    const attempted = await execute(
+      `return [await tools.update_routine(${JSON.stringify(instructions)}), await tools.delete_routine(${JSON.stringify({ input_id: authorized, routine_id })})];`,
+    );
+    expect(attempted).toContain("Routine changes require an input from the active Turn");
+    expect((await stack.env.db.query("SELECT prompt FROM agent_routines WHERE id=$1", [routine_id])).rows).toEqual([
+      { prompt: "Review the week" },
+    ]);
+  }, 30000);
+
   it("delivers an explicit reply to the inbox without leaking its internal final answer", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
