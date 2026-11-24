@@ -6,7 +6,7 @@ import {
   cancelCoordinatorWake,
   listCoordinationThreads,
 } from "./store/coordination.js";
-import { createRoutine, listRoutines, getRoutine, updateRoutine, deleteRoutine } from "./routines.js";
+import { createRoutine, listRoutines, updateRoutine, deleteRoutine } from "./routines.js";
 // Coordination capabilities operate on attributed inputs and owned Threads;
 // they do not expose Integrations, Apps or Machine execution.
 import { LiveDoc, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
@@ -40,10 +40,11 @@ export function coordinatorTools(deps: {
       api: ToolExecutionApi,
       context: Parameters<ToolRegistration["execute"]>[2],
     ) => Promise<unknown>,
+    replay: ToolRegistration["replay"] = "safe",
   ): ToolRegistration => ({
     name,
     description,
-    replay: "safe",
+    replay,
     parameters: { type: "object", properties, required },
     execute: async (args, api, context) => {
       try {
@@ -223,13 +224,13 @@ export function coordinatorTools(deps: {
       ["input_id", "routine_id"],
       async (args, _callId, api, context) => {
         await routineManager(args["input_id"], api, context);
-        await getRoutine(pool, agent.id, String(args["routine_id"]));
         return updateRoutine(pool, agent.id, String(args["routine_id"]), {
           ...(typeof args["prompt"] === "string" ? { prompt: args["prompt"] } : {}),
           ...(typeof args["schedule"] === "string" ? { schedule: args["schedule"] } : {}),
           ...(typeof args["enabled"] === "boolean" ? { enabled: args["enabled"] } : {}),
         });
       },
+      "unsafe",
     ),
     tool(
       "delete_routine",
@@ -241,6 +242,7 @@ export function coordinatorTools(deps: {
         await deleteRoutine(pool, agent.id, String(args["routine_id"]));
         return { deleted: true };
       },
+      "unsafe",
     ),
     tool(
       "list_wakes",
