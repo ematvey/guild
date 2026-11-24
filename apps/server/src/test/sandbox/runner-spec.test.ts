@@ -105,20 +105,27 @@ describe("container spec", () => {
     expect(spec.Env.some((e) => /proxy/i.test(e))).toBe(false);
   });
 
-  it("mounts the agent volume for agents/ subpaths", () => {
-    const spec = containerSpec(config, `agent:${ORG}:${AGENT}`, `agents/${ORG}/${AGENT}`) as {
-      Labels: Record<string, string>;
-      HostConfig: { Mounts: Array<Record<string, unknown>> };
-    };
-    expect(spec.HostConfig.Mounts).toEqual([
-      {
-        Type: "volume",
-        Source: "compose_guild_workspaces",
-        Target: "/workspace",
-        VolumeOptions: { Subpath: `agents/${ORG}/${AGENT}`, NoCopy: true },
-      },
-    ]);
-    expect(spec.Labels["guild.sandbox.subpath"]).toBe(`agents/${ORG}/${AGENT}`);
+  it("mounts the same Agent Workspace in separate containers with local scratch", () => {
+    const key = `agent:${ORG}:${AGENT}`;
+    const subpath = `agents/${ORG}/${AGENT}`;
+    const members = [key, `${key}:member:${ORG}`, `${key}:member:${AGENT}`, `${key}:background`];
+    expect(new Set(members.map((member) => containerName(config, member))).size).toBe(members.length);
+    for (const member of members) {
+      expect(containerSpec(config, member, subpath)).toMatchObject({
+        Labels: { "guild.sandbox.subpath": subpath, "guild.sandbox.key": member },
+        HostConfig: {
+          Mounts: [
+            {
+              Type: "volume",
+              Source: "compose_guild_workspaces",
+              Target: "/workspace",
+              VolumeOptions: { Subpath: subpath, NoCopy: true },
+            },
+          ],
+          Tmpfs: { "/tmp": expect.any(String) },
+        },
+      });
+    }
   });
 
   it("reads the agent volume and its runner mount from env", () => {
@@ -180,26 +187,44 @@ describe("always-on agent sandboxes", () => {
     expect(calls).toContain("DELETE /containers/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb?force=true");
   });
 
-  it("reap skips agent sandboxes but still stops idle chats", async () => {
+  it("reap skips unpartitioned Agents but reclaims idle Member and background containers", async () => {
     const calls: string[] = [];
     const containers = [
       {
         Id: "1",
         Names: ["/guild-sbx-compose-aaaaaaaaaaaaaaaaaaaa"],
         State: "running",
-        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` },
+        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}`, "guild.sandbox.key": `agent:${ORG}:${AGENT}` },
       },
       {
         Id: "2",
         Names: ["/guild-sbx-compose-bbbbbbbbbbbbbbbbbbbb"],
         State: "stopped",
-        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}` },
+        Labels: { "guild.sandbox.subpath": `agents/${ORG}/${AGENT}`, "guild.sandbox.key": `agent:${ORG}:${AGENT}` },
       },
       {
         Id: "3",
         Names: ["/guild-sbx-compose-cccccccccccccccccccc"],
         State: "running",
         Labels: { "guild.sandbox.subpath": `chats/${ORG}/42` },
+      },
+      {
+        Id: "4",
+        Names: ["/guild-sbx-compose-dddddddddddddddddddd"],
+        State: "running",
+        Labels: {
+          "guild.sandbox.subpath": `agents/${ORG}/${AGENT}`,
+          "guild.sandbox.key": `agent:${ORG}:${AGENT}:member:${ORG}`,
+        },
+      },
+      {
+        Id: "5",
+        Names: ["/guild-sbx-compose-eeeeeeeeeeeeeeeeeeee"],
+        State: "stopped",
+        Labels: {
+          "guild.sandbox.subpath": `agents/${ORG}/${AGENT}`,
+          "guild.sandbox.key": `agent:${ORG}:${AGENT}:background`,
+        },
       },
     ];
     const docker = {
@@ -213,7 +238,9 @@ describe("always-on agent sandboxes", () => {
     await manager.reap(Date.now() + config.idleRemoveMs * 2);
     expect(calls.some((c) => c.includes("aaaaaaaaaaaaaaaaaaaa"))).toBe(false);
     expect(calls.some((c) => c.includes("bbbbbbbbbbbbbbbbbbbb"))).toBe(false);
-    expect(calls.some((c) => c.includes("cccccccccccccccccccc") && c.includes("/stop"))).toBe(true);
+    expect(calls).toContain("POST /containers/guild-sbx-compose-cccccccccccccccccccc/stop?t=5");
+    expect(calls).toContain("POST /containers/guild-sbx-compose-dddddddddddddddddddd/stop?t=5");
+    expect(calls).toContain("DELETE /containers/guild-sbx-compose-eeeeeeeeeeeeeeeeeeee?force=true");
   });
 
   it("attach removes a sandbox whose workspace mount died", async () => {

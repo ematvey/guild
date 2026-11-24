@@ -1,7 +1,6 @@
-// sandboxWorkspace: the sandbox target for a chat. A chat that belongs to an
-// agent_threads row runs in the agent's shared directory
-// (agents/<org>/<agentId>) and sandbox (agent:<org>:<agentId>). Every other
-// chat keeps its per-conversation sandbox.
+// Each Agent has a shared Workspace. Non-personal Agents isolate sandbox
+// scratch by Member and keep internal Threads in a separate sandbox.
+// Plain chats keep a per-conversation sandbox and workspace.
 
 import type { PlatformPool } from "../platform/db.js";
 import { agentThreadForChat } from "./store/bindings.js";
@@ -33,8 +32,10 @@ export async function resolveConversationWorkspace(
   const agent = args.chatId === null ? null : await agentThreadForChat(pool, args.chatId);
   if (agent !== null) {
     const subpath = agentWorkspaceSubpath(agent.org_id, agent.agent_id);
+    const agentKey = `agent:${agent.org_id}:${agent.agent_id}`;
+    const scope = agent.internal ? "background" : `member:${agent.user_id}`;
     return {
-      key: `agent:${agent.org_id}:${agent.agent_id}`,
+      key: agent.is_personal ? agentKey : `${agentKey}:${scope}`,
       subpath,
       hostDir: agentWorkspaceDir(args.agentWorkspaceRoot, agent.org_id, agent.agent_id),
       chatId: args.chatId,
