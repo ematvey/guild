@@ -238,15 +238,15 @@ export class AgentRunStore {
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }
 
-  /** An old attachment directory is reclaimable after the Run settles or
-   *  is purged. Materialization only begins after the Run row has committed. */
-  async removableAttachmentRunIds(ids: readonly string[], settledBefore: Date): Promise<string[]> {
+  /** Settled Runs no longer need their caches. A missing Run is reclaimable
+   *  only if its directory is stale. */
+  async removableAttachmentRunIds(ids: readonly string[], staleIds: readonly string[]): Promise<string[]> {
     const { rows } = await this.pool.query<{ id: string }>(
       `SELECT candidate.id
        FROM unnest($1::uuid[]) AS candidate(id) LEFT JOIN agent_runs r ON r.id=candidate.id
-       WHERE r.id IS NULL
-          OR (r.status NOT IN ('queued', 'running') AND COALESCE(r.finished_at, r.created_at) < $2)`,
-      [ids, settledBefore],
+       WHERE r.status NOT IN ('queued', 'running')
+          OR (r.id IS NULL AND candidate.id=ANY($2::uuid[]))`,
+      [ids, staleIds],
     );
     return rows.map((row) => row.id);
   }

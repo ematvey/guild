@@ -16,7 +16,7 @@ const SWEEP_GRACE_MS = 5 * 60_000;
 
 // A reader belongs to one sandbox connection. Closing the connection also
 // closes its remote reader. A new executor starts an independent scan.
-const sweeps = new WeakMap<ExecutionEnv, { root: string; reader: DirReader | null; busy: boolean }>();
+const sweeps = new WeakMap<ExecutionEnv, { root: string; reader: DirReader | null; pending: Promise<void> | null }>();
 
 export interface MaterializeAttachmentsArgs {
   env: ExecutionEnv;
@@ -47,19 +47,20 @@ export async function materializeTurnAttachments(args: MaterializeAttachmentsArg
   return dir;
 }
 
-/** Examine one directory page per Turn. Keep the cursor so live or recent
+/** Examine one directory page per sweep. Keep the cursor so live or recent
  *  entries on the first page do not hide reclaimable later pages. */
 export async function pruneTurnAttachments(
   env: ExecutionEnv,
   context: Context,
-  removableRunIds: (ids: string[], settledBefore: Date) => Promise<string[]>,
+  removableRunIds: (ids: string[], staleIds: string[]) => Promise<string[]>,
   root = ATTACHMENTS_ROOT,
 ): Promise<void> {
-  const sweep = sweeps.get(env) ?? { root, reader: null, busy: false };
-  if (sweep.busy) return;
+  const sweep = sweeps.get(env) ?? { root, reader: null, pending: null };
+  if (sweep.pending !== null) return sweep.pending;
   sweeps.set(env, sweep);
-  sweep.busy = true;
-  try {
+  // A concurrent writer waits for the shared page to release any space
+  // before writing its own files.
+  sweep.pending = (async () => {
     if (sweep.root !== root || !(await directoryExists(env, root, context))) {
       const reader = sweep.reader;
       sweep.root = root;
@@ -83,24 +84,25 @@ export async function pruneTurnAttachments(
     }
     if (!page.ok) throw page.error;
 
-    const settledBefore = new Date(Date.now() - SWEEP_GRACE_MS);
-    const candidates = new Map(
-      page.value.entries
-        .filter((entry) => entry.kind === "directory" && isUuid(entry.name) && entry.mtimeMs < settledBefore.getTime())
-        .map((entry) => [entry.name, entry.mtimeMs]),
-    );
-    if (candidates.size === 0) return;
-    for (const runId of await removableRunIds([...candidates.keys()], settledBefore)) {
+    const orphanCutoff = Date.now() - SWEEP_GRACE_MS;
+    const candidates = page.value.entries.filter((entry) => entry.kind === "directory" && isUuid(entry.name));
+    if (candidates.length === 0) return;
+    const timestamps = new Map(candidates.map((entry) => [entry.name, entry.mtimeMs]));
+    const staleIds = candidates.filter((entry) => entry.mtimeMs < orphanCutoff).map((entry) => entry.name);
+    for (const runId of await removableRunIds([...timestamps.keys()], staleIds)) {
       const dir = turnAttachmentDir(runId, root);
       const current = await env.fileInfo(dir, context);
       // A directory changed since the scan can belong to a fresh writer.
-      if (!current.ok || current.value.kind !== "directory" || current.value.mtimeMs !== candidates.get(runId))
+      if (!current.ok || current.value.kind !== "directory" || current.value.mtimeMs !== timestamps.get(runId))
         continue;
       const removed = await env.remove(dir, { recursive: true, force: true }, context);
       if (!removed.ok) throw removed.error;
     }
+  })();
+  try {
+    await sweep.pending;
   } finally {
-    sweep.busy = false;
+    sweep.pending = null;
   }
 }
 

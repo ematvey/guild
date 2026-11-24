@@ -229,21 +229,14 @@ dbDescribe("agent send_file and turn attachments", () => {
       pruneTurnAttachments(
         restartedSandbox,
         BACKGROUND_CONTEXT,
-        (ids, settledBefore) => store.runs.removableAttachmentRunIds(ids, settledBefore),
+        (ids, staleIds) => store.runs.removableAttachmentRunIds(ids, staleIds),
         base,
       );
-    const old = new Date(Date.now() - 10 * 60_000);
-    await utimes(path.dirname(firstFile), old, old);
-    await utimes(path.dirname(secondFile), old, old);
     await prune();
     expect(await readFile(firstFile, "utf8")).toBe("first Run");
     expect(await readFile(secondFile, "utf8")).toBe("second Run");
 
     await store.runs.updateRun(first.id, { status: "succeeded", finished_at: new Date().toISOString() });
-    await prune();
-    expect(await readFile(firstFile, "utf8")).toBe("first Run");
-
-    await store.runs.updateRun(first.id, { status: "succeeded", finished_at: old.toISOString() });
     await prune();
     await expect(stat(firstFile)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(secondFile, "utf8")).toBe("second Run");
@@ -277,25 +270,29 @@ dbDescribe("agent send_file and turn attachments", () => {
     await utimes(orphanDir, old, old);
     await utimes(changedDir, old, old);
 
-    const checked: string[][] = [];
+    const checked: { ids: string[]; staleIds: string[] }[] = [];
     const prune = () =>
       pruneTurnAttachments(
         sandbox,
         BACKGROUND_CONTEXT,
-        async (ids, settledBefore) => {
-          checked.push(ids);
-          const removable = await store.runs.removableAttachmentRunIds(ids, settledBefore);
+        async (ids, staleIds) => {
+          checked.push({ ids, staleIds });
+          const removable = await store.runs.removableAttachmentRunIds(ids, staleIds);
           // A cache changed after the durable lookup must survive.
-          await utimes(changedDir, new Date(), new Date());
+          if (removable.includes(changed!.name)) await utimes(changedDir, new Date(), new Date());
           return removable;
         },
         base,
       );
-    await prune();
-    expect(checked).toEqual([]);
+    await Promise.all([prune(), prune()]);
+    expect(checked).toHaveLength(1);
+    expect(checked[0]?.ids).toHaveLength(64);
+    expect(checked[0]?.staleIds).toEqual([]);
     expect((await stat(orphanDir)).isDirectory()).toBe(true);
     await prune();
-    expect(checked).toEqual([[orphan!.name, changed!.name]]);
+    expect(checked).toHaveLength(2);
+    expect(checked[1]?.ids).toHaveLength(3);
+    expect(checked[1]?.staleIds).toEqual([orphan!.name, changed!.name]);
     await expect(stat(orphanDir)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await stat(changedDir)).isDirectory()).toBe(true);
     expect((await stat(path.join(base, fresh!.name))).isDirectory()).toBe(true);
