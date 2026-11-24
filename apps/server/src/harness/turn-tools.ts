@@ -163,6 +163,7 @@ export class TurnTools {
               deps.pool,
               agentWorkspaceDir(deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id),
               agentRef.thread_id,
+              async () => (await deps.agents.runs.runningRunForChat(chatId))?.id ?? null,
             ),
       );
     // Tools resolve through installed extensions; configure stores names.

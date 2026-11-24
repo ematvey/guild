@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { PlatformPool } from "../platform/db.js";
+import { ATTACHMENTS_ROOT } from "../chats/attachment-materialize.js";
 import { noticeEntry } from "../chats/notice.js";
 import { systemMessageEvent } from "../platform/domain/thread-events.js";
 import { normalizeRelativePath } from "./files.js";
@@ -50,6 +51,7 @@ export function guardMemoryTool(
   pool: PlatformPool,
   root: string,
   threadId: string,
+  currentRunId?: () => Promise<string | null>,
 ): ToolRegistration {
   if (!["read", "write", "edit", "bash"].includes(tool.name)) return tool;
   return {
@@ -106,6 +108,14 @@ export function guardMemoryTool(
         });
       }
       if (typeof input !== "string") return tool.execute(args, api, context);
+      if (tool.name === "read" && input.startsWith(`${ATTACHMENTS_ROOT}/`)) {
+        const runId = await currentRunId?.();
+        const relative = normalizeRelativePath(input.slice(ATTACHMENTS_ROOT.length + 1));
+        if (runId == null || !relative.startsWith(`${runId}/`)) {
+          throw new Error("Read attachments from the current Run's directory");
+        }
+        return tool.execute({ ...fields, path: `${ATTACHMENTS_ROOT}/${relative}` }, api, context);
+      }
       const rel = normalizeRelativePath(input.startsWith("/workspace/") ? input.slice(11) : input);
       if (!isProtectedMemoryPath(rel)) return tool.execute(args, api, context);
       const hash = async (): Promise<string> => {
