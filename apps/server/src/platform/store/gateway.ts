@@ -315,8 +315,9 @@ export class GatewayStore {
     }
   }
 
-  /** Resolves model metadata. Gateway-backed dispatch leaves the upstream key in agentgateway. */
-  async resolveRoute(orgId: string, model: string, masterKey: Buffer | null): Promise<RouteRow> {
+  /** Resolves a model to its provider route with the decrypted org key.
+   *  The key never leaves the server (spec §4.2). */
+  async resolveRoute(orgId: string, model: string, masterKey: Buffer): Promise<RouteRow> {
     const res = await this.pool.query<{
       provider: string;
       protocol: string | null;
@@ -346,16 +347,19 @@ export class GatewayStore {
     if (!row.enabled) {
       throw ApiError.conflict("model_disabled", `model ${model} is disabled`);
     }
-    let apiKey = "";
-    if (masterKey !== null) {
-      if (row.encrypted_key === null || row.base_url === null) {
-        throw ApiError.conflict("key_missing", `no provider key for ${row.provider}`);
-      }
-      try {
-        apiKey = decryptSecret(masterKey, row.encrypted_key);
-      } catch (error) {
-        throw ApiError.internal(`key decrypt failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    if (row.encrypted_key === null) {
+      throw ApiError.conflict("key_missing", `no provider key for ${row.provider}`);
+    }
+    // No provider row (deleted after the route was made): the route cannot
+    // resolve — same failure shape as a missing key.
+    if (row.base_url === null) {
+      throw ApiError.conflict("key_missing", `no provider row for ${row.provider}`);
+    }
+    let apiKey: string;
+    try {
+      apiKey = decryptSecret(masterKey, row.encrypted_key);
+    } catch (error) {
+      throw ApiError.internal(`key decrypt failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     // A route whose provider row is gone still names a protocol — a JOIN
     // miss falls back to treating the slug as the protocol (the pre-0040
@@ -364,7 +368,7 @@ export class GatewayStore {
     return {
       provider: row.provider,
       protocol,
-      baseUrl: row.base_url ?? "",
+      baseUrl: row.base_url,
       apiKey,
       priceIn: row.price_per_mtok_in_usd,
       priceOut: row.price_per_mtok_out_usd,

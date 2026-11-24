@@ -4,7 +4,6 @@
 
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { AgentGatewayConfig } from "./platform/agentgateway.js";
 
 export const GUILD_TS_SERVER_VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
@@ -52,7 +51,6 @@ export interface Config {
    *  http://127.0.0.1:<bindPort>) — the model provider's loopback target
    *  (spec decision 7). */
   selfBaseUrl: string;
-  agentGateway: AgentGatewayConfig | null;
   /** Upstream Faro receiver for browser telemetry proxying (/faro/collect)
    *  (GUILD_FARO_URL). Empty disables the endpoint. */
   faroUrl: string;
@@ -252,11 +250,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Absolute: the workspace root and sandbox root must not depend on the
   // server process's cwd (pi-durable re-resolves tool cwds against it).
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
-  const mcpSlugs = env.GUILD_AGENTGATEWAY_MCP_SLUGS?.split(",").map((slug) => slug.trim());
-  if (mcpSlugs && (env.GUILD_AGENTGATEWAY_MCP_ONLY !== "1" ||
-      mcpSlugs.some((slug) => !/^[a-z0-9][a-z0-9_-]*$/.test(slug)))) {
-    throw new Error("GUILD_AGENTGATEWAY_MCP_SLUGS requires MCP-only mode and a list of integration slugs");
-  }
   const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
     serverVersion: GUILD_TS_SERVER_VERSION,
@@ -264,17 +257,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDistDir,
     internalKey,
     selfBaseUrl,
-    agentGateway: env.GUILD_AGENTGATEWAY_URL
-      ? {
-          url: parseUrl(env.GUILD_AGENTGATEWAY_URL, "GUILD_AGENTGATEWAY_URL").replace(/\/+$/, ""),
-          issuer: requireEnv(env, "GUILD_AGENTGATEWAY_ISSUER"),
-          signingKeyPath: requireEnv(env, "GUILD_AGENTGATEWAY_SIGNING_KEY_FILE"),
-          ...(env.GUILD_MCP_SERVICES_FILE ? { mcpServicesPath: env.GUILD_MCP_SERVICES_FILE } : {}),
-          ...(mcpSlugs ? { mcpSlugs: [...new Set(mcpSlugs)] } : {}),
-          ...(env.GUILD_AGENTGATEWAY_MCP_ONLY === "1" ? { mcpOnly: true } : {}),
-          ...(env.GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY === "1" ? { serviceTokensOnly: true } : {}),
-        }
-      : null,
     clickhouseUrl,
     clickhouseDatabase: env.GUILD_CLICKHOUSE_DATABASE ?? DEFAULT_CLICKHOUSE_DATABASE,
     clickhouseUser: env.GUILD_CLICKHOUSE_USER ?? "",

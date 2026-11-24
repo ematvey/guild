@@ -34,7 +34,6 @@ import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
 import { registerPluginCatalogRoutes } from "./plugin-catalogs.js";
 import { registerIntegrationToolRoutes } from "./integration-tools.js";
-import { registerMcpServiceTokenRoute } from "./mcp-service-token.js";
 import { registerUserMcpRoutes } from "./user-mcp.js";
 import { registerAgentRoutes } from "./agents.js";
 import { registerAppRoutes } from "./apps.js";
@@ -92,8 +91,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth, ctx.objects);
     registerPluginCatalogRoutes(scope, gateway, auth);
-    registerUserMcpRoutes(scope, auth, ctx.agentGateway?.selectedMcpSlugs ? null : ctx.agentGateway);
-    registerMcpServiceTokenRoute(scope, auth, ctx.mcpTokenGateway);
+    registerUserMcpRoutes(scope, auth);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
     registerAppRoutes(scope, auth, gateway, ctx.apps);
     registerAccessRoutes(scope, auth, ctx.access, {

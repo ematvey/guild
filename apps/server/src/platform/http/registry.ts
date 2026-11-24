@@ -4,7 +4,6 @@
 // disabled MCP-plugin integration row (routines are dropped — 2026-10-04
 // decision: the feature is out of scope, automation bundles are rejected).
 
-import { requireLocalIntegrationManagement } from "./gateway-managed-integrations.js";
 import type { Readable } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
@@ -202,7 +201,6 @@ export function registerRegistryRoutes(
     if (kind !== "integration") {
       throw ApiError.badRequest("only integration items are installed server-side; pull skills/mcp with the client");
     }
-    requireLocalIntegrationManagement(gateway.agentGateway);
     // No explicit version: only an approval that still covers the latest
     // version and its exact bundle bytes yields a default.
     let version = queryParam(req, "version") ?? null;

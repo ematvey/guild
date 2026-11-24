@@ -306,7 +306,7 @@ export const anthropicProvider: ModelProvider = {
       res = await fetch(url, {
         method: "POST",
         headers: {
-          ...(req.gatewayAuthorization ? { authorization: req.gatewayAuthorization } : { "x-api-key": req.apiKey }),
+          "x-api-key": req.apiKey,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
         },

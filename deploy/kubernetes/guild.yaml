@@ -102,12 +102,6 @@ spec:
                 secretKeyRef:
                   name: guild-data
                   key: rustfs-password
-            - name: GUILD_AGENTGATEWAY_URL
-              value: http://guild-ai:8080
-            - name: GUILD_AGENTGATEWAY_ISSUER
-              value: https://guild-agent-experiment.invalid
-            - name: GUILD_AGENTGATEWAY_SIGNING_KEY_FILE
-              value: /run/guild-agentgateway/signing.pem
             - name: GUILD_SANDBOX_RUNNER_URL
               value: http://guild-substrate:8090
             - name: GUILD_WORKER_MODE
@@ -126,14 +120,7 @@ spec:
             - name: workspaces
               mountPath: /juicefs
               mountPropagation: HostToContainer
-            - name: agentgateway-signing
-              mountPath: /run/guild-agentgateway
-              readOnly: true
       volumes:
-        - name: agentgateway-signing
-          secret:
-            secretName: guild-agentgateway-signing
-            defaultMode: 0440
         - name: workspaces
           hostPath:
             path: /var/lib/guild-juicefs

@@ -13,7 +13,6 @@
 // rest and leave the API only as masked previews; decrypted values flow to
 // the MCP peer at call time only.
 
-import { requireLocalIntegrationManagement } from "./gateway-managed-integrations.js";
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
@@ -109,17 +108,15 @@ async function connectionDraft(
   return { name, url, headers: validateHeaders(body["headers"]) };
 }
 
-export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, gateway?: unknown): void {
+export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): void {
   app.post("/api/v1/mcp/probe", async (req, reply) => {
     await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     sendJson(reply, await probeServer(await connectionDraft(requireJsonBody(req))));
     return reply;
   });
   // `GET /api/v1/mcp/servers` — the caller's servers (masked headers).
   app.get("/api/v1/mcp/servers", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const rows = await auth.userMcp.list(user.org_id, user.id);
     sendJson(reply, {
       servers: rows.map((r) => ({
@@ -138,7 +135,6 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, g
   // `POST /api/v1/mcp/servers` — create {name, url, headers?, enabled?}.
   app.post("/api/v1/mcp/servers", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const body = requireJsonBody(req);
     const { name, url, headers } = await connectionDraft(body);
     const enabled = body["enabled"] === undefined ? true : body["enabled"] === true;
@@ -154,7 +150,6 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, g
   // `PATCH /api/v1/mcp/servers/:id` — any subset of name/url/headers/enabled.
   app.patch("/api/v1/mcp/servers/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const patch: { name?: string; url?: string; headers?: Record<string, string>; enabled?: boolean } = {};
@@ -188,7 +183,6 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, g
   // `DELETE /api/v1/mcp/servers/:id`.
   app.delete("/api/v1/mcp/servers/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const id = parseUuidParam(req, "id");
     const gone = await auth.userMcp.delete(user.org_id, user.id, id);
     if (!gone) throw ApiError.notFound("no such server");
@@ -200,7 +194,6 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, g
   // probe failure is a result (HTTP 200, ok:false).
   app.post("/api/v1/mcp/servers/:id/probe", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");
@@ -218,7 +211,6 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx, g
   // `GET /api/v1/mcp/servers/:id/tools` — the same live probe path.
   app.get("/api/v1/mcp/servers/:id/tools", async (req, reply) => {
     const user = await requireUser(auth, req);
-    requireLocalIntegrationManagement(gateway);
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");

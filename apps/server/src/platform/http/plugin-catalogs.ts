@@ -3,7 +3,6 @@
 // uploaded .guildplugin, or from a bundle URL, and the org's trait
 // bindings (which integration answers web_search, web_fetch, …).
 
-import { requireLocalIntegrationManagement } from "./gateway-managed-integrations.js";
 import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import type { UserRow } from "../store/identity.js";
@@ -91,7 +90,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // per plugin. A catalog that cannot be read reports its error in place.
   app.get("/api/v1/admin/integrations/catalogs", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const refresh = queryParam(req, "refresh") === "1";
     const catalogs = await listCatalogs(identity.orgKv, admin.org_id);
     const out = await Promise.all(
@@ -138,7 +136,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // Adds a catalog: the source must already serve a readable index.
   app.post("/api/v1/admin/integrations/catalogs", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     let catalog: CatalogConfig;
     try {
       catalog = parseCatalogConfig(requireJsonBody(req));
@@ -164,7 +161,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
 
   app.delete("/api/v1/admin/integrations/catalogs/:id", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = pathParam(req, "id");
     const list = await listCatalogs(identity.orgKv, admin.org_id);
     if (!list.some((c) => c.id === id)) throw ApiError.notFound("unknown catalog");
@@ -181,7 +177,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // sha256 the index lists. No version = the newest.
   app.post("/api/v1/admin/integrations/catalogs/:id/install", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const catalog = await catalogById(admin.org_id, pathParam(req, "id"));
     const body = requireJsonBody(req);
     const slug = typeof body["slug"] === "string" ? body["slug"] : "";
@@ -210,7 +205,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // README, logo) read without installing or running it.
   app.get("/api/v1/admin/integrations/catalogs/:id/plugins/:slug", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const catalog = await catalogById(admin.org_id, pathParam(req, "id"));
     const slug = pathParam(req, "slug");
     const wanted = queryParam(req, "version") ?? null;
@@ -249,7 +243,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // Installs an uploaded .guildplugin (the request body is the bundle).
   app.post("/api/v1/admin/integrations/plugins/upload", { bodyLimit: BUNDLE_MAX_BYTES }, async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const bytes = bodyBytes(req);
     if (bytes.length === 0) throw ApiError.badRequest("empty bundle");
     sendJson(reply, await install(admin, bytes, { kind: "upload" }));
@@ -259,7 +252,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // Installs a bundle from a URL; an optional sha256 must match.
   app.post("/api/v1/admin/integrations/plugins/url", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const body = requireJsonBody(req);
     const url = typeof body["url"] === "string" ? body["url"].trim() : "";
     const expected = typeof body["sha256"] === "string" ? body["sha256"].trim().toLowerCase() : "";
@@ -280,7 +272,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
   // declares it (with whether the org has it enabled).
   app.get("/api/v1/admin/integrations/traits", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const [connectors, rows, bindings] = await Promise.all([
       orgConnectors(gateway, admin.org_id),
       gateway.integrations.list(admin.org_id),
@@ -302,7 +293,6 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
 
   app.put("/api/v1/admin/integrations/traits/:trait", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const trait = pathParam(req, "trait");
     if (!traitNames().includes(trait)) throw ApiError.notFound(`unknown trait ${trait}`);
     const body = requireJsonBody(req);

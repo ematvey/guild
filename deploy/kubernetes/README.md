@@ -1,6 +1,6 @@
 # Guild Kubernetes experiment
 
-The manifests target the k3d cluster named `guild-agent-experiment`. They use fresh Kubernetes volumes and generated credentials. The Guild application, fetch service, PostgreSQL, ClickHouse, and RustFS run in the `guild-experiment` namespace. The internal AI gateway uses agentgateway v1.7.0. Agent Substrate v1.0.1 has its own control plane and a Guild gVisor WorkerPool.
+The manifests target the k3d cluster named `guild-agent-experiment`. They use fresh Kubernetes volumes and generated credentials. The Guild application, fetch service, PostgreSQL, ClickHouse, and RustFS run in the `guild-experiment` namespace. Agent Substrate v1.0.1 has its own control plane and a Guild gVisor WorkerPool.
 
 The K3s server uses [k3s-substrate.yaml](k3s-substrate.yaml) under `/etc/rancher/k3s/config.yaml.d/`. Those settings serve the certificate APIs used by the Substrate controller.
 
@@ -17,15 +17,12 @@ Install the cluster components with the experiment kubeconfig. The second argume
 ```bash
 experiment_kubeconfig="$(k3d kubeconfig write guild-agent-experiment)"
 deploy/kubernetes/install-data.sh "$experiment_kubeconfig"
-deploy/kubernetes/install-agentgateway.sh "$experiment_kubeconfig"
-kubectl --kubeconfig "$experiment_kubeconfig" apply --server-side -f deploy/kubernetes/gateway.yaml
-deploy/kubernetes/install-gateway-identity.sh "$experiment_kubeconfig"
 deploy/kubernetes/install-substrate.sh "$experiment_kubeconfig" /path/to/substrate
 kubectl --kubeconfig "$experiment_kubeconfig" apply --server-side -f deploy/kubernetes/worker-pool.yaml
 deploy/kubernetes/install-guild.sh "$experiment_kubeconfig"
 ```
 
-The Guild deployment points the existing sandbox RPC client at `guild-substrate:8090`. The Substrate adapter at that address provisions Actors and bridges the existing authenticated sandbox protocol. The data installer formats JuiceFS and mounts it on the Kubernetes node. The workspace CSI adapter maps each Actor attachment to its assigned directory. The Guild server mounts the JuiceFS root for workspace file access. The model path uses agentgateway with signed organization and model claims. Guild turns and the member tool API discover and execute external tools via the org MCP route. Agentgateway applies the tool policy to discovery and execution.
+The Guild deployment points the existing sandbox RPC client at `guild-substrate:8090`. The Substrate adapter at that address provisions Actors and bridges the existing authenticated sandbox protocol. The data installer formats JuiceFS and mounts it on the Kubernetes node. The workspace CSI adapter maps each Actor attachment to its assigned directory. The Guild server mounts the JuiceFS root for workspace file access.
 
 The adapter provisions a Substrate egress policy for each Actor. Its default
 rules allow TLS on port 443 to Guild's package registry allowlist. Substrate
@@ -146,197 +143,7 @@ pool's worker pod. It checks both markers after resume.
 ## Default dev verification
 
 Run `verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN` to verify the
-default cluster's Guild, sandbox adapter, gateway, and workspace mount.
+default cluster's Guild, sandbox adapter and workspace mount.
 The probe writes to both workspace types, verifies that only the Guild
-pod gets a PostgreSQL protocol response, and exercises a GitHub gateway read and
+pod gets a PostgreSQL protocol response, and exercises a GitHub integration read and
 persists an Assistant reply through the configured public origin. It uses a temporary session and chat.
-
-## Gateway fixtures
-
-Guild forks Pi Durable workers inside the Guild server pod. Substrate
-Actors run shell and file tools on demand with the JuiceFS workspace
-mounted and receive no Guild database credentials or PostgreSQL egress.
-
-The model fixture runs deterministic OpenAI and Anthropic streams. Its
-renderer takes the experiment org UUID and creates model-specific routes,
-upstream provider configuration, and authorization policies. Guild derives
-the model route ID from the first 32 hex digits of the model ID's SHA-256
-digest. The fixture upstream requires the agentgateway provider key, and the
-probe checks that missing credentials and mismatched org and model claims
-are denied by agentgateway. The Guild model catalog retains model metadata
-and usage settings while model requests use the gateway route.
-
-The MCP fixture advertises two tools. The gateway MCP policy filters the
-denied tool from the list and rejects a direct call. The fixture requires
-its own upstream key. Both verification scripts use the Guild cluster
-deployment and are intended only for the synthetic experiment backends.
-
-## Connector services
-
-The external connector host exposes Guild's existing compiled vendor tools
-over Streamable HTTP. Render one internal service for a connector with
-`render-connector.py SLUG`. The service reads vendor settings from its `-settings` Secret. Ordinary
-connectors accept the token from their separate `-access` Secret, injected
-by the agentgateway target. Use `--tenant-isolated` with an org UUID to give
-each org an independent service and credential references. Google Workspace
-validates a short-lived signed identity token from its own gateway target
-and uses the signed acting identity for the vendor exchange.
-Use `prefixMode: Always` so the registry's tool names remain stable as targets
-are added. The synthetic SearXNG target models these Kubernetes resources
-without requiring a live vendor account.
-
-Run `verify-vendor-discovery.sh KUBECONFIG` to deploy all eleven compiled
-vendor connectors temporarily and check the tool inventory through
-agentgateway. The probe uses synthetic settings and exercises discovery and
-tool filtering. It also calls the ten non-delegated connectors against the
-deployed fixture, which checks their request parameters and required
-credentials. The separate Google Workspace probe covers delegated access.
-Stripe already uses a hosted MCP endpoint. The legacy migration fixture uses
-Stripe's real header templates with a synthetic upstream to check bearer
-authentication and connected-account scoping.
-
-The signed-in chat probe exercises the member tool API, a model-driven MCP
-tool call, and the thread journal. With `PROBE_WORKSPACE=1` it also writes and
-reads a file inside the Actor and downloads the same file through Guild.
-With `PROBE_SEARXNG=1` it exercises the deployed SearXNG connector and the
-structured metadata returned over MCP.
-
-Run `verify-chat-restart.sh KUBECONFIG` with the model and MCP fixtures
-installed to replace the experiment Guild pod. The probe creates a synthetic
-chat, runs a model-driven MCP tool and writes a workspace file. It then
-confirms the transcript and file remain readable while the Actor is suspended.
-Pass `--postgres` to replace the single PostgreSQL pod too and verify that
-its persistent volume claim is reused and the Guild server stays running.
-Guild requests may fail briefly while PostgreSQL is unavailable.
-
-Render an organization route with `render-org-mcp.py inventory.json`. Give
-each target an explicit tool allowlist and optional member UUIDs. An
-optional `chats` array restricts a target to signed Guild chat UUIDs.
-Agentgateway
-excludes member-specific targets before contacting them and applies tool
-authorization at discovery and execution. [The personal fixture](fixtures/personal-mcp.json)
-exercises a shared target alongside a member-specific target.
-Run `verify-gateway-policy-reload.sh KUBECONFIG` to revoke a member's
-personal tool during a live MCP session and check that a fresh connection
-still has the shared tool. Backend inventory changes can invalidate an
-existing MCP session. Guild opens a new peer when executing each gateway tool.
-
-The Google Workspace fixture uses a synthetic service account and checks
-the expected delegated member at the token endpoint. With
-`PROBE_GOOGLE=1`, the signed-in chat probe confirms the binary result reaches
-JuiceFS and is available for download through the Guild file API.
-
-## Import legacy connections
-
-Use `migrate-org-mcp.sh KUBECONFIG PLAN_JSON` to migrate selected
-connections from the experiment Guild database to agentgateway. The plan
-names the org UUID and each target's source (`org` or `personal`), legacy
-row UUID, DNS-label target name, and explicit tool allowlist. Personal targets
-require their owner UUID. Org targets require a member UUID allowlist.
-Either kind can include a `chats` allowlist of Guild chat UUIDs.
-
-The importer reads encrypted credentials using the Guild server's existing
-store code, transfers them through private temporary files into Kubernetes
-Secrets, and deploys tenant-specific MCP services for compiled vendors. It
-uses the agentgateway route renderer for remote MCP targets and credential
-header injection. Legacy rows remain available for rollback and export.
-For a remote org plugin configured with Guild's identity envelope, set
-`identityEnvelope: true` on its plan entry. The importer deploys an internal
-MCP proxy that validates the signed org and member claims and sends the
-legacy headers and connector credentials to the configured upstream.
-The upstream receives a fresh call ID for each HTTP request. Guild's
-gateway bearer token stays inside the cluster.
-
-### Shared MCP endpoint
-
-The internal gateway serves one MCP URL per org at `/mcp/<org-id>`. Guild
-and service consumers use the same URL. Guild signs workload tokens.
-Agentgateway authorizes target discovery and tool calls. Substrate uses
-its own networking gateway. Set `GUILD_AGENTGATEWAY_MCP_ONLY=1` to route
-Guild MCP through agentgateway while keeping the configured model providers.
-Set `GUILD_AGENTGATEWAY_MCP_SLUGS` to the comma-separated integration slugs
-approved for selective cutover. Guild uses local integration policy for
-both paths and starts a selected connector only through agentgateway.
-Personal MCP connections continue through their existing path in this mode.
-
-Set `GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY=1` to enable the service token
-exchange while Guild uses its configured providers and direct integrations.
-Point `GUILD_MCP_SERVICES_FILE` at a private JSON array of entries with
-`id`, `org`, `secretSha256`, and optional `allowDelegation`. Give each
-service a unique random secret and put its SHA-256 in the file. Restart
-Guild after replacing the file. Service callers POST to
-`/api/v1/mcp/service-token` with `X-Guild-MCP-Service` and
-`X-Guild-MCP-Service-Key`. For delegated calls, the user supplies a
-Guild session bearer token in `Authorization`. Guild verifies membership
-in the service's org and derives the acting identity from the session.
-The response contains the MCP URL and a bearer authorization valid for
-90 seconds. Use confidential transport for both requests.
-
-The import plan describes the org's complete published MCP inventory.
-Run `fixtures/plan-current-mcp-inventory.mjs` inside Guild with
-`PROBE_ORG_ID` to derive a draft from direct discovery, audiences, tool
-classes, and curation. It reads no credential values into the plan and
-grants no access to consuming services. The `memberTools` map records
-each member's precise tool subset.
-A target can name `services` with entries containing `id`, `tools`,
-and optional `delegatedMembers`. Service tools must be a subset of the
-target tools. Omit `delegatedMembers` for headless access. Personal,
-impersonated, and identity-envelope targets require explicit delegated
-members. Chat-scoped targets accept Guild chat callers.
-
-Set `placement` to `shared` for the public GitHub, HubSpot, or Slack API.
-The vendor Deployment uses a fixed public upstream and agentgateway
-injects the target's credential per request. The connector's Secret
-contains its gateway access key. Each vendor credential stays in its own
-target Secret. Tenant placement is the default for compiled connectors.
-Use it for custom API URLs, delegated connectors, and registry bundles.
-
-To publish on default dev, pass `--default-dev` to the importer with
-`GUILD_MCP_CONNECTOR_IMAGE` set to the installed Guild server image and
-`GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer. Set `GUILD_MCP_HOST_GATEWAY_IP` when
-the Firecrawl connection uses the host-side Docker address.
-For credential-only changes on an existing tenant connector, add
-`--refresh-tenant SLUG` to the importer. It verifies the published target,
-updates only that connector's settings, and keeps the gateway transport
-key and tool grants in place. A configuration change requires a reviewed
-inventory publication.
-`verify-mcp-service-grants.sh` and `verify-shared-mcp-connector.sh` exercise the
-experiment gateway with temporary routes. Validate vendor and authorization
-parity for the actual org inventory before switching Guild's execution.
-Feed `fixtures/verify-mcp-parity.mjs` to `bun -` inside Guild with
-`PROBE_MEMBER_ID` set to an intended caller. It compares the direct and
-published tools after Guild applies the member's scope, including input
-schemas, classes, traits, delegation, and approval settings. Set
-`PROBE_EXECUTE_READS=1` to run one read-only operation per target. Set
-`PROBE_BASELINE_ONLY=1` to measure the direct inventory before publishing.
-
-### Registry code bundles
-
-Use `import-mcp-bundle.sh ARCHIVE APPROVED_SHA256` to package an approved
-registry archive in a separate OCI image and import it into the experiment
-cluster. The MCP service verifies the approved hash, slug and version before
-running the bundle. The service receives only its connector's Kubernetes
-Secrets and has no mounted service account token.
-
-Render the tenant-specific service with
-`render-connector.py SLUG ORG --tenant-isolated --bundle-sha256 APPROVED_SHA256 --bundle-version VERSION`.
-Create the settings and access Secrets named in the rendered deployment,
-then add the internal Service URL, member allowlist and approved tool names to
-the org MCP inventory. For an impersonated bundle, use `--impersonated` and
-set `delegatesActingIdentity` and `delegatedConnectorSlug` on that internal
-target. Registry bundles are onboarded individually with their approved
-archive and settings.
-
-A full gateway configuration shows the gateway inventory in Guild's
-integration settings. Selective cutover keeps the local inventory and
-credentials for unselected integrations editable. Changes to published
-connectors go through the inventory publisher.
-
-Run the server suite with `test-server.sh KUBECONFIG` after installing the
-server workspace dependencies and building the desktop web bundle. Set
-`GUILD_TEST_SUBSTRATE=1` to exercise the deployed Actor adapter in the
-sandbox integration suites. Set `GUILD_SANDBOX_IT_WORKSPACE_ROOT` to a host
-mount of the same JuiceFS root used by the cluster when running the
-host-side sandbox end-to-end test. Test stacks create disposable Postgres
-databases and S3 buckets. The script uses loopback forwards to the
-experiment cluster's services.

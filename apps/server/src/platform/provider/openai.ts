@@ -189,7 +189,7 @@ export const openAiProvider: ModelProvider = {
       res = await fetch(url, {
         method: "POST",
         headers: {
-          authorization: req.gatewayAuthorization ?? `Bearer ${req.apiKey}`,
+          authorization: `Bearer ${req.apiKey}`,
           "content-type": "application/json",
         },
         body: JSON.stringify(openAiBody(req)),

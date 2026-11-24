@@ -47,7 +47,6 @@ interface TurnSnapshot {
 }
 
 export interface UserMcpRuntimeDeps {
-  enabled?: boolean;
   store: UserMcpStore;
   masterKey(): Buffer;
   log: Logger;
@@ -91,7 +90,6 @@ export class UserMcpRuntime {
     orgId: string,
     signal?: AbortSignal,
   ): Promise<TurnPreparation> {
-    if (this.deps.enabled === false) return { extensions: [], tools: [] };
     const snapshot = await this.resolveSnapshot(chatId, orgId, signal);
     this.snapshots.set(conversationId, snapshot);
     if (snapshot.servers.length === 0) {
@@ -227,7 +225,6 @@ export class UserMcpRuntime {
    *  recovery — a turn re-running its calls after a process restart
    *  re-derives them). Users without servers resolve to an empty snapshot. */
   private async snapshotFor(conversationId: number): Promise<TurnSnapshot | undefined> {
-    if (this.deps.enabled === false) return undefined;
     const cached = this.snapshots.get(conversationId);
     if (cached !== undefined) return cached;
     const chatId = await this.deps.chatOfConversation(conversationId);

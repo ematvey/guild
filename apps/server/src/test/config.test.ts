@@ -13,7 +13,6 @@ describe("loadConfig", () => {
     const cfg = loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" });
     expect(cfg).toEqual({
       serverVersion: GUILD_TS_SERVER_VERSION,
-      agentGateway: null,
       bindHost: "0.0.0.0",
       bindPort: 8080,
       logLevel: "info",
@@ -58,18 +57,6 @@ describe("loadConfig", () => {
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_LOG_LEVEL).toBe("info");
-  });
-
-  it("requires MCP-only mode for a selective gateway cutover", () => {
-    const env = {
-      GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s",
-      GUILD_AGENTGATEWAY_URL: "https://mcp.example.org", GUILD_AGENTGATEWAY_ISSUER: "https://guild.example.org",
-      GUILD_AGENTGATEWAY_SIGNING_KEY_FILE: "/run/gateway/key", GUILD_AGENTGATEWAY_MCP_SLUGS: "slack, github,slack",
-    };
-    expect(() => loadConfig(env)).toThrow("GUILD_AGENTGATEWAY_MCP_SLUGS");
-    expect(loadConfig({ ...env, GUILD_AGENTGATEWAY_MCP_ONLY: "1" }).agentGateway).toMatchObject({
-      mcpOnly: true, mcpSlugs: ["slack", "github"],
-    });
   });
 
   it("refuses a numeric setting that is not a positive integer", () => {

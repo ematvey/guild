@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {createPlatformPool} from "./src/platform/db.ts";
-import {loadConfig} from "./src/config.ts";
 import {IdentityStore} from "./src/platform/store/identity.ts";
 const origin = new URL(process.env.PROBE_GUILD_ORIGIN);
 assert.equal(origin.protocol, "https:");
@@ -23,9 +22,6 @@ try {
   [,token]=await identity.createSession(user.id);
   const {models}=await api("/api/v1/models");
   assert.ok(models.length,"no dev models configured");
-  const gateway = loadConfig().agentGateway;
-  assert.ok(gateway?.mcpOnly && !gateway.serviceTokensOnly, "Guild is not running the MCP gateway path");
-  if (gateway.mcpSlugs) assert.ok(gateway.mcpSlugs.includes("github"), "GitHub must use the gateway for this check");
   const { items } = await api("/api/v1/admin/integrations");
   assert.ok(items.some((item) => item.name === "github"), "Guild's GitHub integration settings are missing");
   const { tools } = await api("/api/v1/integrations/github/tools");
@@ -33,8 +29,8 @@ try {
   const read = await api("/api/v1/integrations/github/tools/search_repositories", "POST", {
     query: "repo:octocat/Hello-World", per_page: 1,
   });
-  assert.equal(read.ok, true, "GitHub read through agentgateway failed");
-  console.log("Public Guild integration inventory and GitHub gateway read passed");
+  assert.equal(read.ok, true, "GitHub integration read failed");
+  console.log("Public Guild integration inventory and GitHub integration read passed");
   ({id:chat}=await api("/api/v1/chats","POST",{title:"Temporary deployment smoke"}));
   const messageId=crypto.randomUUID();
   const ack=await api("/api/v1/threads/"+chat+"/turns","POST",{

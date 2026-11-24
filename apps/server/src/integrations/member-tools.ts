@@ -24,9 +24,9 @@ export interface IntegrationCaller {
   role: string;
 }
 
-export async function turns(gateway: IntegrationGateway, orgId: string, memberId?: string): Promise<IntegrationTurn[]> {
+export async function turns(gateway: IntegrationGateway, orgId: string): Promise<IntegrationTurn[]> {
   try {
-    return await resolveIntegrations(gateway, orgId, undefined, memberId);
+    return await resolveIntegrations(gateway, orgId);
   } catch {
     // The resolved plugins of the caller's org — a broken plugin contributes
     // nothing (spec §8).
@@ -66,7 +66,7 @@ export async function memberTool(
   slug: string,
   tool: string,
 ): Promise<{ turn: IntegrationTurn; raw: string; class: string; alwaysAsk: boolean }> {
-  const turn = (await turns(gateway, caller.org, caller.userId)).find((t) => t.slug === slug);
+  const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
   if (turn === undefined) throw ApiError.notFound("no such integration");
   const info = turn.tools.find((i) => {
     const callRaw = unnamespacedTool(turn.slug, tool) ?? tool;

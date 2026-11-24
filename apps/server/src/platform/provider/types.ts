@@ -73,7 +73,6 @@ export interface ProviderRequest {
   system: string | null;
   messages: InternalMessage[];
   apiKey: string;
-  gatewayAuthorization?: string;
   baseUrl: string;
   tools: ToolSpec[] | null;
   /** Max output tokens per call. 0 = provider default. Anthropic requires

@@ -9,7 +9,6 @@ import { coordinationRole, coordinationSettings } from "../agents/coordination.j
 // Every store comes in through RuntimeDeps (built once by the process's
 // composition root); the runtime constructs none.
 
-import { AgentGateway } from "../platform/agentgateway.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry,
@@ -352,7 +351,6 @@ export class GuildRuntime {
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
     const integrationGateway: IntegrationGateway = {
-      agentGateway: config.agentGateway && !config.agentGateway.serviceTokensOnly ? new AgentGateway(config.agentGateway) : null,
       integrations: stores.integrations,
       integrationSecrets: stores.integrationSecrets,
       registry: stores.registry,
@@ -390,7 +388,6 @@ export class GuildRuntime {
     this.userMcpRuntime = new UserMcpRuntime(
       {
         store: stores.userMcp,
-        enabled: !config.agentGateway || config.agentGateway.serviceTokensOnly === true || config.agentGateway.mcpSlugs !== undefined,
         masterKey: () => deps.masterKey(),
         log,
         chatOfConversation,

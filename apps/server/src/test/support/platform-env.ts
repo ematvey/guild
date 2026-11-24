@@ -61,7 +61,6 @@ export async function createPlatformTestEnv(logLevel = "error"): Promise<Platfor
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     GUILD_MASTER_KEY_HEX: "11".repeat(32),
     GUILD_JWT_SECRET: "platform-test-jwt-secret",
-    GUILD_CLICKHOUSE_URL: process.env.GUILD_TEST_CLICKHOUSE_URL,
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_POOL_MAX: "5",
