@@ -7,11 +7,11 @@ assert.equal(origin.origin, new URL(process.env.GUILD_API_URL).origin, "probe or
 const db=createPlatformPool(process.env.GUILD_DATABASE_URL,1);
 const identity=new IdentityStore(db);
 let token, chat;
-async function api(path, method="GET", body) {
+async function api(path, method="GET", body, signal=AbortSignal.timeout(60000)) {
   const result=await fetch(new URL(path, origin),{
     method, headers:{authorization:"Bearer "+token,...(body ? {"content-type":"application/json"} : {})},
     ...(body ? {body:JSON.stringify(body)} : {}),
-    signal:AbortSignal.timeout(60000),
+    signal,
   });
   assert.ok(result.ok, method+" "+path+" HTTP "+result.status);
   const text=await result.text(); return text ? JSON.parse(text) : null;
@@ -38,21 +38,28 @@ try {
   });
   assert.equal(ack.user_message_id,messageId);
   console.log("Public Assistant send returned HTTP 200 and acknowledged its message ID");
-  for(let n=0;n<60;n++){
-    const {events}=await api("/api/v1/chats/"+chat+"/thread");
-    const replies = events.map(({event}) => event).filter((event) => event.type === "assistant_message" && !event.posted);
-    if (replies.some((event) => event.error || event.interrupted)) {
-      throw new Error("Assistant reply failed or was interrupted");
+  const deadline = AbortSignal.timeout(60_000);
+  let latest;
+  try {
+    while (!deadline.aborted) {
+      const {events} = await api("/api/v1/chats/" + chat + "/thread", "GET", undefined, deadline);
+      latest = events.findLast(({event}) => event.type === "assistant_message" && !event.posted)?.event;
+      if (latest && !latest.error && !latest.interrupted &&
+        !latest.blocks.some((block) => block.type === "tool_call") &&
+        latest.blocks.some((block) => block.type === "text" && block.text.trim() !== "")
+      ) {
+        console.log("Public thread returned the persisted Assistant reply");
+        break;
+      }
+      await Bun.sleep(1000);
     }
-    if (replies.some((event) =>
-      !event.blocks.some((block) => block.type === "tool_call") &&
-      event.blocks.some((block) => block.type === "text" && block.text.trim() !== "")
-    )) {
-      console.log("Public thread returned the persisted Assistant reply");
-      break;
-    }
-    if(n===59) throw new Error("No Assistant reply was persisted within 60 seconds");
-    await Bun.sleep(1000);
+  } catch (error) {
+    if (!deadline.aborted) throw error;
+  }
+  if (deadline.aborted) {
+    throw new Error(latest?.error || latest?.interrupted
+      ? "No successful Assistant reply was persisted after a failed or interrupted attempt"
+      : "No Assistant reply was persisted within 60 seconds");
   }
 } finally {
   if(chat) await api("/api/v1/chats/"+chat,"DELETE").catch(()=>{ console.log("Temporary chat cleanup failed"); });
