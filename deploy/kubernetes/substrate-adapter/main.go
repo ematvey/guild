@@ -274,6 +274,10 @@ func (s *server) proxy(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	if err == nil {
 		upstream, err = dialActor(ctx, name)
+		// CONNECT may have woken the Actor before the RPC handshake failed.
+		if err != nil && use.connections == 0 && use.idle == nil {
+			s.scheduleSuspend(use, name)
+		}
 	}
 	cancel()
 	if err == nil {
@@ -313,6 +317,7 @@ func (s *server) proxy(w http.ResponseWriter, r *http.Request, name string) {
 	done := make(chan struct{}, 1)
 	go func() {
 		relay(upstream, downstream)
+		_ = downstream.Close()
 		_ = upstream.Close()
 		done <- struct{}{}
 	}()

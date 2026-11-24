@@ -12,12 +12,14 @@ marker="$(openssl rand -hex 16)"
 cleanup() {
   "${ate[@]}" delete actor "$name" -a guild-experiment >/dev/null 2>&1 || true
   "${ate[@]}" delete actor-template "$name" -a guild-experiment >/dev/null 2>&1 || true
-  "${kube[@]}" delete "pod/$name" "workerpool/$name" --ignore-not-found --wait=false >/dev/null || true
+  "${kube[@]}" delete "pod/$name" "workerpool/$name" "networkpolicy/$name" --ignore-not-found --wait=false >/dev/null || true
   kubectl --kubeconfig "$config" delete "storageclass/guild-$name" --ignore-not-found >/dev/null || true
 }
 trap cleanup EXIT
 
 sed -e "s/^  name: guild-actor-workers$/  name: $name/" -e "s/guild.dev\/workload: sandbox/guild.dev\/workload: $name/" \
+  -e "s/^  name: guild-actor-worker-egress$/  name: $name/" \
+  -e "s/ate.dev\/worker-pool: guild-actor-workers/ate.dev\/worker-pool: $name/" \
   -e 's/^  replicas: 3$/  replicas: 1/' worker-pool.yaml | "${kube[@]}" apply --server-side -f - >/dev/null
 sed "s/^  name: guild-actor-router-probe$/  name: $name/" actor-router-probe.yaml | "${kube[@]}" apply --server-side -f - >/dev/null
 "${kube[@]}" wait --for=condition=Ready "pod/$name" --timeout=60s >/dev/null
