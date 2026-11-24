@@ -13,6 +13,7 @@ describe("loadConfig", () => {
     const cfg = loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" });
     expect(cfg).toEqual({
       serverVersion: GUILD_TS_SERVER_VERSION,
+      agentGateway: null,
       bindHost: "0.0.0.0",
       bindPort: 8080,
       logLevel: "info",

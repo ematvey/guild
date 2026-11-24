@@ -69,7 +69,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
   app.get("/api/v1/integrations", async (req, reply) => {
     const caller = await integrationCaller(auth, req);
     const scope = await callerScope(access, caller);
-    const items = (await turns(gateway, caller.org)).map((t) => ({
+    const items = (await turns(gateway, caller.org, caller.userId)).map((t) => ({
       slug: t.slug,
       description: t.description,
       tool_count: t.tools.filter((info) => allowed(scope, caller, t, info)).length,
@@ -83,7 +83,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
   app.get("/api/v1/integrations/:slug/tools", async (req, reply) => {
     const caller = await integrationCaller(auth, req);
     const slug = (req.params as Record<string, string>)["slug"] ?? "";
-    const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
+    const turn = (await turns(gateway, caller.org, caller.userId)).find((t) => t.slug === slug);
     if (turn === undefined) throw ApiError.notFound("no such integration");
     const scope = await callerScope(access, caller);
     const tools = turn.tools

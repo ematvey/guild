@@ -5,6 +5,7 @@
 // vendor; shared request helpers in integrations/shared.ts, the generic
 // `api` tool in integrations/api-tool.ts).
 
+import { relativeDestination } from "../platform/domain/paths.js";
 import { mcpConnect, type McpPeer } from "./mcp.js";
 import type { PluginSecretSource, IntegrationTurn } from "./plugins.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
@@ -39,6 +40,7 @@ export interface IntegrationCallIdentity {
   callerId: string;
   callId: string;
   actingAs: string | null;
+  chatId?: string;
 }
 
 /** Executes one call against a resolved plugin (call_plugin): re-resolves
@@ -54,6 +56,30 @@ export async function callPlugin(
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
+  if (turn.executor === "gateway-mcp") {
+    const name = turn.tools.find((tool) => tool.raw === rawTool)?.gatewayName;
+    if (!name || !source.agentGateway) throw new Error("agentgateway tool unavailable");
+    const { url, headers } = source.agentGateway.mcp(identity.orgId, identity.callerId, identity.actingAs, identity.chatId);
+    const peer = await mcpConnect(url, headers, signal);
+    const result = await peer.callTool(name, args);
+    if (result.isError) throw new Error(`mcp tool error: ${result.content}`);
+    const meta = result.structuredContent?.["guildMeta"];
+    const outcome: ToolOutcome = { content: result.content, ...(meta === undefined ? {} : { meta }) };
+    const attachment = result.structuredContent?.["guildFile"];
+    if (attachment !== undefined) {
+      const requested = typeof args["path"] === "string" ? relativeDestination(args["path"]) : null;
+      const file = attachment as Partial<{ path: string; base64: string }> | null;
+      if (turn.slug !== "google_workspace" || !["drive_get_file", "gmail_get_attachment"].includes(rawTool) ||
+          !requested?.ok || file?.path !== requested.path || typeof file.base64 !== "string" ||
+          file.base64.length > 48 * 1024 * 1024) {
+        throw new Error("invalid MCP file result");
+      }
+      const bytes = Buffer.from(file.base64, "base64");
+      if (bytes.toString("base64") !== file.base64) throw new Error("invalid MCP file encoding");
+      outcome.file = { path: requested.path, bytes };
+    }
+    return outcome;
+  }
   const masterKey = source.masterKey();
   if (turn.executor === "connector") {
     // Every stored secret of the slug rides to execute — the connector

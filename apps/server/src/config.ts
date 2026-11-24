@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { createRequire } from "node:module";
+import type { AgentGatewayConfig } from "./platform/agentgateway.js";
 
 export const GUILD_TS_SERVER_VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
@@ -51,6 +52,7 @@ export interface Config {
    *  http://127.0.0.1:<bindPort>) — the model provider's loopback target
    *  (spec decision 7). */
   selfBaseUrl: string;
+  agentGateway: AgentGatewayConfig | null;
   /** Upstream Faro receiver for browser telemetry proxying (/faro/collect)
    *  (GUILD_FARO_URL). Empty disables the endpoint. */
   faroUrl: string;
@@ -257,6 +259,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDistDir,
     internalKey,
     selfBaseUrl,
+    agentGateway: env.GUILD_AGENTGATEWAY_URL
+      ? {
+          url: parseUrl(env.GUILD_AGENTGATEWAY_URL, "GUILD_AGENTGATEWAY_URL").replace(/\/+$/, ""),
+          issuer: requireEnv(env, "GUILD_AGENTGATEWAY_ISSUER"),
+          signingKeyPath: requireEnv(env, "GUILD_AGENTGATEWAY_SIGNING_KEY_FILE"),
+        }
+      : null,
     clickhouseUrl,
     clickhouseDatabase: env.GUILD_CLICKHOUSE_DATABASE ?? DEFAULT_CLICKHOUSE_DATABASE,
     clickhouseUser: env.GUILD_CLICKHOUSE_USER ?? "",

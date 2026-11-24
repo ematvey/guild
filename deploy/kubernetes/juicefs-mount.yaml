@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: guild-juicefs
+  namespace: guild-experiment
+spec:
+  selector:
+    matchLabels:
+      app: guild-juicefs
+  template:
+    metadata:
+      labels:
+        app: guild-juicefs
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: mount
+          image: juicedata/mount:ce-v1.3.1
+          securityContext:
+            privileged: true
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: postgres-password
+            - name: GUILD_JUICE_META_URL
+              value: postgres://guild:$(POSTGRES_PASSWORD)@postgres:5432/guild_juicefs?sslmode=disable
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              mkdir -p /storage/volume
+              exec juicefs mount --cache-size 512 "$GUILD_JUICE_META_URL" /storage/volume
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - 'grep -q " /storage/volume .* - fuse.juicefs " /proc/self/mountinfo'
+            periodSeconds: 3
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+              mountPropagation: Bidirectional
+            - name: fuse
+              mountPath: /dev/fuse
+      volumes:
+        - name: storage
+          hostPath:
+            path: /var/lib/guild-juicefs
+            type: DirectoryOrCreate
+        - name: fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice

@@ -157,6 +157,6 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     expect(result.content).not.toMatch(
       /GUILD_MASTER_KEY_HEX|GUILD_JWT_SECRET|GUILD_DATABASE_URL|GUILD_SANDBOX_RUNNER_TOKEN/,
     );
-    expect(result.content).toMatch(/HOME=\/home\/sandbox/);
+    expect(result.content).toContain(process.env.GUILD_SANDBOX_IT_RUNTIME === "substrate" ? "HOME=/home/node" : "HOME=/home/sandbox");
   }, 180_000);
 });

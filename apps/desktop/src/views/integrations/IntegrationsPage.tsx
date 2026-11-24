@@ -54,9 +54,14 @@ import { Sidebar, useSidebar } from "../sidebar/sidebar";
 type Navigate = (next: IntegrationsRoute, options?: { replace?: boolean }) => void;
 
 function useIntegrationsData() {
-  const shop = useCachedGet<{ items: ShopItem[] }>(INTEGRATIONS_PATH);
-  const usage = useCachedGet<{ items: UsageSummaryRow[] }>(USAGE_SUMMARY_PATH);
-  const cachedCatalogs = useCachedGet<{ catalogs: CatalogRow[] }>(pluginCatalogsPath);
+  const shop = useCachedGet<{
+    items: ShopItem[];
+    managedBy?: "agentgateway";
+    inventory?: { slug: string; tools: string[] }[];
+  }>(INTEGRATIONS_PATH);
+  const gatewayManaged = shop.data?.managedBy === "agentgateway";
+  const usage = useCachedGet<{ items: UsageSummaryRow[] }>(gatewayManaged ? null : USAGE_SUMMARY_PATH);
+  const cachedCatalogs = useCachedGet<{ catalogs: CatalogRow[] }>(gatewayManaged ? null : pluginCatalogsPath);
   const [freshCatalogs, setFreshCatalogs] = useState<CatalogRow[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -79,6 +84,8 @@ function useIntegrationsData() {
   };
   return {
     items: shop.data?.items ?? null,
+    gatewayManaged,
+    inventory: shop.data?.inventory ?? [],
     shopError: shop.error,
     usage: new Map((usage.data?.items ?? []).map((u) => [u.slug, u])),
     catalogs: freshCatalogs ?? cachedCatalogs.data?.catalogs ?? null,
@@ -519,6 +526,35 @@ export function IntegrationsPage({
   const catalog = useMemo(() => buildCatalog(items ?? [], data.catalogs ?? []), [items, data.catalogs]);
   const updates = useMemo(() => availableUpdates(data.catalogs ?? []), [data.catalogs]);
   const loading = items === null;
+
+  if (data.gatewayManaged) {
+    return (
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header {...titleBarDragDeep} className={`flex shrink-0 items-center border-b border-border px-4 sm:px-8 ${TOP_ROW} ${CAPTION_BUTTONS_INSET}`}>
+          <h1 className="text-base font-medium">Integrations</h1>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-6 sm:px-8" data-scrollable>
+          <p className="text-sm text-muted-foreground">Connections and tool access are managed in agentgateway.</p>
+          {data.inventory.length === 0 ? (
+            <p className="mt-6 text-sm">No integration tools are available to your account.</p>
+          ) : (
+            <ul className="mt-5 max-w-3xl divide-y divide-border">
+              {data.inventory.map(({ slug, tools }) => (
+                <li key={slug} className="py-3">
+                  <h2 className="text-sm font-medium">{slug}</h2>
+                  <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                    {tools.map((tool) => (
+                      <li key={tool} className="break-all text-sm text-muted-foreground"><code>{tool}</code></li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </main>
+    );
+  }
 
   const selected =
     (route.view === "installed" && route.slug !== null) ||

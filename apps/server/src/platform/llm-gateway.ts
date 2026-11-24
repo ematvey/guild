@@ -4,6 +4,7 @@
 // surface renders errors in its own wire contract (OpenAI `{"error": …}` vs
 // Anthropic `{"type":"error",…}`).
 
+import type { AgentGateway } from "./agentgateway.js";
 import { ApiError, TextError } from "./errors.js";
 import {
   forProtocol,
@@ -37,6 +38,7 @@ export const GATEWAY_BODY_LIMIT_BYTES = 50 * 1024 * 1024;
 export interface GatewayContext {
   masterKey(): Buffer;
   gatewayStore: GatewayStore;
+  agentGateway?: AgentGateway | null;
   usage: UsageSink;
   trace: TraceStore;
   /** Image references in the conversation resolve to bytes here, once per
@@ -161,13 +163,14 @@ export async function dispatch(
   clientMaxTokens: number | null,
   clientTemperature: number | null = null,
 ): Promise<RoutedCall> {
-  const route = await ctx.gatewayStore.resolveRoute(orgId, model, ctx.masterKey());
+  const route = await ctx.gatewayStore.resolveRoute(orgId, model, ctx.agentGateway ? null : ctx.masterKey());
   await ctx.usage.ensureOnce();
   await enforceQuota(ctx.usage, orgId, model, route);
   const provider = forProtocol(route.protocol);
   if (provider === null) {
     throw ApiError.internal(`unknown protocol ${route.protocol}`);
   }
+  const downstream = ctx.agentGateway?.model(orgId, model, route.protocol);
   // The tighter limit wins when both sides set one: a client asking for
   // less than the route cap must not be billed for output it did not ask
   // for (0 = provider default). A nonpositive cap (legacy row, hand-edited
@@ -190,7 +193,8 @@ export async function dispatch(
       system,
       messages: resolved,
       apiKey: route.apiKey,
-      baseUrl: route.baseUrl,
+      baseUrl: downstream?.baseUrl ?? route.baseUrl,
+      gatewayAuthorization: downstream?.authorization,
       tools,
       maxTokens,
       // A client that names its own temperature wins; otherwise the route's

@@ -14,10 +14,12 @@ import { connectorToolClass, mcpToolClass } from "./policy.js";
 import { singleLineDescription } from "../platform/registry-manifest.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 import type { JsonObject } from "./shared.js";
+import type { AgentGateway } from "../platform/agentgateway.js";
 
 /** The narrow store surface the dispatcher re-resolves secrets through
  *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
 export interface PluginSecretSource {
+  agentGateway?: Pick<AgentGateway, "mcp"> | null;
   integrationSecrets: {
     names(orgId: string, integration: string): Promise<string[]>;
     resolve(orgId: string, integration: string, names: string[], masterKey: Buffer): Promise<[string, string][]>;
@@ -38,7 +40,7 @@ export interface IntegrationGateway extends PluginSecretSource, ConnectorSource 
 
 /** How a plugin executes: an in-process connector (a built-in or an
  *  approved registry code plugin) or a remote MCP server. */
-export type IntegrationExecutor = "connector" | "mcp";
+export type IntegrationExecutor = "connector" | "mcp" | "gateway-mcp";
 
 export interface IntegrationToolInfo {
   /** The declaration the model sees. For a trait tool this is the
@@ -47,6 +49,7 @@ export interface IntegrationToolInfo {
   class: string;
   /** The provider's own tool name — what the connector receives. */
   raw: string;
+  gatewayName?: string;
   /** The trait this tool implements, when it implements one. */
   trait?: string;
 }
@@ -200,6 +203,44 @@ function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject
   };
 }
 
+async function resolveGatewayIntegrations(
+  gateway: Pick<AgentGateway, "mcp">,
+  orgId: string,
+  memberId: string,
+  chatId?: string,
+): Promise<IntegrationTurn[]> {
+  const { url, headers } = gateway.mcp(orgId, memberId, undefined, chatId);
+  const peer = await mcpConnect(url, headers);
+  const turns = new Map<string, IntegrationTurn>();
+  for (const tool of await peer.listTools()) {
+    // Agentgateway prefixes every advertised tool with its DNS-label target.
+    const separator = tool.name.indexOf("_");
+    if (separator < 1) continue;
+    const target = tool.name.slice(0, separator);
+    const raw = tool.name.slice(separator + 1);
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(target) || !/^[A-Za-z0-9_-]+$/.test(raw)) continue;
+    if (raw === "list_tools" || raw === "guide") continue;
+    const slug = target.replaceAll("-", "_");
+    let turn = turns.get(slug);
+    if (turn === undefined) {
+      turn = {
+        executor: "gateway-mcp",
+        slug,
+        description: `MCP tools provided by ${target}.`,
+        tools: [],
+        guide: null,
+        rowConfig: {},
+        secretNames: [],
+        identityKey: "id",
+      };
+      turns.set(slug, turn);
+    }
+    const info = toMcpToolInfo(slug, {}, {}, { ...tool, name: raw });
+    turn.tools.push({ ...info, gatewayName: tool.name });
+  }
+  return [...turns.values()];
+}
+
 /** Turn-start resolution for the enabled plugins of one org: connectors
  *  (built-ins and approved code plugins) declare their tools from the
  *  manifest; MCP plugins connect
@@ -209,7 +250,18 @@ export async function resolveIntegrations(
   gateway: IntegrationGateway,
   orgId: string,
   warn: (message: string) => void = () => {},
+  memberId?: string | null,
+  chatId?: string,
 ): Promise<IntegrationTurn[]> {
+  if (gateway.agentGateway) {
+    if (!memberId) return [];
+    try {
+      return await resolveGatewayIntegrations(gateway.agentGateway, orgId, memberId, chatId);
+    } catch (error) {
+      warn(`agentgateway MCP discovery failed: ${(error as Error).message}`);
+      return [];
+    }
+  }
   const rows = await gateway.integrations.listEnabled(orgId);
   const masterKey = gateway.masterKey();
   const out: IntegrationTurn[] = [];

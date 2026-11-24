@@ -122,6 +122,7 @@ export function toolOffered(
   ceiling: ToolClass | null,
   role: string,
 ): boolean {
+  if (turn.executor === "gateway-mcp") return true;
   if (!toolCurate(turn.rowConfig, info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin") return false;
   return ceiling !== null && classRank(info.class) <= classRank(ceiling);

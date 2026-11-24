@@ -249,14 +249,14 @@ export class IntegrationsRuntime {
    * shows only the tools the Turn may call. */
   async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
     this.approvalClassifications.delete(conversationId);
+    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
     let resolved: IntegrationTurn[] = [];
     try {
-      resolved = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
+      resolved = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m), caller?.userId, chatId);
     } catch (error) {
       this.warn(`integrations resolve failed: ${(error as Error).message}`);
       throw error;
     }
-    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
     const draft: TurnSnapshot = { orgId, chatId, turns: [], caller, scope };
     const turns = resolved
       .map((turn) => ({ ...turn, tools: turn.tools.filter((info) => offered(draft, turn, info)) }))
@@ -458,13 +458,13 @@ export class IntegrationsRuntime {
       orgId = null;
     }
     if (orgId === null) return undefined;
+    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
     let turns: IntegrationTurn[] = [];
     try {
-      turns = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m));
+      turns = await resolveIntegrations(this.deps.gateway, orgId, (m) => this.warn(m), caller?.userId, chatId);
     } catch {
       turns = [];
     }
-    const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
     const snapshot: TurnSnapshot = { orgId, chatId, turns, caller, scope };
     this.snapshots.set(conversationId, snapshot);
     if (turns.length > 0) this.installOrgExtension(orgId, turns, conversationId);
@@ -475,8 +475,8 @@ export class IntegrationsRuntime {
   private async authorizedSnapshot(conversationId: number): Promise<TurnSnapshot | undefined> {
     const declared = await this.snapshotFor(conversationId);
     if (!declared) return undefined;
-    const turns = await resolveIntegrations(this.deps.gateway, declared.orgId, (message) => this.warn(message));
     const [caller, scope] = await Promise.all([this.chatCaller(declared.chatId), this.scopeOf(declared.chatId)]);
+    const turns = await resolveIntegrations(this.deps.gateway, declared.orgId, (message) => this.warn(message), caller?.userId, declared.chatId);
     return { ...declared, turns, caller, scope };
   }
 
@@ -575,6 +575,7 @@ export class IntegrationsRuntime {
         callerId: snapshot.caller?.userId ?? snapshot.chatId,
         callId,
         actingAs: snapshot.caller?.email ?? null,
+        chatId: snapshot.chatId,
       },
       signal,
     )

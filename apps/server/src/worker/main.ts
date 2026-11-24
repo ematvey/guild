@@ -26,7 +26,7 @@ const REMOTE_TIMEOUT_MS = 120_000;
 const { config, chatId } = loadWorkerConfig(process.env);
 const log = pino({ level: config.logLevel });
 
-const pool = createPlatformPool(config.databaseUrl, config.poolMax);
+const pool = createPlatformPool(config.databaseUrl, config.poolMax, log);
 const objects = new ObjectStore(config);
 const stores = createStores(pool);
 const secretsKey = masterKeyBytes(config.masterKeyHex);

@@ -23,6 +23,7 @@ export interface McpTool {
 const MAX_TOOL_PAGES = 20;
 
 export interface McpToolResult {
+  structuredContent?: JsonObject;
   /** The joined text of the result's text content blocks. */
   content: string;
   isError: boolean;
@@ -185,7 +186,13 @@ export async function mcpConnect(url: string, headers: Record<string, string>, s
             .join("\n")
         : "";
       const isError = result["isError"] === true;
-      return { content: text, isError };
+      const structured = result["structuredContent"];
+      return {
+        content: text, isError,
+        ...(structured !== null && typeof structured === "object" && !Array.isArray(structured)
+          ? { structuredContent: structured as JsonObject }
+          : {}),
+      };
     },
 
     async listTools(): Promise<McpTool[]> {

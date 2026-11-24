@@ -5,6 +5,7 @@
 // Every store comes in through RuntimeDeps (built once by the process's
 // composition root); the runtime constructs none.
 
+import { AgentGateway } from "../platform/agentgateway.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry,
@@ -345,6 +346,7 @@ export class GuildRuntime {
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
     const integrationGateway: IntegrationGateway = {
+      agentGateway: config.agentGateway ? new AgentGateway(config.agentGateway) : null,
       integrations: stores.integrations,
       integrationSecrets: stores.integrationSecrets,
       registry: stores.registry,
@@ -382,6 +384,7 @@ export class GuildRuntime {
     this.userMcpRuntime = new UserMcpRuntime(
       {
         store: stores.userMcp,
+        enabled: !config.agentGateway,
         masterKey: () => deps.masterKey(),
         log,
         chatOfConversation,

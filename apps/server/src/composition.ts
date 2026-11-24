@@ -5,6 +5,7 @@
 // so platform/ never imports the services it wires. `start()` is the one
 // bootstrap: every migration, the boot repairs, then the runtime.
 
+import { AgentGateway } from "./platform/agentgateway.js";
 import { IntegrationAccessStore } from "./platform/store/integration-access.js";
 import type { IntegrationDisplay } from "./platform/domain/integration-access.js";
 import { integrationShop } from "./integrations/admin.js";
@@ -64,6 +65,7 @@ export class PlatformContext implements PlatformStores {
   readonly oidc: PlatformStores["oidc"];
   readonly apiKeys: PlatformStores["apiKeys"];
   readonly gatewayStore: PlatformStores["gatewayStore"];
+  readonly agentGateway: AgentGateway | null;
   readonly machines: PlatformStores["machines"];
   readonly registry: PlatformStores["registry"];
   readonly skills: PlatformStores["skills"];
@@ -136,8 +138,9 @@ export class PlatformContext implements PlatformStores {
     private readonly log: Logger = pino({ level: "silent" }),
   ) {
     this.secretsKey = masterKeyBytes(config.masterKeyHex);
+    this.agentGateway = config.agentGateway ? new AgentGateway(config.agentGateway) : null;
     reportMalformedEventRows((error) => log.warn({ err: error }, "thread event row sent unnormalized"));
-    this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
+    this.pool = createPlatformPool(config.databaseUrl, config.poolMax, log);
     this.objects = new ObjectStore(config);
     const stores = createStores(this.pool);
     this.identity = stores.identity;

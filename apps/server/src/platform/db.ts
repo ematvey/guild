@@ -4,6 +4,7 @@
 // size_bytes).
 
 import pg from "pg";
+import type { Logger } from "pino";
 
 let bigintParserInstalled = false;
 function installBigintNumberParser(): void {
@@ -15,11 +16,15 @@ function installBigintNumberParser(): void {
 export type PlatformPool = pg.Pool;
 export type PoolClient = pg.PoolClient;
 
-export function createPlatformPool(databaseUrl: string, poolMax = 10): pg.Pool {
+export function createPlatformPool(databaseUrl: string, poolMax = 10, log?: Pick<Logger, "warn">): pg.Pool {
   installBigintNumberParser();
   // Short idle timeout: suites (and redeploys) must release their slots
   // promptly on the shared dev server's connection budget.
-  return new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
+  // pg removes a failed idle client before emitting this event. Handle it
+  // so the next query can acquire a fresh client when Postgres is back.
+  pool.on("error", (error) => log?.warn({ err: error }, "idle PostgreSQL connection lost"));
+  return pool;
 }
 
 /** Runs `fn` inside one transaction on a dedicated pooled client: COMMIT

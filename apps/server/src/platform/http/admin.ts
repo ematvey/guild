@@ -3,6 +3,7 @@
 // logic (shop, save, tools) is the integrations admin service
 // (src/integrations/admin.ts).
 
+import { requireLocalIntegrationManagement } from "./gateway-managed-integrations.js";
 import { IntegrationAccessStore } from "../store/integration-access.js";
 import { agentWarnings, isAudience, isGrantCeiling } from "../domain/integration-access.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -27,6 +28,7 @@ import {
 } from "../../integrations/admin.js";
 import { clampDays, integrationUsage, usageSummary } from "../store/integration-usage.js";
 import { createOrgMcp, probeOrgMcp } from "../../integrations/org-mcp.js";
+import { turns } from "../../integrations/member-tools.js";
 import { isToolClass } from "../domain/tool-class.js";
 import type { ObjectStore } from "../s3.js";
 import { DEFAULT_APPROVAL_POLICY_PROMPT } from "../../harness/approvals.js";
@@ -170,6 +172,14 @@ export function registerAdminIntegrationRoutes(
   // plugins. One list; the client filters and renders it.
   app.get("/api/v1/admin/integrations", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    if (gateway.agentGateway) {
+      const inventory = (await turns(gateway, admin.org_id, admin.id)).map((turn) => ({
+        slug: turn.slug,
+        tools: turn.tools.map((tool) => tool.spec.name).sort(),
+      }));
+      sendJson(reply, { items: [], managedBy: "agentgateway", inventory });
+      return reply;
+    }
     const items = await integrationShop(gateway, admin.org_id);
     sendJson(reply, { items });
     return reply;
@@ -180,6 +190,7 @@ export function registerAdminIntegrationRoutes(
   // stable id is the object's address from here on.
   app.post("/api/v1/admin/integrations", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const body = requireJsonBody(req);
     const name = body["name"];
     if (typeof name !== "string") throw ApiError.badRequest("missing name");
@@ -200,6 +211,7 @@ export function registerAdminIntegrationRoutes(
   // approves the manifest and stores the enabled row in one step.
   app.post("/api/v1/admin/integrations/mcp/probe", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const tools = await probeOrgMcp(admin.org_id, requireJsonBody(req));
     sendJson(reply, { tools });
     return reply;
@@ -207,6 +219,7 @@ export function registerAdminIntegrationRoutes(
 
   app.post("/api/v1/admin/integrations/mcp", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const slug = await createOrgMcp(
       {
         integrations: gateway.integrations,
@@ -234,6 +247,7 @@ export function registerAdminIntegrationRoutes(
   // never values.
   app.get("/api/v1/admin/integrations/:id/secrets", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
@@ -247,6 +261,7 @@ export function registerAdminIntegrationRoutes(
   // republishes and settings saves.
   app.put("/api/v1/admin/integrations/:id/tools/:tool", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const tool = pathParam(req, "tool");
     // The name becomes a JSON object key and a URL path segment: URL-safe
@@ -292,6 +307,7 @@ export function registerAdminIntegrationRoutes(
   // a silent empty list.
   app.get("/api/v1/admin/integrations/:id/tools", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     sendJson(reply, await integrationTools(gateway, admin.org_id, id));
     return reply;
@@ -303,6 +319,7 @@ export function registerAdminIntegrationRoutes(
   // { ok: false, error }.
   app.post("/api/v1/admin/integrations/:id/test", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
@@ -346,6 +363,7 @@ export function registerAdminIntegrationRoutes(
   // re-added later as a fresh row with a fresh id).
   app.delete("/api/v1/admin/integrations/:id", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     await gateway.integrations.delete(admin.org_id, id);
     sendJson(reply, {});
@@ -382,12 +400,14 @@ export function registerAdminIntegrationRoutes(
 
   app.get("/api/v1/admin/integrations/:id/access", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     sendJson(reply, await accessView(admin.org_id, parseUuidParam(req, "id")));
     return reply;
   });
 
   app.put("/api/v1/admin/integrations/:id/access", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const audience = body["audience"];
@@ -423,6 +443,7 @@ export function registerAdminIntegrationRoutes(
   // persisted. The connector slug comes from the row.
   app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
+    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const existing = await gateway.integrations.get(admin.org_id, id);

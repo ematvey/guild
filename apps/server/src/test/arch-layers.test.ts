@@ -46,6 +46,8 @@ const TOP_LEVEL: Record<string, "root" | "platform" | "service" | "storage" | "t
   "app.ts": "root",
   "composition.ts": "root",
   "index.ts": "root",
+  "connector-mcp.ts": "root",
+  "legacy-mcp-proxy.ts": "root",
   "config.ts": "platform",
   platform: "platform",
   storage: "storage",

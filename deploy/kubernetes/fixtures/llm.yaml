@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild-llm-fixture
+  namespace: guild-experiment
+spec:
+  selector:
+    app: guild-llm-fixture
+  ports:
+    - port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guild-llm-fixture
+  namespace: guild-experiment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guild-llm-fixture
+  template:
+    metadata:
+      labels:
+        app: guild-llm-fixture
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: fixture
+          image: guild-k8s-server:experiment
+          imagePullPolicy: Never
+          command: [bun, /fixture/llm.mjs]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          volumeMounts:
+            - name: fixture
+              mountPath: /fixture
+              readOnly: true
+      volumes:
+        - name: fixture
+          configMap:
+            name: guild-llm-fixture

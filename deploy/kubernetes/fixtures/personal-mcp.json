@@ -1,0 +1,18 @@
+{
+  "org": "00000000-0000-4000-8000-000000000014",
+  "targets": [
+    {
+      "name": "shared",
+      "url": "http://guild-mcp-fixture.guild-experiment.svc.cluster.local:8080/mcp",
+      "credentialSecret": "guild-mcp-fixture-provider",
+      "tools": ["echo_allowed"]
+    },
+    {
+      "name": "personal",
+      "url": "http://guild-mcp-fixture.guild-experiment.svc.cluster.local:8080/mcp",
+      "credentialSecret": "guild-mcp-fixture-provider",
+      "members": ["00000000-0000-4000-8000-000000000015"],
+      "tools": ["echo_allowed"]
+    }
+  ]
+}

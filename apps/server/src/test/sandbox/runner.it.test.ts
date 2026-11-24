@@ -12,6 +12,7 @@ import { SandboxExecutionEnv } from "../../sandbox/env.js";
 
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
+const substrate = process.env.GUILD_SANDBOX_IT_RUNTIME === "substrate";
 const ctx = BACKGROUND_CONTEXT;
 const ORG = randomUUID();
 const runner = new RunnerClient(URL_ ?? "http://unused", TOKEN);
@@ -65,12 +66,13 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       const { out } = await sh(env, "cat /proc/self/environ | tr '\\0' '\\n'; cat /proc/1/environ | tr '\\0' '\\n'");
       expect(out).not.toMatch(/GUILD_SANDBOX_RUNNER_TOKEN|GUILD_MASTER_KEY|GUILD_DATABASE_URL|GUILD_JWT/);
       expect(out).not.toContain(TOKEN);
-      expect(out).toMatch(/HOME=\/home\/sandbox/);
+      expect(out).toContain(substrate ? "HOME=/home/node\n" : "HOME=/home/sandbox\n");
     });
 
     it("cannot see the data volume, the docker socket, or other workspaces", async () => {
       const other = envFor(target("other"));
       await sh(other, "echo top-secret > secret.txt");
+      other.disconnect();
       const { out } = await sh(
         env,
         "ls /data 2>&1; ls -la /var/run/docker.sock 2>&1; ls /workspace; cat /workspace/secret.txt 2>&1; mount | grep -c workspace",
@@ -100,15 +102,16 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
 
   describe("network", () => {
     it("has no direct route out", async () => {
+      const hostname = substrate ? "example.com" : "registry.npmjs.org";
       const { code, out } = await sh(
         env,
-        "curl -sS --noproxy '*' --max-time 10 https://registry.npmjs.org/ -o /dev/null 2>&1",
+        `curl -sS --noproxy '*' --max-time 10 https://${hostname}/ -o /dev/null 2>&1`,
       );
       expect(code).not.toBe(0);
       expect(out).toMatch(/resolve|connect|unreachable/i);
     });
 
-    it("reaches allowlisted registries through the proxy only", async () => {
+    it("reaches allowlisted registries through the runtime egress policy", async () => {
       const allowed = await sh(
         env,
         "curl -s --max-time 30 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad",
@@ -118,10 +121,12 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       expect(denied.out.trim()).toMatch(/^(403|000)$/);
     });
 
-    it("refuses private and host addresses through the proxy", async () => {
+    it("refuses private and host addresses through the runtime egress policy", async () => {
+      // In an Actor, 127.0.0.1 reaches the Actor's own RPC listener.
+      const loopback = substrate ? "" : "http://127.0.0.1:8080/";
       const { out } = await sh(
         env,
-        "for u in http://172.17.0.1:5432/ http://10.0.0.1/ http://127.0.0.1:8080/ http://169.254.169.254/latest/meta-data/; do curl -s --max-time 15 -o /dev/null -w '%{http_code} ' $u; done",
+        `for u in http://172.17.0.1:5432/ http://10.0.0.1/ ${loopback} http://169.254.169.254/latest/meta-data/; do curl -s --max-time 15 -o /dev/null -w '%{http_code} ' $u; done`,
       );
       for (const code of out.trim().split(/\s+/)) expect(code).toMatch(/^(403|000)$/);
     });
@@ -161,7 +166,7 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       expect(out).toContain("left-pad");
       // The home is a tmpfs: a user-level install does not outlive the container.
       expect(out).not.toContain("cowsay");
-      expect(out).toMatch(/No module named six/);
+      expect(out).toMatch(/No module named '?six'?/);
       env = fresh;
     }, 300_000);
   });
@@ -195,7 +200,10 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
 
     it("refuses to attach to containers it does not own", async () => {
       await expect(runner.connect("compose-server-1")).rejects.toThrow(/400|401/);
-      await expect(runner.connect("guild-sbx-someoneelse-0123456789abcdef0123")).rejects.toThrow(/404/);
+      const absent = substrate
+        ? `guild-${randomUUID().replaceAll("-", "")}`
+        : "guild-sbx-someoneelse-0123456789abcdef0123";
+      await expect(runner.connect(absent)).rejects.toThrow(/404/);
     });
 
     it("is idempotent and restarts stopped sandboxes on attach", async () => {
@@ -203,9 +211,13 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       const a = await runner.ensure(t);
       const b = await runner.ensure(t);
       expect(a).toBe(b);
-      await fetch(`${URL_}/v1/sandboxes/${a}/stop`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
       const e = new SandboxExecutionEnv({ id: "x", cwd: "/workspace", connect: () => runner.connect(a) });
       envs.push(e);
+      expect((await sh(e, "echo persisted > stop-test.txt")).code).toBe(0);
+      e.disconnect();
+      const stopped = await fetch(`${URL_}/v1/sandboxes/${a}/stop`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(stopped.ok).toBe(true);
+      expect((await sh(e, "cat stop-test.txt")).out.trim()).toBe("persisted");
       const { out } = await sh(e, "echo alive");
       expect(out.trim()).toBe("alive");
     }, 120_000);
