@@ -91,14 +91,14 @@ export class OrgModels {
           const source = sessionId === undefined ? undefined : this.sessions.get(sessionId);
           if (!source) return {};
           const owner = await this.deps.chats.ownerOf(source.chatId);
-          if (owner?.internal === true) return { "x-guild-internal-caller": "coordination" };
           const runId = await this.runningRunId(source.chatId);
           return {
             "x-guild-chat-id": source.chatId,
             "x-guild-conversation-id": String(source.conversationId),
             "x-guild-cause": "conversation-request",
             ...(runId !== null ? { "x-guild-run-id": runId } : {}),
-            ...(owner ? { "x-guild-user-id": owner.user_id } : {}),
+            // Background activity keeps its organization-level usage identity.
+            ...(owner && !owner.internal ? { "x-guild-user-id": owner.user_id } : {}),
           };
         },
       },

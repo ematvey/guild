@@ -53,13 +53,14 @@ const pendingRuns = new Map<string, AgentRun[]>();
 const seeding = new Set<string>();
 const runListeners = new Set<(run: AgentRun) => void>();
 type ActivityRunFrame = Extract<ServerFrame, { type: "activity_run" }>;
-const activityRunListeners = new Set<(frame: ActivityRunFrame) => void>();
+const activityRunListeners = new Set<(frame: ActivityRunFrame, epoch: number) => void>();
 
 export function applyActivityRun(frame: ActivityRunFrame): void {
-  for (const listener of activityRunListeners) listener(frame);
+  const epoch = agentStore.get().epoch;
+  for (const listener of activityRunListeners) listener(frame, epoch);
 }
 
-export function useActivityRunUpdates(listener: (frame: ActivityRunFrame) => void): void {
+export function useActivityRunUpdates(listener: (frame: ActivityRunFrame, epoch: number) => void): void {
   useEffect(() => {
     activityRunListeners.add(listener);
     return () => {
@@ -281,6 +282,11 @@ export function useAgentList(): Agent[] | null {
  *  push. */
 export function useAttachableIntegrations(): AttachableIntegration[] | null {
   return agentStore.use((state) => state.attachable);
+}
+
+/** The native member socket's generation, for views that seed live slices. */
+export function useAgentConnectionEpoch(): number {
+  return agentStore.use((state) => state.epoch);
 }
 
 /** A seeded per-agent slice: `rows` is null until it seeds; `error` says why

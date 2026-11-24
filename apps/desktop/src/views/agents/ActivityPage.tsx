@@ -53,7 +53,13 @@ import {
   type TraceRow,
 } from "./agents-api";
 import type { AgentRun } from "./agents-api";
-import { summaryWithTrace, traceFromRun, traceWithRun, useActivityRunUpdates } from "./agents-store";
+import {
+  summaryWithTrace,
+  traceFromRun,
+  traceWithRun,
+  useActivityRunUpdates,
+  useAgentConnectionEpoch,
+} from "./agents-store";
 import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
@@ -121,17 +127,16 @@ export function ActivityPage({
   /** The signed-in user's workspace role. */
   role: string;
 }) {
-  const [summary, setSummary] = useState<ActivitySummary | null>(null);
-  const [traces, setTraces] = useState<TraceRow[] | null>(null);
+  const [summarySeed, setSummary] = useState<ActivitySummary | null>(null);
+  const [traceSeed, setTraceSeed] = useState<Awaited<ReturnType<typeof listTraces>> | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
   const [conversationSeed, setConversations] = useState<ConversationRow[] | null>(null);
-  const [runCounts, setRunCounts] = useState<
-    Record<string, Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>
-  >({});
-  const conversations = useMemo(
-    () => conversationSeed?.map((row) => ({ ...row, ...runCounts[row.thread?.id ?? ""] })) ?? null,
-    [conversationSeed, runCounts],
-  );
+  const [updates, setUpdates] = useState<{
+    scope: string;
+    epoch: number;
+    runs?: ReadonlyMap<string, AgentRun>;
+    counts?: Record<string, Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>;
+  } | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -146,11 +151,43 @@ export function ActivityPage({
   const admin = role === "admin";
   const background = admin && filters.background;
   const { tab, period, status, trigger, caller } = filters;
+  const connectionEpoch = useAgentConnectionEpoch();
+  const seedEpoch = tab === "calls" ? 0 : connectionEpoch;
+  const scope = JSON.stringify([tab, period, status, trigger, q, caller, model, agentId, background, tick, role]);
+  const pushed = updates?.scope === scope && updates.epoch === seedEpoch ? updates : null;
+  const conversations = useMemo(
+    () => conversationSeed?.map((row) => ({ ...row, ...pushed?.counts?.[row.thread?.id ?? ""] })) ?? null,
+    [conversationSeed, pushed],
+  );
+
+  // Socket updates received during the read win over the snapshot. Keep
+  // telemetry that a Run frame doesn't carry and count each Run only once.
+  const display = useMemo(() => {
+    const seed = traceSeed?.traces ?? null;
+    if (tab !== "traces" || seed === null) return { traces: null, summary: summarySeed, total };
+    const rows = new Map(seed.map((trace) => [trace.trace_id, trace]));
+    const added: TraceRow[] = [];
+    let summary = summarySeed;
+    for (const run of pushed?.runs?.values() ?? []) {
+      const before = rows.get(run.id);
+      if (before === undefined && !runMatchesFilters(run, filters, agentId)) continue;
+      const after = before === undefined ? traceFromRun(run) : traceWithRun(before, run);
+      if (before === undefined) added.push(after);
+      else rows.set(run.id, after);
+      if (summary !== null) summary = summaryWithTrace(summary, before, after);
+    }
+    return {
+      traces: [...added.reverse(), ...rows.values()],
+      summary,
+      total: (traceSeed?.total ?? 0) + added.length,
+    };
+  }, [tab, traceSeed, pushed, summarySeed, total, filters, agentId]);
 
   useEffect(() => {
     let live = true;
     setError(null);
-    setRunCounts({});
+    // On connect a Run may arrive before React starts the new HTTP read.
+    setUpdates((current) => (current?.scope === scope && current.epoch === seedEpoch ? current : null));
     // The window ends now: computed per fetch, not per render.
     const range = windowQuery(period);
     const query: ActivityQuery = {
@@ -192,44 +229,39 @@ export function ActivityPage({
               ...(trigger !== "all" ? { trigger } : {}),
             }).then((res) => {
               if (!live) return;
-              setTraces(res.traces);
-              setTotal(res.total);
+              setTraceSeed(res);
             });
     void load.catch((err: unknown) => {
       if (!live) return;
       setError(err instanceof Error ? err.message : "The activity API did not answer.");
-      setTraces(null);
+      setTraceSeed(null);
       setSpans(null);
       setConversations(null);
     });
     return () => {
       live = false;
     };
-  }, [tab, period, status, trigger, q, caller, model, agentId, background, tick]);
+  }, [tab, period, status, trigger, q, caller, model, agentId, background, tick, scope, seedEpoch]);
 
-  useActivityRunUpdates(({ run, counts }) => {
+  useActivityRunUpdates(({ run, counts }, epoch) => {
     const threadId = run.thread_id;
     if (tab === "chats" && counts !== null && threadId !== null && (!run.internal || background)) {
-      setRunCounts((current) => ({ ...current, [threadId]: counts }));
+      setUpdates((current) => {
+        const previous = current?.scope === scope && current.epoch === epoch ? current.counts : undefined;
+        return { scope, epoch, counts: { ...previous, [threadId]: counts } };
+      });
     }
-    if (tab !== "traces" || traces === null) return;
-    const before = traces.find((row) => row.trace_id === run.id);
-    if (before !== undefined) {
-      const after = traceWithRun(before, run);
-      setTraces((rows) => rows?.map((row) => (row.trace_id === run.id ? after : row)) ?? rows);
-      setSummary((value) => (value === null ? value : summaryWithTrace(value, before, after)));
-      return;
+    if (tab === "traces" && (!run.internal || admin) && (agentId === undefined || run.agent_id === agentId)) {
+      setUpdates((current) => {
+        const previous = current?.scope === scope && current.epoch === epoch ? current.runs : undefined;
+        return { scope, epoch, runs: new Map(previous).set(run.id, run) };
+      });
     }
-    if (!runMatchesFilters(run, filters, agentId)) return;
-    const row = traceFromRun(run);
-    setTraces((rows) => (rows === null || rows.some((r) => r.trace_id === run.id) ? rows : [row, ...rows]));
-    setSummary((value) => (value === null ? value : summaryWithTrace(value, undefined, row)));
-    setTotal((value) => value + 1);
   });
 
   const body = (
     <>
-      <SummaryCards summary={summary} admin={admin} />
+      <SummaryCards summary={display.summary} admin={admin} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Select value={filters.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
           <SelectTrigger aria-label="Period" className="h-8 w-28 text-xs">
@@ -325,7 +357,7 @@ export function ActivityPage({
         )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, filters.tab === "chats" ? "thread" : filters.tab === "calls" ? "call" : "run")}
+            {count(display.total, filters.tab === "chats" ? "thread" : filters.tab === "calls" ? "call" : "run")}
           </span>
           {filters.tab !== "traces" && (
             <Button
@@ -347,7 +379,7 @@ export function ActivityPage({
         )}
         {error === null && filters.tab === "traces" && (
           <TracesTable
-            rows={traces}
+            rows={display.traces}
             admin={admin}
             showAgent={agentId === undefined}
             onOpen={(id) => onNavigate({ view: "run", runId: id })}

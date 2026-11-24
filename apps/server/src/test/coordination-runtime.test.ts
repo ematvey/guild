@@ -299,22 +299,22 @@ describe("configured coordinator conversation", () => {
     ).rows[0]!;
     const forbidden = await app.inject({ method: "GET", url: `/api/v1/chats/${coordinator.chat_id}`, headers });
     expect(forbidden.statusCode).toBe(404);
-    const historicalRun = randomUUID();
-    await app.platform.trace.recordTrace({
-      trace_id: historicalRun,
-      org_id: stack.orgId,
-      user_id: stack.memberId,
-      agent_id: inbox.agent_id,
-      agent_name: "Assistant",
-      session_id: coordinator.chat_id,
-      thread_id: null,
-      trigger: "message",
-      status: "succeeded",
-      name: "Assistant",
-      summary: "Historical internal summary",
-      started_at: new Date(),
-      finished_at: new Date(),
-    });
+    const run = (
+      await stack.env.db.query<{ id: string; status: string }>(
+        `SELECT r.id, r.status FROM agent_runs r
+         JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.chat_id=$1 AND r.finished_at IS NOT NULL
+         ORDER BY r.finished_at LIMIT 1`,
+        [coordinator.chat_id],
+      )
+    ).rows[0]!;
+    const adminHeaders = { authorization: `Bearer ${stack.adminToken}` };
+    const traceUrl = `/api/v1/activity/traces/${run.id}`;
+    const readAdminTrace = () => app.inject({ method: "GET", url: traceUrl, headers: adminHeaders });
+    await waitFor(async () => {
+      const response = await readAdminTrace();
+      return response.statusCode === 200 && response.json().trace.status === run.status;
+    }, 10000);
     const listed = await app.inject({
       method: "GET",
       url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
@@ -322,9 +322,8 @@ describe("configured coordinator conversation", () => {
     });
     expect(listed.statusCode).toBe(200);
     expect(listed.json()).toEqual({ traces: [], total: 0 });
-    const detail = await app.inject({ method: "GET", url: `/api/v1/activity/traces/${historicalRun}`, headers });
+    const detail = await app.inject({ method: "GET", url: traceUrl, headers });
     expect(detail.statusCode).toBe(404);
-    const adminHeaders = { authorization: `Bearer ${stack.adminToken}` };
     const adminList = await app.inject({
       method: "GET",
       url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
@@ -332,15 +331,24 @@ describe("configured coordinator conversation", () => {
     });
     expect(adminList.statusCode).toBe(200);
     expect(adminList.json().traces).toEqual(
-      expect.arrayContaining([expect.objectContaining({ trace_id: historicalRun })]),
+      expect.arrayContaining([expect.objectContaining({ trace_id: run.id, status: run.status })]),
     );
-    const adminDetail = await app.inject({
-      method: "GET",
-      url: `/api/v1/activity/traces/${historicalRun}`,
-      headers: adminHeaders,
-    });
+    const adminDetail = await readAdminTrace();
     expect(adminDetail.statusCode).toBe(200);
-    expect(adminDetail.json().trace.trace_id).toBe(historicalRun);
+    expect(adminDetail.json().trace.trace_id).toBe(run.id);
+    expect(adminDetail.json().spans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ span_type: "llm", session_id: coordinator.chat_id }),
+        expect.objectContaining({ span_type: "tool", session_id: coordinator.chat_id, name: "codemode" }),
+      ]),
+    );
+    const memberSpans = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/spans?session=${coordinator.chat_id}`,
+      headers,
+    });
+    expect(memberSpans.statusCode).toBe(200);
+    expect(memberSpans.json()).toEqual({ spans: [], total: 0 });
     const requests = stack.mock.requests.map((r) => JSON.stringify(r.body)).join("\n");
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);
