@@ -238,6 +238,10 @@
           "role": "db"
         },
         {
+          "where": "packages/wire/src/rest.ts",
+          "role": "wire"
+        },
+        {
           "where": "apps/server/src/agents/trace-hook.ts",
           "role": "domain"
         },
@@ -259,6 +263,11 @@
           "from": "db",
           "to": "domain",
           "at": "apps/server/src/agents/trace-hook.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/agents/store/runs.ts"
         }
       ]
     },
@@ -328,7 +337,7 @@
     },
     {
       "id": "sandbox",
-      "definition": "The gVisor container that runs server-side tools for unbound chats.",
+      "definition": "The gVisor container that runs server-side tools with sandbox-local scratch and a mounted Workspace.",
       "canonical": "apps/server/src/sandbox/client.ts",
       "types": [],
       "aliases": [

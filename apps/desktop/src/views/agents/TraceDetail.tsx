@@ -2,7 +2,7 @@
 // the span tree and the time waterfall. The right pane is the selected span:
 // overview, input, output and attributes, with readable JSON.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, ChevronRight, CornerUpLeft, MessageSquare, RefreshCw } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,7 +12,7 @@ import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { getRun, getTrace, type AgentRun, type RunThread, type SpanRow, type TraceRow } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
-import { runFinishes, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
+import { runFinishes, traceFromRun, traceWithRun, useActivityRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 import { SpanDetail } from "./span-detail";
@@ -50,6 +50,7 @@ export function RunDetailPage({
   const [thread, setThread] = useState<RunThread | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [telemetryTick, setTelemetryTick] = useState(0);
   const pushedRun = useRef<AgentRun | null>(null);
   /** The status on screen; frames compare against it without waiting for a
    *  render. */
@@ -60,12 +61,10 @@ export function RunDetailPage({
     shownStatus.current = null;
   }, [runId]);
 
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    const loadTrace = async () => {
+  const loadTrace = useCallback(
+    async (isLive: () => boolean) => {
       const telemetry = await getTrace(runId);
-      if (!live) return;
+      if (!isLive()) return;
       const pushed = pushedRun.current;
       const { trace: row, spans: recordedSpans, children: childTraces } = telemetry;
       const next = pushed === null ? row : traceWithRun(row, pushed);
@@ -78,7 +77,13 @@ export function RunDetailPage({
         const ordered = [...recordedSpans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
         return ordered.find((span) => span.span_type === "llm") ?? ordered[0] ?? null;
       });
-    };
+    },
+    [runId, traceOnly],
+  );
+
+  useEffect(() => {
+    let live = true;
+    setError(null);
     const showError = (err: unknown) => {
       if (!live) return;
       setRun(null);
@@ -90,7 +95,7 @@ export function RunDetailPage({
       setError(err instanceof Error ? err.message : "The run did not load.");
     };
     if (traceOnly) {
-      void loadTrace().catch(showError);
+      void loadTrace(() => live).catch(showError);
     } else {
       void getRun(runId).then(({ run: stored, thread: parent }) => {
         if (!live) return;
@@ -99,38 +104,45 @@ export function RunDetailPage({
         shownStatus.current = current.status;
         setRun(current);
         setThread(parent);
-        if (!stored.internal) void loadTrace().catch(() => {});
+        void loadTrace(() => live).catch(() => {});
       }, showError);
     }
     return () => {
       live = false;
     };
-  }, [runId, traceOnly, tick]);
+  }, [runId, traceOnly, tick, loadTrace]);
+
+  useEffect(() => {
+    if (telemetryTick === 0) return;
+    let live = true;
+    void loadTrace(() => live).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [loadTrace, telemetryTick]);
 
   // A running run finishes on screen: every pushed change to this run moves
   // the run row and the trace header (status, summary, end, error, tokens,
   // duration). The frame carries the run, not its spans or transcript: those
   // are ClickHouse analytics behind the trace endpoint, so the frame that
   // moves the run into a terminal status triggers one re-read of the trace
-  // and the run. It is event-driven, once per finish, not a poll.
-  useAgentRunUpdates((pushed) => {
+  // once per finish.
+  useActivityRunUpdates(({ run: pushed, steps }) => {
     if (pushed.id !== runId) return;
     const finishes = runFinishes(shownStatus.current, pushed);
-    pushedRun.current = pushed;
+    const update = { ...pushedRun.current, ...pushed, ...(steps === undefined ? {} : { steps }) };
+    pushedRun.current = update;
     shownStatus.current = pushed.status;
-    setRun((prev) => (prev === null ? prev : { ...prev, ...pushed }));
+    setRun((prev) => (prev === null ? prev : { ...prev, ...update }));
     setTrace((prev) => (prev === null ? prev : traceWithRun(prev, pushed)));
-    if (finishes) setTick((t) => t + 1);
+    if (finishes) setTelemetryTick((t) => t + 1);
   });
 
-  const trace = useMemo(
-    () => {
-      if (run === null) return recordedTrace;
-      const row = recordedTrace === null ? traceFromRun(run) : traceWithRun(recordedTrace, run);
-      return { ...row, session_id: thread?.chat_id ?? row.session_id };
-    },
-    [recordedTrace, run, thread],
-  );
+  const trace = useMemo(() => {
+    if (run === null) return recordedTrace;
+    const row = recordedTrace === null ? traceFromRun(run) : traceWithRun(recordedTrace, run);
+    return { ...row, session_id: thread?.chat_id ?? row.session_id };
+  }, [recordedTrace, run, thread]);
   const ordered = useMemo(
     () => [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time)),
     [spans],

@@ -10,14 +10,11 @@ import type { ObjectStore } from "../platform/s3.js";
 import { ApiError } from "../platform/errors.js";
 import { sortedJson } from "../platform/domain/json.js";
 import { isUuid, uuidv7 } from "../platform/time.js";
-import type { MessageAttachment } from "../platform/domain/thread-events.js";
-import { modalityOf } from "../platform/domain/mime.js";
 import type { UserRow } from "../platform/store/identity.js";
 import type { ChatRow } from "../platform/store/chats.js";
 import { ThreadAgentLocked } from "../harness/runtime.js";
-import { buildTurnText, loadMediaMap } from "./turn-text.js";
+import { buildTurnText, loadMediaMap, mediaPartsFor } from "./turn-text.js";
 import { memberMessageEntry } from "./member-message.js";
-import { mediaRefOf } from "../platform/media-ref.js";
 
 export async function submitTurn(
   chats: ChatsCtx,
@@ -202,23 +199,6 @@ export async function submitTurn(
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
   // An admitted turn implies the accept committed, so `command` is set.
   return commandAck(refreshed ?? command!);
-}
-
-/** The model-facing image parts of the arrival turn, gated by the route's
- *  modalities. The part names its attachment; the bytes stay in object
- *  storage and the model request resolves them (chats/media-ref.ts), so no
- *  image rides the durable entry. */
-function mediaPartsFor(
-  modalities: string[],
-  chips: MessageAttachment[],
-): { images: { mimeType: string; data: string }[] } {
-  const images: { mimeType: string; data: string }[] = [];
-  if (!modalities.includes("image")) return { images };
-  for (const chip of chips) {
-    if (modalityOf(chip.content_type) !== "image") continue;
-    images.push({ mimeType: chip.content_type, data: mediaRefOf("attachment", chip.id) });
-  }
-  return { images };
 }
 
 function commandAck(command: { id: string; status: string; invocation_id: string | null }): string {

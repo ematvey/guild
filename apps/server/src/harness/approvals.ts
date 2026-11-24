@@ -1,4 +1,4 @@
-import { isInternalChat, isRoutineChat } from "../agents/store/coordination.js";
+import { isRoutineChat } from "../agents/store/coordination.js";
 import { coordinationRole } from "../agents/coordination.js";
 // The approval gate (approval_gate + exec_and_approval_gate onto the
 // pi-durable tool-task hook):
@@ -54,7 +54,6 @@ const JUDGE_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 /** Pinned identities for judge trace rows without a resolvable chat owner
  *  (same pattern as the internal gateway key's synthetic ids). */
-const INTERNAL_JUDGE_USER_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-user");
 const INTERNAL_JUDGE_SESSION_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-session");
 
 /** Server default approval policy for client tools (design §A): read-only
@@ -289,13 +288,12 @@ async function judgeVerdict(
     if (attempted && deps.trace) {
       const sink = deps.trace;
       void (async () => {
-        if ((await isInternalChat(deps.pool, [chatId])).rowCount) return;
         const runId = await deps.chats.openAgentRunOf(chatId).catch(() => null);
         await sink.record({
           ts: new Date(),
           request_id: requestId,
           org_id: orgId,
-          user_id: userId ?? INTERNAL_JUDGE_USER_UUID,
+          user_id: userId,
           session_id: INTERNAL_JUDGE_SESSION_UUID,
           run_id: runId,
           chat_id: chatId,
@@ -503,7 +501,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         const chat = await deps.chats.identityOf(chatId);
         const model = await deps.currentModel(Number(runtime.conversationId));
         if (chat === null || model === null) return { block: "Rejected: unattended action has no judge mapping" };
-        const verdict = await judgeVerdict(deps, chat.org_id, chatId, chat.user_id, model, call, true);
+        const verdict = await judgeVerdict(deps, chat.org_id, chatId, chat.internal ? null : chat.user_id, model, call, true);
         return verdict.approve === true
           ? undefined
           : {
@@ -558,7 +556,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       const chat = await deps.chats.identityOf(chatId);
       if (chat === null) return undefined;
       const orgId = chat.org_id;
-      const chatOwnerId = chat.user_id;
+      const chatOwnerId = chat.internal ? null : chat.user_id;
       const { chat_mode, user_policy } = await readChatPolicy(deps, chatId);
       let decision: "allow" | "ask" | "never";
       if (chat_mode === "approve_for_me") {

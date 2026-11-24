@@ -48,6 +48,8 @@ export const DEFERRED_UNTIL_SYNC: { readonly [T in ServerFrame["type"]]: boolean
   agent_list: false,
   integration_access: false,
   agent_run: false,
+  activity_run: false,
+  activity_conversation: false,
   agent_threads: false,
   agent_routines: false,
   skill_catalog: false,
@@ -120,8 +122,18 @@ export function parseClientMsg(text: string): ParsedClientMsg | null {
       return { type: "ping" };
     case "sync": {
       const chatId = raw["chat_id"];
-      if (chatId === null || chatId === undefined) return { type: "sync", chat_id: null };
-      return typeof chatId === "string" && UUID_RE.test(chatId) ? { type: "sync", chat_id: chatId } : null;
+      const runId = raw["run_id"];
+      const activityChatId = raw["activity_chat_id"];
+      if (chatId != null && (typeof chatId !== "string" || !UUID_RE.test(chatId))) return null;
+      if (runId !== undefined && (typeof runId !== "string" || !UUID_RE.test(runId))) return null;
+      if (activityChatId !== undefined && (typeof activityChatId !== "string" || !UUID_RE.test(activityChatId)))
+        return null;
+      return {
+        type: "sync",
+        chat_id: chatId ?? null,
+        ...(runId === undefined ? {} : { run_id: runId }),
+        ...(activityChatId === undefined ? {} : { activity_chat_id: activityChatId }),
+      };
     }
     case "read": {
       const chatId = raw["chat_id"];

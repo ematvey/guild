@@ -237,8 +237,110 @@ export interface AttachableIntegration {
   ceiling: ToolClass;
 }
 
+/** One durable transcript step in a Run detail. */
+export interface AgentRunStep {
+  kind: string;
+  name?: string | null;
+  status?: string | null;
+  detail?: string | null;
+  at?: string | null;
+  call_id?: string | null;
+  is_error?: boolean | null;
+}
+
+/** Number of messages in the newest Activity Conversation page. */
+export const ACTIVITY_CONVERSATION_PAGE = 200;
+
+export interface ConversationOwner {
+  id: string;
+  email: string;
+  display_name: string | null;
+}
+
+export interface ConversationAgent {
+  id: string;
+  name: string;
+}
+
+export interface ConversationThread {
+  id: string;
+  /** The chat journal that holds the thread's transcript. */
+  chat_id: string;
+  type: string;
+  parent_thread_id: string | null;
+  parent_chat_id: string | null;
+  parent_title: string | null;
+}
+
+export interface ConversationRow {
+  internal?: boolean;
+  id: string;
+  title: string | null;
+  owner: ConversationOwner;
+  agent: ConversationAgent | null;
+  thread: ConversationThread | null;
+  created_at: string;
+  last_activity_at: string;
+  messages: number;
+  runs: number;
+  open_runs: number;
+  failed_runs: number;
+  archived: boolean;
+  deleted: boolean;
+}
+
+export interface ConversationRunRow {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  trigger: string;
+  status: string;
+  summary: string;
+  error_message: string;
+  tokens: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ConversationMessageItem {
+  kind: "message";
+  seq: number;
+  role: "user" | "assistant" | "system" | "error" | "compaction";
+  text: string;
+  ts: string;
+}
+
+export interface ConversationRunItem {
+  kind: "run";
+  ts: string;
+  run: ConversationRunRow;
+  /** The user message that started the run, when the page holds it. */
+  trigger: string | null;
+  /** Model and tool calls in the run, from the trace store. */
+  steps: number;
+  call_count: number;
+  tool_count: number;
+  /** True when an assistant message inside the run window follows the row:
+   *  the reply renders there, so the row does not repeat it. */
+  reply: boolean;
+}
+
+export type ConversationMessageRow = Omit<ConversationMessageItem, "kind">;
+
+export type ConversationItem = ConversationMessageItem | ConversationRunItem;
+
+export interface ConversationSnapshot {
+  related_threads?: { id: string; title: string | null; internal: boolean }[];
+  conversation: ConversationRow;
+  items: (ConversationMessageItem | ConversationRunItem)[];
+  /** True when an older page of messages exists. */
+  has_more: boolean;
+}
+
 /** One agent run. `agent_name` and `routine_name` are joined display names. */
 export interface AgentRun {
+  /** The Run belongs to a background Thread visible in admin Activity. */
+  internal?: boolean;
   id: string;
   agent_id: string;
   user_id: string | null;

@@ -1,6 +1,8 @@
 [
   { "type": "ping" },
   { "type": "sync", "chat_id": null },
+  { "type": "sync", "chat_id": null, "activity_chat_id": "018f0b7c-0000-7000-8000-000000000001" },
+  { "type": "sync", "chat_id": null, "run_id": "018f0b7c-0000-7000-8000-000000000061" },
   {
     "type": "sync",
     "chat_id": "018f0b7c-0000-7000-8000-000000000001"

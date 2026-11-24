@@ -1,3 +1,4 @@
+import { runStepsWire } from "../../agents/store/runs.js";
 import { ensureCoordinationThread, coordinationSettings } from "../../agents/coordination.js";
 // Agent HTTP surface: CRUD and lifecycle, thread index, read-only files,
 // runs/activity, the inbox and conversation search. Every route resolves the
@@ -439,7 +440,7 @@ export function registerAgentRoutes(
     if (agent === null) throw ApiError.badRequest("Configure a model before opening Assistant");
     if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is not enabled for this Agent");
     refuseDeletingAgent(agent);
-    const thread = await ensureCoordinationThread(infra.pool, store, agent, user.id, "inbox");
+    const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
     return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
   });
 
@@ -705,7 +706,11 @@ export function registerAgentRoutes(
     const body = jsonBody(req);
     const title = optionalString(body, "title") ?? "";
     return sendJson(reply, {
-      thread: await store.threads.createThread(agentId, user.id, title),
+      thread: wireThread({
+        ...(await store.threads.createThread(agentId, user.id, title)),
+        archived: false,
+        deleted: false,
+      }),
     });
   });
 
@@ -715,7 +720,7 @@ export function registerAgentRoutes(
     const threadId = parseUuidParam(req, "threadId");
     await store.requireAccess(user, agentId, "use");
     return sendJson(reply, {
-      thread: await store.threads.getThread(agentId, user.id, threadId),
+      thread: wireThread(await store.threads.getThread(agentId, user.id, threadId)),
     });
   });
 
@@ -726,7 +731,7 @@ export function registerAgentRoutes(
     await store.requireAccess(user, agentId, "use");
     const title = requiredString(jsonBody(req), "title");
     return sendJson(reply, {
-      thread: await store.threads.renameThread(agentId, user.id, threadId, title),
+      thread: wireThread(await store.threads.renameThread(agentId, user.id, threadId, title)),
     });
   });
 
@@ -975,26 +980,10 @@ export function registerAgentRoutes(
     await store.fetchInOrg(user.org_id, run.agent_id);
     const steps = await store.runs.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
-    const mapped = steps.map((step) => ({
-      kind:
-        step.type === "user_message"
-          ? "user"
-          : step.type === "assistant_text"
-            ? "assistant"
-            : step.type === "tool_call"
-              ? "tool"
-              : "file",
-      name: step.name ?? null,
-      status: step.is_error === true ? "error" : "ok",
-      detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
-      at: step.ts,
-      call_id: step.call_id ?? null,
-      is_error: step.is_error ?? null,
-    }));
     const thread =
       run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
     return sendJson(reply, {
-      run: { ...run, steps: mapped, files },
+      run: { ...run, steps: runStepsWire(steps), files },
       steps,
       thread,
     });
@@ -1007,7 +996,10 @@ export function registerAgentRoutes(
       throw ApiError.notFound("no such run");
     }
     await store.fetchInOrg(user.org_id, run.agent_id);
-    return sendJson(reply, { children: await store.runs.childRuns(run.id) });
+    const children = await store.runs.childRuns(run.id);
+    return sendJson(reply, {
+      children: children.filter((child) => canReadOwned(user, child.user_id) && (!child.internal || readsWholeOrg(user))),
+    });
   });
 
   app.get("/api/v1/activity", async (req, reply) => {

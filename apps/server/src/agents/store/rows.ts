@@ -36,7 +36,7 @@ export const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, 
   t.parent_thread_id, t.origin_thread_id, t.depth, ${utcText("t.closed_at")} AS closed_at,
   ${utcText("t.created_at")} AS created_at, ${utcText("t.last_activity_at")} AS last_activity_at`;
 
-export const RUN_COLUMNS = `EXISTS (SELECT 1 FROM agent_threads it JOIN chats ic ON ic.id=it.chat_id WHERE it.id=r.thread_id AND ic.internal) AS internal, r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
+export const RUN_COLUMNS = `r.internal, r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
   r.delegate_agent_id, r.depth, r.trigger, r.status, r.summary,
   r.error_code, r.error_message, r.error_step, r.tokens,
   ${utcText("r.started_at")} AS started_at, ${utcText("r.finished_at")} AS finished_at,

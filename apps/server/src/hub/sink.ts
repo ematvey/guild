@@ -41,6 +41,10 @@ export class SocketSink {
    *  `sync`: such a socket (the engine's turn stream) receives every chat
    *  of its user. Per-chat view frames go only to sockets showing the chat. */
   view: string | null | undefined = undefined;
+  /** The Activity Run whose durable steps this socket displays. */
+  runView: string | null = null;
+  runViewChat: string | null = null;
+  activityConversation: string | null = null;
   private queue: SocketOutput[] = [];
   private pending = 0;
   private overloaded = false;

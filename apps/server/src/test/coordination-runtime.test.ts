@@ -83,10 +83,119 @@ describe("configured coordinator conversation", () => {
     }
   });
 
-  it("delivers an explicit reply to the inbox without leaking its internal final answer", async () => {
+  it("authorizes Routine mutations against the active attributed Member", async () => {
+    const app = stack.env.app;
+    const admin = { authorization: `Bearer ${stack.adminToken}` };
+    const member = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: admin,
+      payload: {
+        name: "Shared Routine operator",
+        model: "coordination-test",
+        visibility: "org",
+        resources: { assistant: { enabled: true } },
+      },
+    });
+    expect(created.statusCode, created.body).toBeLessThan(300);
+    const agentId = created.json().agent.id as string;
+    const thread = await app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${agentId}/threads`,
+      headers: admin,
+      payload: { title: "Routine discussion" },
+    });
+    const threadPath = `/api/v1/agents/${agentId}/threads/${thread.json().thread.id}`;
+    expect(thread.json().thread).toMatchObject({ is_default: false, archived: false, deleted: false });
+    expect((await app.inject({ method: "GET", url: threadPath, headers: admin })).json().thread).toMatchObject({
+      is_default: false,
+    });
+    expect(
+      (await app.inject({ method: "PATCH", url: threadPath, headers: admin, payload: { title: "Renamed" } })).json()
+        .thread,
+    ).toMatchObject({ is_default: false, title: "Renamed" });
+
+    const request = async (headers: typeof admin, message: string) => {
+      const inbox = await app.inject({
+        method: "POST",
+        url: "/api/v1/assistant",
+        headers,
+        payload: { agent_id: agentId },
+      });
+      expect(inbox.statusCode, inbox.body).toBe(200);
+      const event = randomUUID();
+      const posted = await app.inject({
+        method: "POST",
+        url: `/api/v1/agents/${agentId}/threads/${inbox.json().thread_id}/turns`,
+        headers,
+        payload: { message, user_message_id: event },
+      });
+      expect(posted.statusCode, posted.body).toBeLessThan(300);
+      const input = () =>
+        stack.env.db.query<{ id: string }>("SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [
+          event,
+        ]);
+      await waitFor(async () => (await input()).rowCount === 1, 10000);
+      return (await input()).rows[0]!.id;
+    };
+    const execute = async (code: string) => {
+      const before = stack.mock.requests.length;
+      stack.mock.setResponses([{ body: call("codemode", { code }) }, { body: final("Routine action checked") }]);
+      await app.platform.coordination.tick();
+      await waitFor(() => stack.mock.requests.length >= before + 2, 10000);
+      await waitFor(
+        async () =>
+          (
+            await stack.env.db.query(
+              "SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id WHERE t.agent_id=$1 AND t.execution_role='coordinator' AND r.status IN ('queued','running')",
+              [agentId],
+            )
+          ).rowCount === 0,
+        10000,
+      );
+      const request = stack.mock.requests[before + 1]?.body as { messages?: { role: string; content: string }[] };
+      return request.messages?.at(-1)?.content ?? "";
+    };
+    const create = (input_id: string) =>
+      `return await tools.create_routine(${JSON.stringify({ input_id, name: "Weekly review", schedule: "0 0 * * 1", prompt: "Review the week" })});`;
+    const authorized = await request(admin, "Create a weekly review Routine");
+    await execute(create(authorized));
+    const routines = await stack.env.db.query<{ id: string; prompt: string }>(
+      "SELECT id, prompt FROM agent_routines WHERE agent_id=$1",
+      [agentId],
+    );
+    expect(routines.rows).toHaveLength(1);
+    const routine_id = routines.rows[0]!.id;
+    const useOnly = await request(member, "Change the weekly review Routine");
+    const instructions = { input_id: useOnly, routine_id, prompt: "Different instructions" };
+    const attempted = await execute(
+      `try { await tools.update_routine(${JSON.stringify(instructions)}); } catch (error) { text(error.message); } return await tools.delete_routine(${JSON.stringify({ input_id: authorized, routine_id })});`,
+    );
+    expect(attempted.includes("you cannot manage this agent")).toBe(true);
+    expect(attempted.includes("Routine changes require an input from the active Turn")).toBe(true);
+    expect((await stack.env.db.query("SELECT prompt FROM agent_routines WHERE id=$1", [routine_id])).rows).toEqual([
+      { prompt: "Review the week" },
+    ]);
+  }, 30000);
+
+  it("delivers a shared inbox reply and keeps internal Activity private after purge", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
-    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
+    const shared = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers,
+      payload: {
+        name: "Shared Assistant",
+        model: "coordination-test",
+        visibility: "org",
+        resources: { assistant: { enabled: true } },
+      },
+    });
+    expect(shared.statusCode, shared.body).toBe(200);
+    const agentId = shared.json().agent.id as string;
+    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: agentId } });
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string; agent_id: string };
     const index = await app.inject({ method: "GET", url: "/api/v1/threads", headers });
@@ -203,22 +312,22 @@ describe("configured coordinator conversation", () => {
     ).rows[0]!;
     const forbidden = await app.inject({ method: "GET", url: `/api/v1/chats/${coordinator.chat_id}`, headers });
     expect(forbidden.statusCode).toBe(404);
-    const historicalRun = randomUUID();
-    await app.platform.trace.recordTrace({
-      trace_id: historicalRun,
-      org_id: stack.orgId,
-      user_id: stack.memberId,
-      agent_id: inbox.agent_id,
-      agent_name: "Assistant",
-      session_id: coordinator.chat_id,
-      thread_id: null,
-      trigger: "message",
-      status: "succeeded",
-      name: "Assistant",
-      summary: "Historical internal summary",
-      started_at: new Date(),
-      finished_at: new Date(),
-    });
+    const run = (
+      await stack.env.db.query<{ id: string; status: string }>(
+        `SELECT r.id, r.status FROM agent_runs r
+         JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.chat_id=$1 AND r.finished_at IS NOT NULL
+         ORDER BY r.finished_at LIMIT 1`,
+        [coordinator.chat_id],
+      )
+    ).rows[0]!;
+    const adminHeaders = { authorization: `Bearer ${stack.adminToken}` };
+    const traceUrl = `/api/v1/activity/traces/${run.id}`;
+    const readAdminTrace = () => app.inject({ method: "GET", url: traceUrl, headers: adminHeaders });
+    await waitFor(async () => {
+      const response = await readAdminTrace();
+      return response.statusCode === 200 && response.json().trace.status === run.status;
+    }, 10000);
     const listed = await app.inject({
       method: "GET",
       url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
@@ -226,8 +335,70 @@ describe("configured coordinator conversation", () => {
     });
     expect(listed.statusCode).toBe(200);
     expect(listed.json()).toEqual({ traces: [], total: 0 });
-    const detail = await app.inject({ method: "GET", url: `/api/v1/activity/traces/${historicalRun}`, headers });
+    const detail = await app.inject({ method: "GET", url: traceUrl, headers });
     expect(detail.statusCode).toBe(404);
+    const adminList = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
+      headers: adminHeaders,
+    });
+    expect(adminList.statusCode).toBe(200);
+    expect(adminList.json().traces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ trace_id: run.id, status: run.status })]),
+    );
+    const adminDetail = await readAdminTrace();
+    expect(adminDetail.statusCode).toBe(200);
+    expect(adminDetail.json().trace).toMatchObject({ trace_id: run.id, user_id: null });
+    expect(adminDetail.json().spans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ span_type: "llm", session_id: coordinator.chat_id }),
+        expect.objectContaining({ span_type: "tool", session_id: coordinator.chat_id, name: "codemode" }),
+      ]),
+    );
+    const memberSpans = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/spans?session=${coordinator.chat_id}`,
+      headers,
+    });
+    expect(memberSpans.statusCode).toBe(200);
+    expect(memberSpans.json()).toEqual({ spans: [], total: 0 });
+    const runsUrl = `/api/v1/runs/${run.id}`;
+    const assertPrivate = async () => {
+      expect((await app.inject({ method: "GET", url: runsUrl, headers })).statusCode).toBe(404);
+      expect((await app.inject({ method: "GET", url: traceUrl, headers })).statusCode).toBe(404);
+      const [traces, spans, sessions] = await Promise.all([
+        app.inject({ method: "GET", url: `/api/v1/activity/traces?session=${coordinator.chat_id}`, headers }),
+        app.inject({ method: "GET", url: `/api/v1/activity/spans?trace=${run.id}`, headers }),
+        app.inject({ method: "GET", url: "/api/v1/activity/sessions", headers }),
+      ]);
+      expect(traces.json()).toEqual({ traces: [], total: 0 });
+      expect(spans.json()).toEqual({ spans: [], total: 0 });
+      expect(sessions.json().sessions).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ session_id: coordinator.chat_id })]),
+      );
+      const adminAfter = await readAdminTrace();
+      expect(adminAfter.statusCode, adminAfter.body).toBe(200);
+      expect(adminAfter.json().spans).toEqual(expect.arrayContaining([
+        expect.objectContaining({ span_type: "llm", session_id: coordinator.chat_id }),
+        expect.objectContaining({ span_type: "tool", session_id: coordinator.chat_id }),
+      ]));
+    };
+
+    await waitFor(async () =>
+      (await stack.env.db.query(
+        `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.chat_id=$1 AND r.finished_at IS NULL`, [coordinator.chat_id],
+      )).rowCount === 0,
+    );
+    await app.platform.trace.idle();
+    await stack.env.db.query("DELETE FROM chats WHERE id = $1", [coordinator.chat_id]);
+    expect((await stack.env.db.query("SELECT internal, thread_id FROM agent_runs WHERE id = $1", [run.id])).rows)
+      .toEqual([{ internal: true, thread_id: null }]);
+    expect((await app.inject({ method: "GET", url: runsUrl, headers: adminHeaders })).statusCode).toBe(200);
+    await assertPrivate();
+    await app.platform.agents.lifecycle.purgeById(stack.orgId, agentId);
+    await assertPrivate();
+
     const requests = stack.mock.requests.map((r) => JSON.stringify(r.body)).join("\n");
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);

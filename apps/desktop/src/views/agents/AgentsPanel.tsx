@@ -11,12 +11,14 @@ export function AgentsPanel({
   viewer,
   onNavigate,
   onOpenChat,
+  onRefreshConversation,
 }: {
   route: AgentsRoute;
   viewer: Viewer;
   /** `replace` corrects the current address instead of adding a step. */
   onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
+  onRefreshConversation: () => void;
 }) {
   switch (route.view) {
     case "directory":
@@ -71,7 +73,14 @@ export function AgentsPanel({
       );
     case "chat":
       return (
-        <ConversationPage chatId={route.chatId} role={viewer.role} onNavigate={onNavigate} onOpenChat={onOpenChat} />
+        <ConversationPage
+          key={route.chatId}
+          onResync={onRefreshConversation}
+          chatId={route.chatId}
+          role={viewer.role}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
       );
   }
 }

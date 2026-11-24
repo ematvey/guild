@@ -48,8 +48,12 @@ export function claimCoordinationInputs<T extends QueryResultRow = QueryResultRo
         UPDATE agent_coordination_inputs i SET lease_until = now() + interval '2 minutes'
         FROM due WHERE i.id = due.id RETURNING i.*
       )
-      SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email, provenance.routine_id, provenance.occurrence_id
+      SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email, provenance.routine_id, provenance.occurrence_id,
+        COALESCE(event.payload->'attachments', '[]'::jsonb) AS attachments
       FROM claimed c JOIN users u ON u.id=c.user_id
+      LEFT JOIN agent_threads source ON source.id=c.source_thread_id
+      LEFT JOIN thread_events event ON event.id=c.source_event_id AND event.chat_id=source.chat_id
+        AND event.type='user_message' AND c.kind='request'
       LEFT JOIN LATERAL (
         SELECT r.routine_id, o.id AS occurrence_id
         FROM agent_runs r LEFT JOIN agent_routine_occurrences o ON o.run_id=r.id
@@ -87,8 +91,7 @@ export function listCoordinators<T extends QueryResultRow = QueryResultRow>(db: 
 export function readCoordinationState<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
     `SELECT reflection_thread_id,reflection_inputs,
-           extract(epoch FROM now()-reflection_started_at)::float AS reflection_age,
-           extract(epoch FROM now()-compacted_at)::float AS compaction_age
+           extract(epoch FROM now()-reflection_started_at)::float AS reflection_age
            FROM agent_coordination_state WHERE agent_id=$1`,
     values,
   );
@@ -142,21 +145,9 @@ export function resetReflection<T extends QueryResultRow = QueryResultRow>(db: D
   );
 }
 
-export function uncompactedInputs<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
-  return db.query<T>(
-    `SELECT count(*)::text AS n FROM agent_coordination_inputs i
-          JOIN agent_coordination_state s ON s.agent_id=i.agent_id WHERE i.agent_id=$1 AND i.delivered_at>s.compacted_at`,
-    values,
-  );
-}
-
-export function markCompacted<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
-  return db.query<T>(`UPDATE agent_coordination_state SET compacted_at=now() WHERE agent_id=$1`, values);
-}
-
 export function readCoordinationSource<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT id,user_id,source_thread_id FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
+    `SELECT id,user_id,source_thread_id,kind FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
     values,
   );
 }

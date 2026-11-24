@@ -1,5 +1,4 @@
 import {
-  findCoordinationThread,
   readCoordinationRole,
   retryCoordinationInput,
   claimCoordinationInputs,
@@ -14,18 +13,21 @@ import {
   expireReflectedInputContent,
   startReflection,
   resetReflection,
-  uncompactedInputs,
-  markCompacted,
 } from "./store/coordination.js";
 // One Agent's persistent coordination: durable attributed inputs, passive
 // observations, timed wakes and background memory/context maintenance.
+import { memberMessageEntry } from "../chats/member-message.js";
+import { mediaPartsFor } from "../chats/turn-text.js";
+import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
-import { withTransaction } from "../platform/db.js";
+import { withPlatformSession, withTransaction } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
 import type { Agent, AgentThread } from "./types.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Logger } from "pino";
+import { compactionInFlight } from "../chats/compaction.js";
+import { coordinatorCompactionActivity } from "../storage/postgres/queries.js";
 import { startThreadRun } from "./thread-run.js";
 
 export interface CoordinationSettings {
@@ -75,6 +77,7 @@ export interface CoordinationInput {
   occurrence_id?: string | null;
   kind: string;
   content: string;
+  attachments: MessageAttachment[];
   wake: boolean;
   name: string;
   email: string;
@@ -87,7 +90,10 @@ export function coordinationPreamble(input: CoordinationInput): string {
     user: { id: input.user_id, name: input.name, email: input.email },
     thread_id: input.source_thread_id,
     message_id: input.source_event_id,
-    ...(input.kind === "routine" ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null } : {}),
+    ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+    ...(input.kind === "routine"
+      ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null }
+      : {}),
   })}\n</coordination_input>\n${input.content}`;
 }
 
@@ -100,29 +106,18 @@ function inboxTitle(agent: Agent): string {
 /** Serializes first creation across processes. Coordinator history is an
  *  internal chat; member-facing inboxes are separate ordinary Threads. */
 export async function ensureCoordinationThread(
-  pool: PlatformPool,
   store: AgentStore,
   agent: Agent,
   userId: string,
   role: "coordinator" | "inbox",
 ): Promise<AgentThread> {
-  const lock = await pool.connect();
-  const key = `coordinator:${agent.id}:${role}:${role === "inbox" ? userId : ""}`;
-  try {
-    await lock.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
-    const current = await findCoordinationThread<{ id: string }>(lock, [agent.id, role, userId]);
-    if (current.rows[0] !== undefined) return (await store.threads.threadById(current.rows[0].id))!;
-    return await store.threads.createThread(
-      agent.id,
-      role === "coordinator" ? agent.owner_user_id : userId,
-      role === "coordinator" ? "Coordinator" : inboxTitle(agent),
-      "user",
-      { executionRole: role, internal: role === "coordinator" },
-    );
-  } finally {
-    await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-    lock.release();
-  }
+  return store.threads.createThread(
+    agent.id,
+    role === "coordinator" ? agent.owner_user_id : userId,
+    role === "coordinator" ? "Coordinator" : inboxTitle(agent),
+    "user",
+    { executionRole: role, internal: role === "coordinator" },
+  );
 }
 
 export async function coordinationRole(
@@ -152,9 +147,11 @@ export class AgentCoordination {
   private maintainAfter = 0;
   constructor(
     private readonly deps: {
+      databaseUrl: string;
       pool: PlatformPool;
       store: AgentStore;
       runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat">;
+      routeSupportsImages(orgId: string, model: string): Promise<boolean>;
       log: Logger;
     },
   ) {}
@@ -205,20 +202,30 @@ export class AgentCoordination {
   private async deliver(input: CoordinationInput): Promise<void> {
     const { pool, store, runtime } = this.deps;
     const agent = await store.fetchAgent(input.agent_id);
-    const coordinator = await ensureCoordinationThread(pool, store, agent, agent.owner_user_id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, agent.owner_user_id, "coordinator");
     const sourceThread =
       input.source_thread_id === null ? null : await store.threads.threadById(input.source_thread_id);
     const content = coordinationPreamble(
       sourceThread?.type === "subagent" && !input.wake ? { ...input, kind: "worker_thread_observation" } : input,
     );
     if (input.wake) {
+      const model = coordinationSettings(agent).coordinator_model;
+      const attachments = input.attachments;
+      const images =
+        attachments.some((file) => file.modality === "image") &&
+        (await this.deps.routeSupportsImages(agent.org_id, model))
+          ? mediaPartsFor(["image"], attachments).images
+          : [];
       await runtime.submitTurn(coordinator.chat_id, agent.org_id, {
         orgId: agent.org_id,
         requestId: input.id,
         content,
-        images: [],
-        model: coordinationSettings(agent).coordinator_model,
-        entry: { kind: "guild.coordination-input", data: { input_id: input.id } },
+        images,
+        model,
+        entry:
+          input.kind === "request"
+            ? memberMessageEntry({ message_id: input.id, text: content, attachments })
+            : { kind: "guild.coordination-input", data: { input_id: input.id } },
       });
     } else {
       const entry: EntryDraft = {
@@ -232,96 +239,101 @@ export class AgentCoordination {
   }
 
   private async maintain(): Promise<void> {
-    const { pool, store, runtime } = this.deps;
+    const { databaseUrl, log, pool, store, runtime } = this.deps;
     await expireReflectedInputContent(pool);
     await initializeCoordinationState(pool, []);
     const agents = await listCoordinators<{ agent_id: string; chat_id: string }>(pool, []);
-    for (const row of agents.rows) {
-      const lock = await pool.connect();
-      const key = `coordination-maintenance:${row.agent_id}`;
-      const held = (await lock.query<{ held: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS held", [key]))
-        .rows[0]?.held;
-      if (!held) {
-        lock.release();
-        continue;
-      }
-      try {
-        const agent = await store.fetchAgent(row.agent_id);
-        const settings = coordinationSettings(agent);
-        if (!settings.enabled || agent.status !== "active") continue;
-        const state = (
-          await readCoordinationState<{
-            reflection_thread_id: string | null;
-            reflection_inputs: string[];
-            reflection_age: number;
-            compaction_age: number;
-          }>(lock, [agent.id])
-        ).rows[0]!;
-        let active = false;
-        if (state.reflection_thread_id !== null) {
-          const run = (await readReflectionStatus<{ status: string }>(lock, [state.reflection_thread_id])).rows[0];
-          active = run?.status === "queued" || run?.status === "running";
-          if (active && state.reflection_age > 120) {
-            const thread = await store.threads.threadById(state.reflection_thread_id);
-            if (thread !== null) await runtime.stopChat(thread.chat_id);
-          }
-          if (!active && run !== undefined) {
-            if (run.status === "succeeded" || run.status === "silent") {
-              await markInputsReflected(lock, [state.reflection_inputs]);
-            }
-            await clearReflection(lock, [agent.id]);
-          }
-        }
-        const recent = await pendingReflectionInputs<{
-          id: string;
-          seq: string;
-          content: string;
-          kind: string;
-          pending_count: string;
-        }>(lock, [agent.id]);
-        if (
-          !active &&
-          recent.rows.length > 0 &&
-          (Number(recent.rows[0]?.pending_count ?? 0) >= settings.reflection_events || state.reflection_age >= settings.reflection_seconds)
-        ) {
-          const thread = await store.threads.createThread(
-            agent.id,
-            agent.owner_user_id,
-            "Memory reflection",
-            "user",
-            { executionRole: "reflection", internal: true },
-          );
-          await startReflection(lock, [agent.id, thread.id, recent.rows.map((x) => x.id)]);
+    if (agents.rows.length === 0) return;
+    // Maintenance calls the runtime and stores, which need their own pool slots.
+    // One dedicated session per pass owns the advisory locks across those calls.
+    await withPlatformSession(
+      databaseUrl,
+      (error) => log.warn({ err: error }, "coordination lock session failed"),
+      async (lock) => {
+        for (const row of agents.rows) {
+          const agent = await store.fetchAgent(row.agent_id);
+          const settings = coordinationSettings(agent);
+          if (!settings.enabled || agent.status !== "active") continue;
+          const key = `coordination-maintenance:${row.agent_id}`;
+          const result = await lock.query<{ held: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS held", [
+            key,
+          ]);
+          if (result.rows[0]?.held !== true) continue;
           try {
-            await startThreadRun(
-              { store, runtime },
-              {
-                agentId: agent.id,
-                thread,
-                failureCode: "reflection_failed",
-                content:
-                  "Review the activity below for durable lessons, decisions and user corrections. If there is something to save, first read /workspace/MEMORY.md with the read tool, then update it. Keep summaries concise and include source IDs. Use supporting notes only when needed and only follow paths you know from the memory or activity. If a revision conflict occurs, reread the file and reconcile your edit. Do not change permissions, message users or perform external work.\n" +
-                  JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
-                run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
-              },
-            );
-          } catch (error) {
-            await resetReflection(lock, [agent.id]);
-            this.deps.log.warn({ err: error, agentId: agent.id }, "reflection deferred");
+            const state = (
+              await readCoordinationState<{
+                reflection_thread_id: string | null;
+                reflection_inputs: string[];
+                reflection_age: number;
+              }>(pool, [agent.id])
+            ).rows[0]!;
+            let active = false;
+            if (state.reflection_thread_id !== null) {
+              const run = (await readReflectionStatus<{ status: string }>(pool, [state.reflection_thread_id])).rows[0];
+              active = run?.status === "queued" || run?.status === "running";
+              if (active && state.reflection_age > 120) {
+                const thread = await store.threads.threadById(state.reflection_thread_id);
+                if (thread !== null) await runtime.stopChat(thread.chat_id);
+              }
+              if (!active && run !== undefined) {
+                if (run.status === "succeeded" || run.status === "silent") {
+                  await markInputsReflected(pool, [state.reflection_inputs]);
+                }
+                await clearReflection(pool, [agent.id]);
+              }
+            }
+            const recent = await pendingReflectionInputs<{
+              id: string;
+              seq: string;
+              content: string;
+              kind: string;
+              pending_count: string;
+            }>(pool, [agent.id]);
+            if (
+              !active &&
+              recent.rows.length > 0 &&
+              (Number(recent.rows[0]?.pending_count ?? 0) >= settings.reflection_events ||
+                state.reflection_age >= settings.reflection_seconds)
+            ) {
+              const thread = await store.threads.createThread(
+                agent.id,
+                agent.owner_user_id,
+                "Memory reflection",
+                "user",
+                { executionRole: "reflection", internal: true },
+              );
+              await startReflection(pool, [agent.id, thread.id, recent.rows.map((x) => x.id)]);
+              try {
+                await startThreadRun(
+                  { store, runtime },
+                  {
+                    agentId: agent.id,
+                    thread,
+                    failureCode: "reflection_failed",
+                    content:
+                      "Review the activity below for durable lessons, decisions and user corrections. If there is something to save, first read /workspace/MEMORY.md with the read tool, then update it. Keep summaries concise and include source IDs. Use supporting notes only when needed and only follow paths you know from the memory or activity. If a revision conflict occurs, reread the file and reconcile your edit. Do not change permissions, message users or perform external work.\n" +
+                      JSON.stringify(recent.rows.map(({ id, seq, content, kind }) => ({ id, seq, content, kind }))),
+                    run: { user_id: agent.owner_user_id, trigger: "manual", summary: "Memory reflection" },
+                  },
+                );
+              } catch (error) {
+                await resetReflection(pool, [agent.id]);
+                this.deps.log.warn({ err: error, agentId: agent.id }, "reflection deferred");
+              }
+            }
+            const { remaining, age, retryReady } = await coordinatorCompactionActivity(pool, row.chat_id);
+            if (
+              retryReady &&
+              (remaining >= settings.compaction_events || (remaining >= 10 && age >= settings.compaction_seconds)) &&
+              !(await compactionInFlight(pool, row.chat_id))
+            ) {
+              await runtime.compactChat(row.chat_id);
+            }
+          } finally {
+            await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
           }
         }
-        const fresh = Number((await uncompactedInputs<{ n: string }>(lock, [agent.id])).rows[0]?.n ?? 0);
-        if (
-          fresh >= settings.compaction_events ||
-          (fresh >= 10 && state.compaction_age >= settings.compaction_seconds)
-        ) {
-          await runtime.compactChat(row.chat_id);
-          await markCompacted(lock, [agent.id]);
-        }
-      } finally {
-        await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-        lock.release();
-      }
-    }
+      },
+    );
   }
 }

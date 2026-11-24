@@ -84,6 +84,8 @@ export const NOTIFY_PARSERS = {
   },
   /** A chat's agent-thread subtree moved: the chat id. */
   guild_subagent_tree: idPayload,
+  /** The durable metadata of a Conversation changed: the chat id. */
+  guild_activity_conversation: idPayload,
   /** A user's sidebar lists moved; `parts` names the ones (all when null). */
   guild_workspace: (raw: string) => {
     const payload = jsonPayload(raw);

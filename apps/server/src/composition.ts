@@ -235,7 +235,14 @@ export class PlatformContext implements PlatformStores {
     });
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
-    this.coordination = new AgentCoordination({ pool: this.pool, store: this.agents, runtime: this.runtime, log });
+    this.coordination = new AgentCoordination({
+      databaseUrl: config.databaseUrl,
+      pool: this.pool,
+      store: this.agents,
+      runtime: this.runtime,
+      routeSupportsImages: this.runtime.routeSupportsImages,
+      log,
+    });
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: this.agents,
@@ -260,6 +267,7 @@ export class PlatformContext implements PlatformStores {
         runtime: this.runtime,
         gatewayStore: this.gatewayStore,
       }),
+      syncActivity: (user, sink) => this.feed.syncActivity(user, sink),
       toolResult: async ({ member, frame }) => {
         this.machineDispatch.resolveToolResult(member, frame);
       },
@@ -277,6 +285,7 @@ export class PlatformContext implements PlatformStores {
         chats: this.chats,
         threads: this.threads,
         conversations: this.conversations,
+        conversationHistory: this.conversationHistory,
         events: this.events,
         projects: this.projects,
         orgs: this.orgs,

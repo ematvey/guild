@@ -11,6 +11,7 @@
 import { useEffect } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import type { AttachableIntegration } from "@guild/wire/rest";
+import type { ServerFrame } from "@guild/wire/types";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
 import { createStore } from "../../lib/store";
@@ -51,6 +52,38 @@ const pendingRuns = new Map<string, AgentRun[]>();
 /** `slice:agentId` of every seed in flight. */
 const seeding = new Set<string>();
 const runListeners = new Set<(run: AgentRun) => void>();
+type ActivityRunFrame = Extract<ServerFrame, { type: "activity_run" }>;
+const activityRunListeners = new Set<(frame: ActivityRunFrame, epoch: number) => void>();
+
+export function applyActivityRun(frame: ActivityRunFrame): void {
+  const epoch = agentStore.get().epoch;
+  for (const listener of activityRunListeners) listener(frame, epoch);
+}
+
+export function useActivityRunUpdates(listener: (frame: ActivityRunFrame, epoch: number) => void): void {
+  useEffect(() => {
+    activityRunListeners.add(listener);
+    return () => {
+      activityRunListeners.delete(listener);
+    };
+  });
+}
+
+type ActivityConversationFrame = Extract<ServerFrame, { type: "activity_conversation" }>;
+const conversationListeners = new Set<(frame: ActivityConversationFrame) => void>();
+
+export function applyActivityConversation(frame: ActivityConversationFrame): void {
+  for (const listener of conversationListeners) listener(frame);
+}
+
+export function useActivityConversationUpdates(listener: (frame: ActivityConversationFrame) => void): void {
+  useEffect(() => {
+    conversationListeners.add(listener);
+    return () => {
+      conversationListeners.delete(listener);
+    };
+  });
+}
 
 const sliceKey = (slice: Slice, agentId: string) => `${slice}:${agentId}`;
 
@@ -243,7 +276,7 @@ export function traceFromRun(run: AgentRun): TraceRow {
 }
 
 /** Subscribes to every run frame; views that keep their own run rows (the
- *  activity table, a trace page, a routine's run history) patch from it. */
+ *  such as a Routine's run history) patch from it. */
 export function onAgentRun(listener: (run: AgentRun) => void): () => void {
   runListeners.add(listener);
   return () => {
@@ -265,6 +298,11 @@ export function useAgentList(): Agent[] | null {
  *  push. */
 export function useAttachableIntegrations(): AttachableIntegration[] | null {
   return agentStore.use((state) => state.attachable);
+}
+
+/** The native member socket's generation, for views that seed live slices. */
+export function useAgentConnectionEpoch(): number {
+  return agentStore.use((state) => state.epoch);
 }
 
 /** A seeded per-agent slice: `rows` is null until it seeds; `error` says why

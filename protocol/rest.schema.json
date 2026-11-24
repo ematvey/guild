@@ -52,6 +52,15 @@
     "AgentIntegration": { "$ref": "#/$defs/AgentIntegration" },
     "IntegrationWarning": { "$ref": "#/$defs/IntegrationWarning" },
     "AttachableIntegration": { "$ref": "#/$defs/AttachableIntegration" },
+    "ConversationOwner": { "$ref": "#/$defs/ConversationOwner" },
+    "ConversationAgent": { "$ref": "#/$defs/ConversationAgent" },
+    "ConversationThread": { "$ref": "#/$defs/ConversationThread" },
+    "ConversationRow": { "$ref": "#/$defs/ConversationRow" },
+    "ConversationRunRow": { "$ref": "#/$defs/ConversationRunRow" },
+    "ConversationRunItem": { "$ref": "#/$defs/ConversationRunItem" },
+    "ConversationMessageItem": { "$ref": "#/$defs/ConversationMessageItem" },
+    "ConversationSnapshot": { "$ref": "#/$defs/ConversationSnapshot" },
+    "AgentRunStep": { "$ref": "#/$defs/AgentRunStep" },
     "AgentRun": { "$ref": "#/$defs/AgentRun" },
     "AgentThread": { "$ref": "#/$defs/AgentThread" },
     "AgentRoutine": { "$ref": "#/$defs/AgentRoutine" },
@@ -976,12 +985,135 @@
         "updated_at": { "$ref": "#/$defs/DateTime" }
       }
     },
+    "ConversationOwner": {
+      "type": "object",
+      "required": ["id", "email", "display_name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/Uuid"},
+        "email": {"type": "string"},
+        "display_name": {"type": ["string", "null"]}
+      }
+    },
+    "ConversationAgent": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/Uuid"},
+        "name": {"type": "string"}
+      }
+    },
+    "ConversationThread": {
+      "type": "object",
+      "required": ["id", "chat_id", "type", "parent_thread_id", "parent_chat_id", "parent_title"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/Uuid"},
+        "chat_id": {"$ref": "#/$defs/Uuid"},
+        "type": {"type": "string"},
+        "parent_thread_id": {"type": ["string", "null"]},
+        "parent_chat_id": {"type": ["string", "null"]},
+        "parent_title": {"type": ["string", "null"]}
+      }
+    },
+    "ConversationRow": {
+      "type": "object",
+      "required": ["id", "title", "owner", "agent", "thread", "created_at", "last_activity_at", "messages", "runs", "open_runs", "failed_runs", "archived", "deleted"],
+      "additionalProperties": false,
+      "properties": {
+        "internal": {"type": "boolean"},
+        "id": {"$ref": "#/$defs/Uuid"},
+        "title": {"type": ["string", "null"]},
+        "owner": {"$ref": "#/$defs/ConversationOwner"},
+        "agent": {"oneOf": [{"$ref": "#/$defs/ConversationAgent"}, {"type": "null"}]},
+        "thread": {"oneOf": [{"$ref": "#/$defs/ConversationThread"}, {"type": "null"}]},
+        "created_at": {"$ref": "#/$defs/DateTime"},
+        "last_activity_at": {"$ref": "#/$defs/DateTime"},
+        "messages": {"type": "integer"},
+        "runs": {"type": "integer"},
+        "open_runs": {"type": "integer"},
+        "failed_runs": {"type": "integer"},
+        "archived": {"type": "boolean"},
+        "deleted": {"type": "boolean"}
+      }
+    },
+    "ConversationRunRow": {
+      "type": "object",
+      "required": ["id", "agent_id", "agent_name", "trigger", "status", "summary", "error_message", "tokens", "started_at", "finished_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/Uuid"},
+        "agent_id": {"$ref": "#/$defs/Uuid"},
+        "agent_name": {"type": "string"},
+        "trigger": {"type": "string"},
+        "status": {"type": "string"},
+        "summary": {"type": "string"},
+        "error_message": {"type": "string"},
+        "tokens": {"type": "integer"},
+        "started_at": {"$ref": "#/$defs/DateTime"},
+        "finished_at": {"type": ["string", "null"]}
+      }
+    },
+    "ConversationRunItem": {
+      "type": "object",
+      "required": ["kind", "ts", "run", "trigger", "steps", "call_count", "tool_count", "reply"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "run"},
+        "ts": {"$ref": "#/$defs/DateTime"},
+        "run": {"$ref": "#/$defs/ConversationRunRow"},
+        "trigger": {"type": ["string", "null"]},
+        "steps": {"type": "integer"},
+        "call_count": {"type": "integer"},
+        "tool_count": {"type": "integer"},
+        "reply": {"type": "boolean"}
+      }
+    },
+    "ConversationMessageItem": {
+      "type": "object",
+      "required": ["kind", "ts", "seq", "role", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "message"},
+        "ts": {"$ref": "#/$defs/DateTime"},
+        "seq": {"type": "integer"},
+        "role": {"enum": ["user", "assistant", "system", "error", "compaction"]},
+        "text": {"type": "string"}
+      }
+    },
+    "ConversationSnapshot": {
+      "type": "object",
+      "required": ["conversation", "items", "has_more"],
+      "additionalProperties": false,
+      "properties": {
+        "conversation": {"$ref": "#/$defs/ConversationRow"},
+        "related_threads": {"type": "array", "items": {"type": "object", "required": ["id", "title", "internal"], "additionalProperties": false, "properties": {"id": {"$ref": "#/$defs/Uuid"}, "title": {"type": ["string", "null"]}, "internal": {"type": "boolean"}}}},
+        "items": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/ConversationRunItem"}, {"$ref": "#/$defs/ConversationMessageItem"}]}},
+        "has_more": {"type": "boolean"}
+      }
+    },
+    "AgentRunStep": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "status": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] },
+        "at": { "type": ["string", "null"] },
+        "call_id": { "type": ["string", "null"] },
+        "is_error": { "type": ["boolean", "null"] }
+      }
+    },
     "AgentRun": {
       "description": "One agent run: the `agent_run` frame and the row of the run lists. `agent_name` and `routine_name` are joined display names. `call_count` and `tool_count` are the run's model and tool calls, present on a finished run's `agent_run` frame.",
       "type": "object",
       "required": ["id", "agent_id", "user_id", "thread_id", "routine_id", "parent_run_id", "delegate_agent_id", "depth", "trigger", "status", "summary", "error_code", "error_message", "error_step", "tokens", "started_at", "finished_at", "created_at", "agent_name", "routine_name"],
       "additionalProperties": false,
       "properties": {
+        "internal": { "type": "boolean", "description": "The Run belongs to a background Thread visible in admin Activity." },
         "id": { "$ref": "#/$defs/Uuid" },
         "agent_id": { "$ref": "#/$defs/Uuid" },
         "user_id": { "type": ["string", "null"], "format": "uuid" },
