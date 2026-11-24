@@ -4,22 +4,34 @@ import hashlib
 import json
 import re
 import uuid
+from pathlib import Path
+
+shared_vendors = json.loads((Path(__file__).resolve().parents[2] /
+                           "apps/server/src/integrations/shared-mcp-vendors.json").read_text())
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("slug")
 parser.add_argument("org", nargs="?", type=uuid.UUID)
 parser.add_argument("--tenant-isolated", action="store_true")
+parser.add_argument("--shared", action="store_true")
+parser.add_argument("--image", default="guild-k8s-server:experiment")
+parser.add_argument("--issuer", default="https://guild-agent-experiment.invalid")
 parser.add_argument("--bundle-sha256")
 parser.add_argument("--bundle-version")
 parser.add_argument("--impersonated", action="store_true")
 parser.add_argument("--legacy-proxy", action="store_true")
 args = parser.parse_args()
 slug = args.slug
+if not re.fullmatch(r"https://[a-zA-Z0-9.-]+", args.issuer):
+    parser.error("issuer must be an HTTPS origin")
 supported = {
     "atlassian", "firecrawl", "github", "gitlab", "google_workspace",
     "grafana", "hubspot", "langfuse", "posthog", "searxng", "slack",
 }
 bundle = args.bundle_sha256
+if args.shared and (slug not in shared_vendors or args.org is not None or args.tenant_isolated or bundle
+                    or args.bundle_version or args.impersonated or args.legacy_proxy):
+    parser.error("shared placement requires a supported public vendor")
 if args.legacy_proxy:
     if bundle or args.bundle_version or args.impersonated or not args.org:
         parser.error("an envelope proxy requires a connection UUID and org")
@@ -52,13 +64,15 @@ if bundle:
         {"name": "GUILD_MCP_BUNDLE_SHA256", "value": bundle},
         {"name": "GUILD_MCP_BUNDLE_VERSION", "value": args.bundle_version},
     ])
-sources = [{"secret": {"name": name + "-settings", "items": [
+if args.shared:
+    env.append({"name": "GUILD_MCP_SHARED", "value": "1"})
+sources = [] if args.shared else [{"secret": {"name": name + "-settings", "items": [
     {"key": "settings.json", "path": "settings.json"},
 ]}}]
 if impersonated:
     env.extend([
         {"name": "GUILD_MCP_ORG", "value": str(args.org)},
-        {"name": "GUILD_MCP_ISSUER", "value": "https://guild-agent-experiment.invalid"},
+        {"name": "GUILD_MCP_ISSUER", "value": args.issuer},
     ])
     sources.append({"configMap": {"name": "guild-agentgateway-issuer"}})
 else:
@@ -89,7 +103,7 @@ items = [
                 "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "fsGroup": 1000},
                 "containers": [{
                     "name": "mcp",
-                    "image": f"guild-k8s-mcp-bundle:{bundle}" if bundle else "guild-k8s-server:experiment",
+                    "image": f"guild-k8s-mcp-bundle:{bundle}" if bundle else args.image,
                     "imagePullPolicy": "Never",
                     "command": ["bun", "src/legacy-mcp-proxy.ts" if args.legacy_proxy else "src/connector-mcp.ts"],
                     "env": env,

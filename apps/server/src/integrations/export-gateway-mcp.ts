@@ -9,6 +9,7 @@ import { IntegrationSecretStore, IntegrationStore } from "../platform/store/inte
 import { UserMcpStore } from "../platform/store/user-mcp.js";
 import { builtinByName } from "./loader.js";
 import { mcpRequestHeaders } from "./mcp-headers.js";
+import sharedVendors from "./shared-mcp-vendors.json" with { type: "json" };
 import type { JsonObject } from "./shared.js";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -25,6 +26,8 @@ interface Selection {
   chats?: string[];
   tools: string[];
   identityEnvelope?: boolean;
+  placement?: "shared" | "tenant";
+  services?: { id: string; tools: string[]; delegatedMembers?: string[] }[];
 }
 
 function object(value: unknown): JsonObject {
@@ -58,7 +61,8 @@ async function run() {
   const targets: JsonObject[] = [];
   const secrets: ReturnType<typeof secret>[] = [];
   const connectors = new Set<string>();
-    const legacyProxies = new Set<string>();
+  const sharedConnectors = new Set<string>();
+  const legacyProxies = new Set<string>();
   const names = new Set<string>();
   try {
     for (const selection of selected) {
@@ -68,11 +72,21 @@ async function run() {
         throw new Error("each target needs a unique DNS label, source UUID and explicit tool allowlist");
       }
       names.add(name);
+      if (selection.placement !== undefined && selection.placement !== "shared" && selection.placement !== "tenant") {
+        throw new Error(`${name}: invalid connector placement`);
+      }
+      if (selection.placement === "shared" && selection.source !== "org") {
+        throw new Error(`${name}: shared placement requires a compiled org connector`);
+      }
       if (selection.chats !== undefined && (!Array.isArray(selection.chats) ||
           !selection.chats.every((chat) => typeof chat === "string" && uuid.test(chat)))) {
         throw new Error(`${name}: the chat allowlist must contain Guild chat UUIDs`);
       }
-      const chatPolicy = selection.chats === undefined ? {} : { chats: selection.chats };
+      const targetPolicy = {
+        ...(selection.chats === undefined ? {} : { chats: selection.chats }),
+        ...(selection.services === undefined ? {} : { services: selection.services }),
+        ...(selection.source === "personal" ? { personal: true } : {}),
+      };
       let endpoint: string;
       let headers: Record<string, string>;
       if (selection.source === "personal") {
@@ -93,6 +107,7 @@ async function run() {
         const legacyMcp = rowConfig["mcp"];
         const values = await integrationSecrets.resolve(org, row.name, await integrationSecrets.names(org, row.name), key);
         if (legacyMcp !== null && typeof legacyMcp === "object" && !Array.isArray(legacyMcp)) {
+          if (selection.placement === "shared") throw new Error(`${name}: shared placement requires a compiled connector`);
           const mcp = object(legacyMcp);
           if (typeof mcp["url"] !== "string") throw new Error(`${name}: MCP URL missing`);
           endpoint = mcp["url"];
@@ -107,7 +122,7 @@ async function run() {
             secrets.push(secret(`${service}-settings`, { "settings.json": JSON.stringify({ endpoint, credentials: headers }) }));
             targets.push({
               name, url: `http://${service}.${namespace}.svc.cluster.local:8080/mcp`,
-              members: selection.members, tools, legacyEnvelopeProxy: id, ...chatPolicy,
+              members: selection.members, tools, legacyEnvelopeProxy: id, ...targetPolicy,
             });
             continue;
           }
@@ -117,6 +132,24 @@ async function run() {
           if (connectors.has(row.name)) throw new Error(`${name}: the connector is selected twice`);
           const available = new Set((await connector.toolSpecs(rowConfig)).map((tool) => tool.name));
           if (!tools.every((tool) => available.has(tool))) throw new Error(`${name}: allowlist names an unknown connector tool`);
+          if (selection.placement === "shared") {
+            const shared = Object.hasOwn(sharedVendors, row.name) ? sharedVendors[row.name as keyof typeof sharedVendors] : undefined;
+            if (!shared) throw new Error(`${name}: this vendor requires tenant placement`);
+            const apiUrl = rowConfig[shared.urlKey];
+            const vendorToken = values.find(([key]) => key === shared.secretKey)?.[1];
+            if ((apiUrl !== undefined && apiUrl !== shared.url) || !vendorToken || !/^[\x21-\x7e]{1,2048}$/.test(vendorToken)) {
+              throw new Error(`${name}: shared placement requires the public vendor URL and a configured token`);
+            }
+            const service = `guild-mcp-${row.name}`;
+            const credential = `${service}-${id}`;
+            secrets.push(secret(credential, { token: vendorToken }));
+            targets.push({
+              name, url: `http://${service}.${namespace}.svc.cluster.local:8080/mcp`,
+              members: selection.members, tools, sharedConnector: row.name, sharedCredential: credential, ...targetPolicy,
+            });
+            sharedConnectors.add(row.name);
+            continue;
+          }
           connectors.add(row.name);
           const service = `guild-mcp-${row.name.replaceAll("_", "-")}-${org.replaceAll("-", "")}`;
           secrets.push(secret(`${service}-settings`, {
@@ -124,7 +157,7 @@ async function run() {
           }));
           const target: JsonObject = {
             name, url: `http://${service}.${namespace}.svc.cluster.local:8080/mcp`,
-            members: selection.members, tools, ...chatPolicy,
+            members: selection.members, tools, ...targetPolicy,
           };
           if (connector.auth_kind === "org_secret_impersonated") {
             if (name !== "google-workspace") throw new Error("delegated Google target needs name google-workspace");
@@ -141,7 +174,7 @@ async function run() {
 
       const target: JsonObject = {
         name, url: endpoint, tools, members: selection.source === "personal" ? [selection.owner] : selection.members,
-        ...chatPolicy,
+        ...targetPolicy,
       };
       const entries = Object.entries(headers);
       const headerSecret = `guild-mcp-${id}`;
@@ -155,6 +188,7 @@ async function run() {
       inventory: { org, targets },
       secrets: { apiVersion: "v1", kind: "List", items: secrets },
       connectors: [...connectors],
+      sharedConnectors: [...sharedConnectors],
       legacyProxies: [...legacyProxies],
     }) + "\n");
   } finally {

@@ -20,8 +20,11 @@ export function delegatedIdentity(
         claims["iss"] !== issuer || claims["aud"] !== "guild-agentgateway" || claims["scope"] !== "mcp" ||
         claims["org"] !== orgId || typeof claims["sub"] !== "string" || claims["sub"] === "" ||
         typeof claims["exp"] !== "number" || claims["exp"] <= now || claims["exp"] > now + 90) return null;
+    const subject = claims["sub"];
+    const member = subject.startsWith("service:") ? claims["delegated_member"] : subject;
+    if (typeof member !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(member)) return null;
     const email = claims["acting_as"];
-    return { memberId: claims["sub"], actingAs: typeof email === "string" && email !== "" ? email : null };
+    return { memberId: member, actingAs: typeof email === "string" && email !== "" ? email : null };
   } catch {
     return null;
   }

@@ -1,0 +1,5 @@
+{
+  "github": { "urlKey": "api_url", "url": "https://api.github.com", "secretKey": "token" },
+  "hubspot": { "urlKey": "base_url", "url": "https://api.hubapi.com", "secretKey": "token" },
+  "slack": { "urlKey": "base_url", "url": "https://slack.com/api", "secretKey": "bot_token" }
+}

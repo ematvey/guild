@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-kubeconfig="${1:?usage: install-gateway-identity.sh KUBECONFIG}"
-[[ "$(kubectl --kubeconfig "$kubeconfig" config current-context)" == k3d-guild-agent-experiment ]]
+kubeconfig="${1:?usage: install-gateway-identity.sh KUBECONFIG [--default-dev]}"
+context="$(kubectl --kubeconfig "$kubeconfig" config current-context)"
+[[ "$context" == k3d-guild-agent-experiment || ( "$context" == default && "${2:-}" == --default-dev ) ]]
+issuer="${GUILD_AGENTGATEWAY_ISSUER:-https://guild-agent-experiment.invalid}"
+[[ "$issuer" =~ ^https://[a-zA-Z0-9.-]+$ ]]
+[[ "$context" != default || -n "${GUILD_AGENTGATEWAY_ISSUER:-}" ]]
 kube=(kubectl --kubeconfig "$kubeconfig" -n guild-experiment)
 
+umask 077
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 if [[ -z "$("${kube[@]}" get secret guild-agentgateway-signing --ignore-not-found -o name)" ]]; then
@@ -32,7 +37,7 @@ spec:
     jwtAuthentication:
       mode: Strict
       providers:
-        - issuer: https://guild-agent-experiment.invalid
+        - issuer: $issuer
           audiences: [guild-agentgateway]
           jwks:
             inline: '$jwks'

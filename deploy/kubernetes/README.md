@@ -239,6 +239,47 @@ legacy headers and connector credentials to the configured upstream.
 The upstream receives a fresh call ID for each HTTP request. Guild's
 gateway bearer token stays inside the cluster.
 
+### Shared MCP endpoint
+
+The internal gateway serves one MCP URL per org at `/mcp/<org-id>`. Guild
+and service consumers use the same URL. Guild signs workload tokens.
+Agentgateway authorizes target discovery and tool calls. Substrate uses
+its own networking gateway.
+
+Set `GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY=1` to enable the service token
+exchange while Guild uses its configured providers and direct integrations.
+Point `GUILD_MCP_SERVICES_FILE` at a private JSON array of entries with
+`id`, `org`, `secretSha256`, and optional `allowDelegation`. Give each
+service a unique random secret and put its SHA-256 in the file. Restart
+Guild after replacing the file. Service callers POST to
+`/api/v1/mcp/service-token` with `X-Guild-MCP-Service` and
+`X-Guild-MCP-Service-Key`. For delegated calls, the user supplies a
+Guild session bearer token in `Authorization`. Guild verifies membership
+in the service's org and derives the acting identity from the session.
+The response contains the MCP URL and a bearer authorization valid for
+90 seconds. Use confidential transport for both requests.
+
+The import plan describes the org's complete published MCP inventory.
+A target can name `services` with entries containing `id`, `tools`,
+and optional `delegatedMembers`. Service tools must be a subset of the
+target tools. Omit `delegatedMembers` for headless access. Personal,
+impersonated, and identity-envelope targets require explicit delegated
+members. Chat-scoped targets accept Guild chat callers.
+
+Set `placement` to `shared` for the public GitHub, HubSpot, or Slack API.
+The vendor Deployment uses a fixed public upstream and agentgateway
+injects the target's credential per request. The connector's Secret
+contains its gateway access key. Each vendor credential stays in its own
+target Secret. Tenant placement is the default for compiled connectors.
+Use it for custom API URLs, delegated connectors, and registry bundles.
+
+To publish on default dev, pass `--default-dev` to the importer with
+`GUILD_MCP_CONNECTOR_IMAGE` set to the installed Guild server image and
+`GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer.
+`verify-mcp-service-grants.sh` and `verify-shared-github.sh` exercise the
+experiment gateway with temporary routes. Validate vendor and authorization
+parity for the actual org inventory before switching Guild's execution.
+
 ### Registry code bundles
 
 Use `import-mcp-bundle.sh ARCHIVE APPROVED_SHA256` to package an approved

@@ -5,6 +5,7 @@ import { relativeDestination } from "./platform/domain/paths.js";
 import { loadCodePlugin } from "./integrations/code-plugins.js";
 import { delegatedIdentity } from "./integrations/connector-mcp-identity.js";
 import { builtinByName } from "./integrations/loader.js";
+import sharedVendors from "./integrations/shared-mcp-vendors.json" with { type: "json" };
 import { callSignals, type JsonObject } from "./integrations/shared.js";
 
 function object(value: unknown): JsonObject {
@@ -24,7 +25,14 @@ const connector = bundleHash === undefined
 if (!connector) throw new Error(`unknown MCP connector ${slug}`);
 const settingsPath = process.env.GUILD_MCP_SETTINGS_FILE ?? "/run/guild-mcp/settings.json";
 const keyPath = process.env.GUILD_MCP_KEY_FILE ?? "/run/guild-mcp/access-key";
-const settings = object(JSON.parse(await readFile(settingsPath, "utf8")));
+const shared = process.env.GUILD_MCP_SHARED === "1";
+const sharedVendor = shared && Object.hasOwn(sharedVendors, slug) && bundleHash === undefined
+  ? sharedVendors[slug as keyof typeof sharedVendors]
+  : null;
+if (shared && !sharedVendor) throw new Error("connector does not support shared MCP placement");
+const settings = sharedVendor
+  ? { config: { [sharedVendor.urlKey]: sharedVendor.url }, secrets: {} }
+  : object(JSON.parse(await readFile(settingsPath, "utf8")));
 const config = object(settings["config"] ?? {});
 const secrets = Object.entries(object(settings["secrets"] ?? {})).map(([name, value]): [string, string] => {
   if (typeof value !== "string") throw new Error(`invalid connector secret ${name}`);
@@ -91,9 +99,17 @@ app.post("/mcp", async (req, reply) => {
       if (impersonated && caller === null) {
         return result({ isError: true, content: [{ type: "text", text: "a delegated member identity is required" }] });
       }
+      let callSecrets = secrets;
+      if (sharedVendor) {
+        const token = req.headers["x-guild-mcp-connector-token"];
+        if (typeof token !== "string" || token.length === 0 || token.length > 2048) {
+          return failure(-32603, "missing connector target credential");
+        }
+        callSecrets = [[sharedVendor.secretKey, token]];
+      }
       try {
         const outcome = await callSignals.run(signal, () =>
-          connector.execute(config, name, args, secrets, caller));
+          connector.execute(config, name, args, callSecrets, caller));
         const structuredContent: JsonObject = {};
         if (outcome.meta !== undefined) structuredContent["guildMeta"] = outcome.meta;
         if (outcome.file !== undefined) {

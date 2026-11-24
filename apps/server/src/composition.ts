@@ -67,6 +67,7 @@ export class PlatformContext implements PlatformStores {
   readonly apiKeys: PlatformStores["apiKeys"];
   readonly gatewayStore: PlatformStores["gatewayStore"];
   readonly agentGateway: AgentGateway | null;
+  readonly mcpTokenGateway: AgentGateway | null;
   readonly machines: PlatformStores["machines"];
   readonly registry: PlatformStores["registry"];
   readonly skills: PlatformStores["skills"];
@@ -140,7 +141,8 @@ export class PlatformContext implements PlatformStores {
     private readonly log: Logger = pino({ level: "silent" }),
   ) {
     this.secretsKey = masterKeyBytes(config.masterKeyHex);
-    this.agentGateway = config.agentGateway ? new AgentGateway(config.agentGateway) : null;
+    this.mcpTokenGateway = config.agentGateway ? new AgentGateway(config.agentGateway) : null;
+    this.agentGateway = config.agentGateway?.serviceTokensOnly ? null : this.mcpTokenGateway;
     reportMalformedEventRows((error) => log.warn({ err: error }, "thread event row sent unnormalized"));
     this.pool = createPlatformPool(config.databaseUrl, config.poolMax, log);
     this.objects = new ObjectStore(config);

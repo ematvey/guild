@@ -4,7 +4,11 @@ import hashlib
 import json
 import re
 import uuid
+from pathlib import Path
 from urllib.parse import urlsplit
+
+shared_vendors = json.loads((Path(__file__).resolve().parents[2] /
+                           "apps/server/src/integrations/shared-mcp-vendors.json").read_text())
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("inventory", type=argparse.FileType("r"))
@@ -57,7 +61,24 @@ for entry in entries:
     if address.scheme == "https":
         policies["tls"] = {"sni": address.hostname}
     secret = entry.get("credentialSecret")
-    if entry.get("legacyEnvelopeProxy") is not None:
+    shared_connector = entry.get("sharedConnector")
+    if shared_connector is not None or "sharedCredential" in entry:
+        shared_credential = entry.get("sharedCredential")
+        if shared_connector not in shared_vendors or not isinstance(shared_credential, str):
+            raise SystemExit("invalid shared connector or target credential")
+        expected_host = f"guild-mcp-{shared_connector}.{namespace}.svc.cluster.local"
+        if (address.scheme != "http" or address.hostname != expected_host or address.port != 8080
+            or static["path"] != "/mcp" or static["protocol"] != "StreamableHTTP"
+            or secret is not None or entry.get("credentialHeaders") or not secret_name_pattern.fullmatch(shared_credential)):
+            raise SystemExit("shared placement requires the internal service and a dedicated target credential")
+        policies["auth"] = {
+            "secretRef": {"name": f"guild-mcp-{shared_connector}-access"},
+            "credentials": [{
+                "secretRef": {"name": shared_credential, "key": "token"},
+                "location": {"header": {"name": "x-guild-mcp-connector-token"}},
+            }],
+        }
+    elif entry.get("legacyEnvelopeProxy") is not None:
         proxy = str(uuid.UUID(entry["legacyEnvelopeProxy"]))
         proxy_host = f"guild-mcp-envelope-{proxy}.{namespace}.svc.cluster.local"
         if (address.scheme != "http" or address.hostname != proxy_host or address.port != 8080
@@ -104,22 +125,48 @@ for entry in entries:
         static["policies"] = policies
     target = {"name": name, "static": static}
     member_ids = entry.get("members")
-    conditions = []
-    if member_ids is not None:
-        conditions.append("jwt.sub in " + json.dumps(sorted({str(uuid.UUID(member)) for member in member_ids})))
+    members = None if member_ids is None else sorted({str(uuid.UUID(member)) for member in member_ids})
+    member_check = '!jwt.sub.startsWith("service:")'
+    if members is not None:
+        member_check += " && jwt.sub in " + json.dumps(members)
+    chat_check = ""
     if entry.get("chats") is not None:
         chat_ids = sorted({str(uuid.UUID(chat)) for chat in entry["chats"]})
-        conditions.append("has(jwt.chat) && jwt.chat in " + json.dumps(chat_ids))
-    check = " && ".join(conditions) or "true"
-    if conditions and len(entries) > 1:
-        target["condition"] = check
-    targets.append(target)
+        chat_check = " && has(jwt.chat) && jwt.chat in " + json.dumps(chat_ids)
     tools = entry["tools"]
     if not tools or not all(tool_name.fullmatch(tool) for tool in tools):
         raise SystemExit(f"an explicit MCP tool allowlist is required for {name!r}")
-    rules.append(
-        f"mcp.tool.target == {json.dumps(name)} && ({check}) && mcp.tool.name in {json.dumps(sorted(set(tools)))}"
-    )
+
+    grants = [(member_check + chat_check, sorted(set(tools)))]
+    service_ids = set()
+    for grant in entry.get("services", []):
+        service = grant["id"]
+        service_tools = grant["tools"]
+        if not isinstance(service, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", service) or service in service_ids:
+            raise SystemExit(f"invalid or duplicate MCP service for {name!r}")
+        if not isinstance(service_tools, list) or not service_tools or not all(isinstance(tool, str) and tool in tools for tool in service_tools):
+            raise SystemExit(f"service tools must be a nonempty subset of target tools for {name!r}")
+        if chat_check:
+            raise SystemExit(f"service grants cannot target chat-scoped MCP inventory for {name!r}")
+        service_ids.add(service)
+        service_check = "jwt.sub == " + json.dumps("service:" + service)
+        if "delegatedMembers" in grant:
+            delegated = sorted({str(uuid.UUID(member)) for member in grant["delegatedMembers"]})
+            if not delegated or (members is not None and not set(delegated).issubset(members)):
+                raise SystemExit(f"invalid delegated member grant for {name!r}")
+            service_check += " && has(jwt.delegated_member) && jwt.delegated_member in " + json.dumps(delegated)
+        else:
+            if entry.get("delegatesActingIdentity") or entry.get("legacyEnvelopeProxy") or entry.get("personal"):
+                raise SystemExit(f"a delegated member grant is required for {name!r}")
+            service_check += " && !has(jwt.delegated_member)"
+        grants.append((service_check, sorted(set(service_tools))))
+    if len(entries) > 1:
+        target["condition"] = " || ".join(f"({check})" for check, _ in grants)
+    targets.append(target)
+    for check, allowed in grants:
+        rules.append(
+            f"mcp.tool.target == {json.dumps(name)} && ({check}) && mcp.tool.name in {json.dumps(allowed)}"
+        )
 
 if not targets:
     raise SystemExit("at least one MCP target is required")
@@ -132,7 +179,7 @@ traffic = {
         "action": "Allow",
         "policy": {"matchExpressions": [f'jwt.scope == "mcp" && jwt.org == "{org}"']},
     },
-    "transformation": {"request": {"remove": ["x-guild-mcp-caller-email"]}},
+    "transformation": {"request": {"remove": ["x-guild-mcp-caller-email", "x-guild-mcp-connector-token"]}},
 }
 route = new_resource(route_api, "HTTPRoute", backend, {
     "parentRefs": [{"name": "guild-ai", "sectionName": "ai"}],

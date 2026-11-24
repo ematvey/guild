@@ -350,7 +350,7 @@ export class GuildRuntime {
       materialize: (args) => this.executors.materializeInstalledSkill(args),
     });
     const integrationGateway: IntegrationGateway = {
-      agentGateway: config.agentGateway ? new AgentGateway(config.agentGateway) : null,
+      agentGateway: config.agentGateway && !config.agentGateway.serviceTokensOnly ? new AgentGateway(config.agentGateway) : null,
       integrations: stores.integrations,
       integrationSecrets: stores.integrationSecrets,
       registry: stores.registry,
@@ -388,7 +388,7 @@ export class GuildRuntime {
     this.userMcpRuntime = new UserMcpRuntime(
       {
         store: stores.userMcp,
-        enabled: !config.agentGateway,
+        enabled: !config.agentGateway || config.agentGateway.serviceTokensOnly === true,
         masterKey: () => deps.masterKey(),
         log,
         chatOfConversation,
