@@ -29,6 +29,7 @@ import type { ThreadStoreHandle } from "./use-thread-store";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 import {
+  applyActivityRun,
   applyAgentList,
   applyIntegrationAccess,
   applyAgentRoutines,
@@ -226,6 +227,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onAgentList: applyAgentList,
       onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
+      onActivityRun: applyActivityRun,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),

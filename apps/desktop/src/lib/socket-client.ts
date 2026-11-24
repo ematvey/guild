@@ -76,6 +76,7 @@ export interface SocketHandlers {
   onIntegrationAccess?: (integrations: AttachableIntegration[]) => void;
   /** One run, created or changed. */
   onAgentRun?: (run: AgentRun) => void;
+  onActivityRun?: (message: Extract<ServerFrame, { type: "activity_run" }>) => void;
   /** The member's open threads with one agent. */
   onAgentThreads?: (agent_id: string, threads: AgentThread[]) => void;
   /** One agent's routines with their newest runs. */
@@ -198,6 +199,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       return;
     case "agent_run":
       handlers.onAgentRun?.(message.run);
+      return;
+    case "activity_run":
+      handlers.onActivityRun?.(message);
       return;
     case "agent_threads":
       handlers.onAgentThreads?.(message.agent_id, message.threads);

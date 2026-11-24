@@ -27,6 +27,8 @@ import type {
 } from "../agents/types.js";
 import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
 import type { OrgPayload } from "../platform/notify.js";
+import { canReadOwned, readsWholeOrg } from "../platform/domain/access.js";
+import type { ConversationHistoryStore } from "../platform/store/conversation-history.js";
 import type { IdentityStore } from "../platform/store/identity.js";
 import type { SkillStore } from "../platform/store/skills.js";
 import type { AppStore } from "../platform/store/apps.js";
@@ -53,6 +55,7 @@ export interface AgentStateDeps {
     readonly threads: Pick<AgentThreadStore, "displayThreads">;
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
+  readonly conversationHistory: Pick<ConversationHistoryStore, "runCounts">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   /** The Apps each member sees. */
   readonly apps: Pick<AppStore, "listVisible">;
@@ -291,29 +294,32 @@ export class AgentStateFeed {
     }
   }
 
-  private async sendRun(
-    orgId: string,
-    agentId: string,
-    runId: string,
-  ): Promise<void> {
+  private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {
     const users = this.ctx.hub.memberUsersOfOrg(orgId);
     if (users.length === 0) return;
-    const viewers = await this.store.grants.visibleUserIds(agentId, users);
-    if (viewers.length === 0) return;
     let run: StoreRun;
     try {
       run = await this.store.runs.getRun(runId);
     } catch {
       return;
     }
-    if (run.internal) return;
-    const wire = runWire(run);
-    if (run.finished_at !== null)
-      Object.assign(wire, await this.callCounts(orgId, runId));
-    const frame: WsServerMsg = { type: "agent_run", run: wire };
-    for (const userId of viewers) {
-      if (run.user_id === userId) this.send(userId, frame);
-    }
+    if (run.agent_id !== agentId) return;
+    const members = (await this.ctx.identity.getUsers(users)).filter(
+      (member) =>
+        member.org_id === orgId && canReadOwned(member, run.user_id) && (!run.internal || readsWholeOrg(member)),
+    );
+    if (members.length === 0) return;
+
+    const [callCounts, counts, agentViewers] = await Promise.all([
+      run.finished_at === null ? {} : this.callCounts(orgId, runId),
+      run.thread_id === null ? null : this.ctx.conversationHistory.runCounts(run.thread_id),
+      run.internal || run.user_id === null || !members.some((member) => member.id === run.user_id)
+        ? []
+        : this.store.grants.visibleUserIds(agentId, [run.user_id]),
+    ]);
+    const wire = { ...runWire(run), ...callCounts };
+    for (const userId of agentViewers) this.send(userId, { type: "agent_run", run: wire });
+    for (const { id } of members) this.send(id, { type: "activity_run", run: wire, counts });
   }
 
   /** A finished run's model and tool call counts, from the same spans the

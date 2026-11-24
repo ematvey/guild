@@ -121,12 +121,17 @@ async function createAgent(token: string, name: string, visibility: "private" | 
   return body.agent.id;
 }
 
-async function insertRun(agentId: string, userId: string, status: string): Promise<string> {
+async function insertRun(
+  agentId: string,
+  userId: string,
+  status: string,
+  threadId: string | null = null,
+): Promise<string> {
   const runId = crypto.randomUUID();
   await stack.env.db.query(
-    `INSERT INTO agent_runs (id, agent_id, user_id, trigger, status, started_at)
-     VALUES ($1, $2, $3, 'manual', $4, now())`,
-    [runId, agentId, userId, status],
+    `INSERT INTO agent_runs (id, agent_id, user_id, trigger, status, started_at, thread_id)
+     VALUES ($1, $2, $3, 'manual', $4, now(), $5)`,
+    [runId, agentId, userId, status, threadId],
   );
   return runId;
 }
@@ -186,6 +191,48 @@ describe("agent and skill state frames", () => {
     } finally {
       owner.end();
       peer.end();
+    }
+  });
+
+  it("pushes org-wide Activity updates to admins while keeping background Runs out of Member and Agent feeds", async () => {
+    const admin = await memberSocket(stack.adminToken);
+    const owner = await memberSocket(stack.memberToken);
+    try {
+      const agentId = await createAgent(stack.memberToken, `activity-${crypto.randomUUID().slice(0, 8)}`, "private");
+      const { thread } = await api<{ thread: { id: string; chat_id: string } }>(
+        stack.memberToken,
+        "POST",
+        `/api/v1/agents/${agentId}/threads`,
+        {},
+      );
+      const ordinaryRun = await insertRun(agentId, stack.memberId, "running");
+      const isRun = (frame: Frame, id: string) => (frame.run as { id: string } | undefined)?.id === id;
+      await waitFrame(admin, (frame) => frame.type === "activity_run" && isRun(frame, ordinaryRun));
+      await waitFrame(owner, (frame) => frame.type === "activity_run" && isRun(frame, ordinaryRun));
+
+      await stack.env.db.query("UPDATE chats SET internal = true WHERE id = $1", [thread.chat_id]);
+      const internalRun = await insertRun(agentId, stack.memberId, "running", thread.id);
+      const running = await waitFrame(admin, (frame) => frame.type === "activity_run" && isRun(frame, internalRun));
+      expect(running.run).toMatchObject({ internal: true, status: "running" });
+      expect(running.counts).toEqual({ runs: 1, open_runs: 1, failed_runs: 0 });
+
+      await stack.env.db.query("UPDATE agent_runs SET status = 'failed', finished_at = now() WHERE id = $1", [
+        internalRun,
+      ]);
+      const finished = await waitFrame(
+        admin,
+        (frame) =>
+          frame.type === "activity_run" &&
+          isRun(frame, internalRun) &&
+          (frame.run as { status: string }).status === "failed",
+      );
+      expect(finished.counts).toEqual({ runs: 1, open_runs: 0, failed_runs: 1 });
+      await owner.pingBarrier();
+      expect(textFrames(owner).some((frame) => isRun(frame, internalRun))).toBe(false);
+      expect(textFrames(admin).some((frame) => frame.type === "agent_run" && isRun(frame, ordinaryRun))).toBe(false);
+    } finally {
+      admin.end();
+      owner.end();
     }
   });
 

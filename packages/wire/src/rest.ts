@@ -239,6 +239,8 @@ export interface AttachableIntegration {
 
 /** One agent run. `agent_name` and `routine_name` are joined display names. */
 export interface AgentRun {
+  /** The Run belongs to a background Thread visible in admin Activity. */
+  internal?: boolean;
   id: string;
   agent_id: string;
   user_id: string | null;

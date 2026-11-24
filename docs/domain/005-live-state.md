@@ -32,6 +32,7 @@ Two kinds of data stay as reads, because they are not live state:
 | Every socket of the Thread's Member | `chat_status`, `chat_row`, `thread_list`, `archived_thread_list`, `subagent_tree`, `chat_tree`, `project_list`, `machine_list` |
 | The Member's member sockets | `machine_status`, `member_profile`, `integration_access` (the Integrations they may add to an Agent, re-sent when an audience, a grant or a team membership moves) |
 | Members who may see the Agent or Skill | `agent_list`, `agent_routines`, `skill_catalog`; `agent_threads` contains only that Member's visible Threads, and `agent_run` reaches only the requesting Member |
+| Members who may read the Run in Activity | `activity_run` carries the Run and its Thread's Run counts to the requesting Member or an Org admin. Background Run updates reach only Org admins |
 | Every socket of the Org | `org_event`, `workspace_identity`, `model_list` |
 | One socket | `hello`, `pong`, `error`, `sync_begin`, `sync_done`, `auth_required`, `displaced` |
 | One Machine | `tool_dispatch`, `tool_cancel`, `machine_request` |
@@ -122,6 +123,6 @@ build version. Desktop clients invalidate pending update offers when it changes.
 
 ## Assistant visibility
 
-The Member's assistant is an ordinary Thread at its canonical `/thread/<chat-id>` address, and the Chats tab opens on it: the tab root asks the server for the Member's inbox Thread and replaces the address with that Thread. A rail entry, a page and an activity view of their own do not exist. Internal coordinator and reflection Threads never enter display feeds or Web Push.
+The Member's assistant is an ordinary Thread at its canonical `/thread/<chat-id>` address, and the Chats tab opens on it: the tab root asks the server for the Member's inbox Thread and replaces the address with that Thread. A rail entry, a page and an activity view of their own do not exist. Internal coordinator and reflection Threads are visible only in admin Activity and never send Web Push.
 
 Assistant inboxes stay pinned at the top of the Chats panel in a separate section above the scrolling Thread list, with the new-chat row between them and that list. Their identity comes from the server's `assistant_inbox` Chat field, independent of title and activity time. The existing `thread_list` and `chat_row` frames carry it. An inbox Thread keeps its Agent. Its composer omits the Agent picker and context usage, and its header and sidebar row omit Thread actions.

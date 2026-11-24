@@ -35,6 +35,7 @@ const SERVER_TAG_NAMES = [
   "agent_list",
   "integration_access",
   "agent_run",
+  "activity_run",
   "agent_threads",
   "agent_routines",
   "skill_catalog",

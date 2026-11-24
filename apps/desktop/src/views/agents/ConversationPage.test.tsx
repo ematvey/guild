@@ -2,17 +2,24 @@
 // The conversation page reads a chat the way a manager browses it: the
 // trigger message, one run row, the agent's reply; the run row opens the
 // run detail.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConversationDetail } from "./agents-api";
+import type { ConversationDetail, ConversationRow } from "./agents-api";
 
-const api = vi.hoisted(() => ({ getConversation: vi.fn() }));
+const api = vi.hoisted(() => ({
+  getConversation: vi.fn(),
+  getActivitySummary: vi.fn(),
+  listConversations: vi.fn(),
+}));
 vi.mock("./agents-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./agents-api")>()),
   ...api,
 }));
 
-import { ConversationPage } from "./ActivityPage";
+import { ActivityPage, ConversationPage } from "./ActivityPage";
+import { AGENTS_ACTIVITY } from "./agents-route";
+import { applyActivityRun } from "./agents-store";
+import { makeRun } from "./test-fixtures";
 
 const detail: ConversationDetail = {
   conversation: {
@@ -112,4 +119,45 @@ describe("conversation page", () => {
     await waitFor(() => expect(screen.getByText("Quarterly numbers")).toBeTruthy());
     expect(screen.queryByText("Cost")).toBeNull();
   });
+});
+
+it("applies background Thread counts that arrive before and after the Activity snapshot", async () => {
+  const row: ConversationRow = { ...detail.conversation, internal: true, open_runs: 1 };
+  let showSnapshot!: (value: { conversations: ConversationRow[]; total: number }) => void;
+  api.listConversations.mockReturnValueOnce(
+    new Promise((resolve) => {
+      showSnapshot = resolve;
+    }),
+  );
+  api.getActivitySummary.mockRejectedValueOnce(new Error("analytics unavailable"));
+  render(
+    <ActivityPage
+      filters={{ ...AGENTS_ACTIVITY.filters, tab: "chats", background: true }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+      role="admin"
+    />,
+  );
+
+  const run = makeRun({ internal: true, thread_id: "t1", status: "failed" });
+  act(() =>
+    applyActivityRun({
+      type: "activity_run",
+      run,
+      counts: { runs: 1, open_runs: 0, failed_runs: 1 },
+    }),
+  );
+  await act(async () => showSnapshot({ conversations: [row], total: 1 }));
+  expect(screen.getByText("1 failed run")).toBeTruthy();
+  expect(screen.queryByText("Running")).toBeNull();
+
+  act(() =>
+    applyActivityRun({
+      type: "activity_run",
+      run: { ...run, status: "running" },
+      counts: { runs: 2, open_runs: 1, failed_runs: 1 },
+    }),
+  );
+  expect(screen.getByText("Running")).toBeTruthy();
+  expect(api.listConversations).toHaveBeenCalledTimes(1);
 });

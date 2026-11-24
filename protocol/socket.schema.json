@@ -39,6 +39,7 @@
     "AgentList": { "$ref": "#/$defs/AgentList" },
     "IntegrationAccess": { "$ref": "#/$defs/IntegrationAccess" },
     "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
+    "ActivityRunFrame": { "$ref": "#/$defs/ActivityRunFrame" },
     "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
     "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
@@ -97,6 +98,7 @@
         { "$ref": "#/$defs/AgentList" },
         { "$ref": "#/$defs/IntegrationAccess" },
         { "$ref": "#/$defs/AgentRunFrame" },
+        { "$ref": "#/$defs/ActivityRunFrame" },
         { "$ref": "#/$defs/AgentThreads" },
         { "$ref": "#/$defs/AgentRoutines" },
         { "$ref": "#/$defs/SkillCatalog" },
@@ -473,13 +475,33 @@
       }
     },
     "AgentRunFrame": {
-      "description": "One run, created or changed. Sent to every member who may see the run's agent; the client upserts it by id into each list that shows it.",
+      "description": "One non-internal run, created or changed, for the requesting member who can see the Agent.",
       "type": "object",
       "required": ["type", "run"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "agent_run" },
         "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" }
+      }
+    },
+    "ActivityRunFrame": {
+      "description": "A changed Run and its Thread's Run counts for viewers authorized to read them.",
+      "type": "object",
+      "required": ["type", "run", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "activity_run" },
+        "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" },
+        "counts": {
+          "type": ["object", "null"],
+          "required": ["runs", "open_runs", "failed_runs"],
+          "additionalProperties": false,
+          "properties": {
+            "runs": { "type": "integer" },
+            "open_runs": { "type": "integer" },
+            "failed_runs": { "type": "integer" }
+          }
+        }
       }
     },
     "AgentThreads": {

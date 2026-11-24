@@ -982,6 +982,7 @@
       "required": ["id", "agent_id", "user_id", "thread_id", "routine_id", "parent_run_id", "delegate_agent_id", "depth", "trigger", "status", "summary", "error_code", "error_message", "error_step", "tokens", "started_at", "finished_at", "created_at", "agent_name", "routine_name"],
       "additionalProperties": false,
       "properties": {
+        "internal": { "type": "boolean", "description": "The Run belongs to a background Thread visible in admin Activity." },
         "id": { "$ref": "#/$defs/Uuid" },
         "agent_id": { "$ref": "#/$defs/Uuid" },
         "user_id": { "type": ["string", "null"], "format": "uuid" },
