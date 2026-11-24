@@ -48,8 +48,12 @@ export function claimCoordinationInputs<T extends QueryResultRow = QueryResultRo
         UPDATE agent_coordination_inputs i SET lease_until = now() + interval '2 minutes'
         FROM due WHERE i.id = due.id RETURNING i.*
       )
-      SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email, provenance.routine_id, provenance.occurrence_id
+      SELECT c.*, COALESCE(u.display_name,u.email) AS name,u.email, provenance.routine_id, provenance.occurrence_id,
+        COALESCE(event.payload->'attachments', '[]'::jsonb) AS attachments
       FROM claimed c JOIN users u ON u.id=c.user_id
+      LEFT JOIN agent_threads source ON source.id=c.source_thread_id
+      LEFT JOIN thread_events event ON event.id=c.source_event_id AND event.chat_id=source.chat_id
+        AND event.type='user_message' AND c.kind='request'
       LEFT JOIN LATERAL (
         SELECT r.routine_id, o.id AS occurrence_id
         FROM agent_runs r LEFT JOIN agent_routine_occurrences o ON o.run_id=r.id

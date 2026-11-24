@@ -10,6 +10,7 @@ import { uuidv7, uuidv5 } from "../../platform/time.js";
 import type { ChatStore } from "../../platform/store/chats.js";
 import type { Agent, AgentThread, AgentThreadType } from "../types.js";
 import { THREAD_COLUMNS, toThread } from "./rows.js";
+import { findCoordinationThread } from "./coordination.js";
 
 /** A parent thread already holds its maximum number of children. */
 export class ChildLimitReached extends Error {
@@ -139,8 +140,15 @@ export class AgentThreadStore {
     } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
-    const id = uuidv7();
-    await withTransaction(this.pool, async (client) => {
+    const id = await withTransaction(this.pool, async (client) => {
+      const role = options.executionRole;
+      if (role === "coordinator" || role === "inbox") {
+        const key = `coordinator:${agentId}:${role}:${role === "inbox" ? userId : ""}`;
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+        const { rows } = await findCoordinationThread<{ id: string }>(client, [agentId, role, userId]);
+        if (rows[0] !== undefined) return rows[0].id;
+      }
+      const id = uuidv7();
       const chat = await this.chats.createChatOn(
         client,
         agent.org_id,
@@ -170,6 +178,7 @@ export class AgentThreadStore {
         await client.query("UPDATE agent_threads SET execution_role=$2 WHERE id=$1", [id, options.executionRole]);
         if (options.internal) await client.query("UPDATE chats SET internal=true WHERE id=$1", [chat.id]);
       }
+      return id;
     });
     return (await this.threadById(id))!;
   }

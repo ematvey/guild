@@ -10,6 +10,9 @@ import { AgentCoordination, coordinationSettings, ensureCoordinationThread } fro
 import { expireReflectedInputContent } from "../../agents/store/coordination.js";
 import { runTraceRow } from "../../agents/store/run-finish.js";
 import { AgentStore } from "../../agents/store.js";
+import { createPlatformPool } from "../../platform/db.js";
+import { mediaRefOf } from "../../platform/media-ref.js";
+import { memberMessageOf } from "../../chats/member-message.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { UserRow } from "../../platform/store/identity.js";
@@ -26,7 +29,13 @@ suite("persistent coordination", () => {
   let agent: Agent;
   let alice: UserRow;
   let bob: UserRow;
-  const calls: { kind: string; chat: string; content: unknown }[] = [];
+  const calls: {
+    kind: string;
+    chat: string;
+    content: unknown;
+    images?: { mimeType: string; data: string }[];
+    message?: ReturnType<typeof memberMessageOf>;
+  }[] = [];
   let coordination: AgentCoordination;
 
   beforeAll(async () => {
@@ -48,15 +57,22 @@ suite("persistent coordination", () => {
       name: "Team assistant",
       model: "test",
       visibility: "org",
-      resources: { assistant: { enabled: true } },
+      resources: { assistant: { enabled: true, coordinator_model: "vision" } },
     });
     coordination = new AgentCoordination({
+      routeSupportsImages: async (_orgId, model) => model === "vision",
       pool: env!.db,
       store,
       log: pino({ level: "silent" }),
       runtime: {
         submitTurn: async (chat, _org, input) => {
-          calls.push({ kind: "wake", chat, content: input.content });
+          calls.push({
+            kind: "wake",
+            chat,
+            content: input.content,
+            images: input.images,
+            message: memberMessageOf(input.entry),
+          });
           return 1;
         },
         writeEntry: async (chat, entry) => {
@@ -74,13 +90,13 @@ suite("persistent coordination", () => {
 
   it("creates one internal coordinator but distinct member-facing inboxes", async () => {
     const [a, b] = await Promise.all([
-      ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator"),
-      ensureCoordinationThread(env!.db, store, agent, bob.id, "coordinator"),
+      ensureCoordinationThread(store, agent, alice.id, "coordinator"),
+      ensureCoordinationThread(store, agent, bob.id, "coordinator"),
     ]);
     expect(a.id).toBe(b.id);
     await expect(chats.getChat(agent.org_id, a.chat_id, alice)).rejects.toThrow();
-    const ia = await ensureCoordinationThread(env!.db, store, agent, alice.id, "inbox");
-    const ib = await ensureCoordinationThread(env!.db, store, agent, bob.id, "inbox");
+    const ia = await ensureCoordinationThread(store, agent, alice.id, "inbox");
+    const ib = await ensureCoordinationThread(store, agent, bob.id, "inbox");
     expect(ia.id).not.toBe(ib.id);
     const ordinary = await store.threads.createThread(agent.id, alice.id, "Assistant");
     const rows = await chats.listChats(agent.org_id, alice.id);
@@ -90,9 +106,35 @@ suite("persistent coordination", () => {
     await expect(chats.getChat(agent.org_id, ib.chat_id, alice)).rejects.toThrow();
   });
 
+  it("creates and reuses coordination threads with a single pool connection", async () => {
+    const pool = createPlatformPool(env!.databaseUrl, 1);
+    try {
+      const singleConnectionStore = new AgentStore({ pool, chats: new ChatStore(pool) });
+      const otherAgent = await store.create(alice, { name: "Single connection", model: "test" });
+      const [a, b] = await Promise.all([
+        ensureCoordinationThread(singleConnectionStore, otherAgent, alice.id, "coordinator"),
+        ensureCoordinationThread(singleConnectionStore, otherAgent, bob.id, "coordinator"),
+      ]);
+      expect(a.id).toBe(b.id);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("atomically captures inbox requests with source identity and wakes the same coordinator", async () => {
-    const inbox = await ensureCoordinationThread(env!.db, store, agent, bob.id, "inbox");
-    await threads.appendEvent(inbox.chat_id, { type: "user_message", attachments: [], content: "Check the project" });
+    const inbox = await ensureCoordinationThread(store, agent, bob.id, "inbox");
+    const attachment = {
+      id: randomUUID(),
+      filename: "diagram.png",
+      content_type: "image/png",
+      size_bytes: 128,
+      modality: "image" as const,
+    };
+    await threads.appendEvent(inbox.chat_id, {
+      type: "user_message",
+      attachments: [attachment],
+      content: "Check the project",
+    });
     const before = calls.length;
     await coordination.tick();
     expect(calls.length).toBeGreaterThan(before);
@@ -100,6 +142,8 @@ suite("persistent coordination", () => {
     expect(String(calls.at(-1)?.content)).toContain(bob.id);
     expect(String(calls.at(-1)?.content)).toContain("bob@example.test");
     expect(String(calls.at(-1)?.content)).toContain(inbox.id);
+    expect(calls.at(-1)?.images).toEqual([{ mimeType: "image/png", data: mediaRefOf("attachment", attachment.id) }]);
+    expect(calls.at(-1)?.message?.attachments).toEqual([attachment]);
     const n = calls.length;
     await coordination.tick();
     expect(calls.length).toBe(n);
@@ -114,7 +158,7 @@ suite("persistent coordination", () => {
   });
 
   it("keeps recent unsurfaced tasks in the private display index", async () => {
-    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     const tasks: AgentThread[] = [];
     for (let n = 0; n < 23; n++)
       tasks.push(
@@ -159,7 +203,7 @@ suite("persistent coordination", () => {
   });
 
   it("keeps the coordinator run summary out of the Activity trace mirror", async () => {
-    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     expect(coordinator.type).toBe("user");
     const run = await store.runs.createRun({
       agent_id: agent.id,
