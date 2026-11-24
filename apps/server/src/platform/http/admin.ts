@@ -172,7 +172,7 @@ export function registerAdminIntegrationRoutes(
   // plugins. One list; the client filters and renders it.
   app.get("/api/v1/admin/integrations", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    if (gateway.agentGateway) {
+    if (gateway.agentGateway && !gateway.agentGateway.selectedMcpSlugs) {
       const inventory = (await turns(gateway, admin.org_id, admin.id)).map((turn) => ({
         slug: turn.slug,
         tools: turn.tools.map((tool) => tool.spec.name).sort(),
@@ -247,7 +247,7 @@ export function registerAdminIntegrationRoutes(
   // never values.
   app.get("/api/v1/admin/integrations/:id/secrets", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
+    requireLocalIntegrationManagement(gateway.agentGateway?.selectedMcpSlugs ? null : gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
@@ -307,7 +307,7 @@ export function registerAdminIntegrationRoutes(
   // a silent empty list.
   app.get("/api/v1/admin/integrations/:id/tools", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
+    requireLocalIntegrationManagement(gateway.agentGateway?.selectedMcpSlugs ? null : gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     sendJson(reply, await integrationTools(gateway, admin.org_id, id));
     return reply;
@@ -319,7 +319,7 @@ export function registerAdminIntegrationRoutes(
   // { ok: false, error }.
   app.post("/api/v1/admin/integrations/:id/test", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
+    requireLocalIntegrationManagement(gateway.agentGateway?.selectedMcpSlugs ? null : gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
@@ -400,7 +400,7 @@ export function registerAdminIntegrationRoutes(
 
   app.get("/api/v1/admin/integrations/:id/access", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
+    requireLocalIntegrationManagement(gateway.agentGateway?.selectedMcpSlugs ? null : gateway.agentGateway);
     sendJson(reply, await accessView(admin.org_id, parseUuidParam(req, "id")));
     return reply;
   });
@@ -443,11 +443,12 @@ export function registerAdminIntegrationRoutes(
   // persisted. The connector slug comes from the row.
   app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
-    requireLocalIntegrationManagement(gateway.agentGateway);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
+    const selected = gateway.agentGateway?.selectedMcpSlugs;
+    if (!selected || selected.includes(existing.name)) requireLocalIntegrationManagement(gateway.agentGateway);
     await saveIntegration(gateway, admin.org_id, existing.name, existing, body);
     sendJson(reply, { ok: true });
     return reply;

@@ -51,6 +51,7 @@ try {
   } else {
     const published = await snapshot(new AgentGateway({
       ...config.agentGateway, serviceTokensOnly: false, mcpOnly: true,
+      ...(process.env.PROBE_SELECTED_MCP_SLUGS ? { mcpSlugs: process.env.PROBE_SELECTED_MCP_SLUGS.split(",") } : {}),
     }));
     const missing = [...baseline.tools.keys()].filter((key) => !published.tools.has(key));
     const extra = [...published.tools.keys()].filter((key) => !baseline.tools.has(key));

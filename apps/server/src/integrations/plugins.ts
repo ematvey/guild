@@ -19,7 +19,7 @@ import type { AgentGateway } from "../platform/agentgateway.js";
 /** The narrow store surface the dispatcher re-resolves secrets through
  *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
 export interface PluginSecretSource {
-  agentGateway?: (Pick<AgentGateway, "mcp"> & Partial<Pick<AgentGateway, "enforcesGuildMcpPolicy">>) | null;
+  agentGateway?: (Pick<AgentGateway, "mcp"> & Partial<Pick<AgentGateway, "enforcesGuildMcpPolicy" | "selectedMcpSlugs">>) | null;
   integrationSecrets: {
     names(orgId: string, integration: string): Promise<string[]>;
     resolve(orgId: string, integration: string, names: string[], masterKey: Buffer): Promise<[string, string][]>;
@@ -286,7 +286,7 @@ async function resolveGatewayIntegrations(
     });
   }
   const result = [...turns.values()];
-  if (rows) assignTraits(result, await readTraitBindings(gateway.orgKv, orgId));
+  if (rows && !client.selectedMcpSlugs) assignTraits(result, await readTraitBindings(gateway.orgKv, orgId));
   return result;
 }
 
@@ -302,19 +302,27 @@ export async function resolveIntegrations(
   memberId?: string | null,
   chatId?: string,
 ): Promise<IntegrationTurn[]> {
-  if (gateway.agentGateway) {
-    if (!memberId) return [];
+  const selected = gateway.agentGateway?.selectedMcpSlugs;
+  let published: IntegrationTurn[] = [];
+  if (gateway.agentGateway && memberId) {
     try {
-      return await resolveGatewayIntegrations(gateway, orgId, memberId, chatId);
+      published = await resolveGatewayIntegrations(gateway, orgId, memberId, chatId);
     } catch (error) {
       warn(`agentgateway MCP discovery failed: ${(error as Error).message}`);
-      return [];
     }
   }
+  if (gateway.agentGateway && !selected) return published;
+  const routed = new Set(selected);
   const rows = await gateway.integrations.listEnabled(orgId);
   const masterKey = gateway.masterKey();
+  const publishedBySlug = new Map(published.map((turn) => [turn.slug, turn]));
   const out: IntegrationTurn[] = [];
   for (const row of rows) {
+    if (routed.has(row.name)) {
+      const turn = publishedBySlug.get(row.name);
+      if (turn) out.push(turn);
+      continue;
+    }
     const config = (row.config ?? {}) as JsonObject;
     // An installed v2 bundle is the admin's explicit choice — a row
     // carrying an mcp.url resolves as MCP even when a compiled-in connector

@@ -9,6 +9,7 @@ export interface AgentGatewayConfig {
   mcpServicesPath?: string;
   serviceTokensOnly?: boolean;
   mcpOnly?: boolean;
+  mcpSlugs?: string[];
 }
 
 const audience = "guild-agentgateway";
@@ -62,6 +63,10 @@ export class AgentGateway {
 
   get enforcesGuildMcpPolicy(): boolean {
     return this.config.mcpOnly === true;
+  }
+
+  get selectedMcpSlugs(): readonly string[] | undefined {
+    return this.config.mcpSlugs;
   }
 
   get routesModels(): boolean {

@@ -252,6 +252,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Absolute: the workspace root and sandbox root must not depend on the
   // server process's cwd (pi-durable re-resolves tool cwds against it).
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
+  const mcpSlugs = env.GUILD_AGENTGATEWAY_MCP_SLUGS?.split(",").map((slug) => slug.trim());
+  if (mcpSlugs && (env.GUILD_AGENTGATEWAY_MCP_ONLY !== "1" ||
+      mcpSlugs.some((slug) => !/^[a-z0-9][a-z0-9_-]*$/.test(slug)))) {
+    throw new Error("GUILD_AGENTGATEWAY_MCP_SLUGS requires MCP-only mode and a list of integration slugs");
+  }
   const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
     serverVersion: GUILD_TS_SERVER_VERSION,
@@ -265,6 +270,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           issuer: requireEnv(env, "GUILD_AGENTGATEWAY_ISSUER"),
           signingKeyPath: requireEnv(env, "GUILD_AGENTGATEWAY_SIGNING_KEY_FILE"),
           ...(env.GUILD_MCP_SERVICES_FILE ? { mcpServicesPath: env.GUILD_MCP_SERVICES_FILE } : {}),
+          ...(mcpSlugs ? { mcpSlugs: [...new Set(mcpSlugs)] } : {}),
           ...(env.GUILD_AGENTGATEWAY_MCP_ONLY === "1" ? { mcpOnly: true } : {}),
           ...(env.GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY === "1" ? { serviceTokensOnly: true } : {}),
         }

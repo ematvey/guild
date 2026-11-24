@@ -92,7 +92,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth, ctx.objects);
     registerPluginCatalogRoutes(scope, gateway, auth);
-    registerUserMcpRoutes(scope, auth, ctx.agentGateway);
+    registerUserMcpRoutes(scope, auth, ctx.agentGateway?.selectedMcpSlugs ? null : ctx.agentGateway);
     registerMcpServiceTokenRoute(scope, auth, ctx.mcpTokenGateway);
     registerAgentRoutes(scope, auth, infra, chats, gateway, ctx.objects);
     registerAppRoutes(scope, auth, gateway, ctx.apps);

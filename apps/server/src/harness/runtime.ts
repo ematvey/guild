@@ -388,7 +388,7 @@ export class GuildRuntime {
     this.userMcpRuntime = new UserMcpRuntime(
       {
         store: stores.userMcp,
-        enabled: !config.agentGateway || config.agentGateway.serviceTokensOnly === true,
+        enabled: !config.agentGateway || config.agentGateway.serviceTokensOnly === true || config.agentGateway.mcpSlugs !== undefined,
         masterKey: () => deps.masterKey(),
         log,
         chatOfConversation,
