@@ -127,7 +127,7 @@ An Approval is answered once: the first answer wins under the Thread's lock. No 
 
 ## Coordinator authority
 
-The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. Creating, updating or deleting a Routine requires an active Turn attributed to a single Member who currently has manage access to the Agent. It has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
+The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. Creating, updating or deleting a Routine requires direct requests in the active Turn from a single Member who currently has manage access to the Agent. It has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
 
 A shared Agent defaults to Agent acting scope, using its explicit Integration grants, with read as the default grant. Member acting scope additionally intersects those grants with the originating Member's current audience. Personal Agents always act in personal scope. Shared Agents cannot call impersonating Integrations or inherit a Member's personal MCP connections. These restrictions also apply to App data functions and are checked at execution.
 

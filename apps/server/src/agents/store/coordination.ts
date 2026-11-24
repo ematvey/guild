@@ -156,7 +156,7 @@ export function markCompacted<T extends QueryResultRow = QueryResultRow>(db: Dat
 
 export function readCoordinationSource<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT id,user_id,source_thread_id FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
+    `SELECT id,user_id,source_thread_id,kind FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
     values,
   );
 }

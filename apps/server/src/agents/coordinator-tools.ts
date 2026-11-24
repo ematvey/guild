@@ -66,12 +66,14 @@ export function coordinatorTools(deps: {
     },
   });
   const str = { type: "string" };
-  const source = async (id: unknown): Promise<{ id: string; user_id: string; source_thread_id: string | null }> => {
+  const source = async (
+    id: unknown,
+  ): Promise<{ id: string; user_id: string; source_thread_id: string | null; kind: string }> => {
     const row = (
-      await readCoordinationSource<{ id: string; user_id: string; source_thread_id: string | null }>(pool, [
-        id,
-        agent.id,
-      ])
+      await readCoordinationSource<{ id: string; user_id: string; source_thread_id: string | null; kind: string }>(
+        pool,
+        [id, agent.id],
+      )
     ).rows[0];
     if (row === undefined) throw new Error("input_id must reference an input of this Agent");
     return row;
@@ -89,8 +91,11 @@ export function coordinatorTools(deps: {
     }
     const origin = await source(inputId);
     const origins = await Promise.all(requests.filter((id) => id !== inputId).map(source));
-    if (origins.some((other) => other.user_id !== origin.user_id)) {
-      throw new Error("Routine changes require a Turn attributed to one Member");
+    if (
+      origin.kind !== "request" ||
+      origins.some((other) => other.user_id !== origin.user_id || other.kind !== "request")
+    ) {
+      throw new Error("Routine changes require direct requests from one Member");
     }
     const member = await deps.identity.getUser(origin.user_id);
     await store.requireAccess(member, agent.id, "manage");
