@@ -180,6 +180,25 @@ describe("conversation page", () => {
     expect(api.getConversation).toHaveBeenCalledTimes(2);
   });
 
+  it("requests a new socket snapshot on Refresh and keeps it over the analytics read", async () => {
+    api.getConversation.mockResolvedValue(detail);
+    const onResync = vi.fn(() =>
+      applyActivityConversation({
+        type: "activity_conversation",
+        detail: { ...detail, conversation: { ...detail.conversation, title: "Refreshed title" } },
+      }),
+    );
+    render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} onResync={onResync} />);
+    await screen.findByText("Quarterly numbers");
+    act(() => applyActivityConversation({ type: "activity_conversation", detail }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh thread" }));
+    expect(onResync).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Refreshed title")).toBeTruthy();
+    expect(screen.queryByText("Quarterly numbers")).toBeNull();
+  });
+
   it("hides the owner line for a member", async () => {
     api.getConversation.mockResolvedValue(detail);
     render(<ConversationPage chatId="c1" role="member" onNavigate={() => {}} />);

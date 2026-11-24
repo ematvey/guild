@@ -849,12 +849,14 @@ export function ConversationPage({
   role,
   onNavigate,
   onOpenChat,
+  onResync,
 }: {
   chatId: string;
   /** The signed-in user's workspace role. */
   role: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
+  onResync?: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<{ detail: ConversationSnapshot; socket: boolean } | null>(null);
   const [analytics, setAnalytics] = useState<ConversationDetail | null>(null);
@@ -865,6 +867,10 @@ export function ConversationPage({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const detail = snapshot?.detail ?? null;
+  const refresh = () => {
+    onResync?.();
+    setTick((current) => current + 1);
+  };
 
   useActivityRunUpdates(({ run }) => {
     if (run.thread_id === null || run.thread_id !== detail?.conversation.thread?.id) return;
@@ -1010,7 +1016,7 @@ export function ConversationPage({
               <ArrowLeft />
               Activity
             </Button>
-            <Button variant="ghost" size="sm" aria-label="Refresh thread" onClick={() => setTick((t) => t + 1)}>
+            <Button variant="ghost" size="sm" aria-label="Refresh thread" onClick={refresh}>
               <RefreshCw />
               Refresh
             </Button>
@@ -1049,7 +1055,7 @@ export function ConversationPage({
         }
       />
       <PageBody className="max-w-[80rem]">
-        {error !== null && detail === null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
+        {error !== null && detail === null && <ErrorState message={error} onRetry={refresh} />}
         {error === null && detail === null && <InlineLoading label="Loading thread" />}
         {detail !== null && (
           <>

@@ -342,7 +342,16 @@ export class AgentStateFeed {
     });
   }
 
-  private conversationChanged(chatId: string): void {
+  conversationChanged(chatId: string): void {
+    if (
+      !this.ctx.hub
+        .memberUsers()
+        .some(({ userId }) =>
+          this.ctx.hub.memberSinksOfUser(userId).some((sink) => sink.activityConversation === chatId),
+        )
+    ) {
+      return;
+    }
     this.coalesce(`activity-conversation:${chatId}`, () =>
       this.chains.run(`activity-conversation-watchers:${chatId}`, "activity_conversation_changed", async () => {
         const readers = this.ctx.hub.memberUsers().flatMap(({ userId, orgId }) =>
@@ -373,15 +382,7 @@ export class AgentStateFeed {
             sink.runViewChat === chatId && sink.runView !== null ? [{ userId, orgId, sink, runId: sink.runView }] : [],
           ),
       );
-    if (
-      this.ctx.hub
-        .memberUsers()
-        .some(({ userId }) =>
-          this.ctx.hub.memberSinksOfUser(userId).some((sink) => sink.activityConversation === chatId),
-        )
-    ) {
-      this.conversationChanged(chatId);
-    }
+    this.conversationChanged(chatId);
     if (readers.length === 0) return;
     const users = await this.ctx.identity.getUsers([...new Set(readers.map((reader) => reader.userId))]);
     await Promise.all(
@@ -428,14 +429,7 @@ export class AgentStateFeed {
       members.some(({ id }) => this.ctx.hub.memberSinksOfUser(id).some((sink) => sink.activityConversation !== null))
     ) {
       const thread = await this.ctx.conversationHistory.threadOfRun(orgId, run.thread_id, true);
-      if (
-        thread !== null &&
-        members.some(({ id }) =>
-          this.ctx.hub.memberSinksOfUser(id).some((sink) => sink.activityConversation === thread.chat_id),
-        )
-      ) {
-        this.conversationChanged(thread.chat_id);
-      }
+      if (thread !== null) this.conversationChanged(thread.chat_id);
     }
     if (detailSinks.length === 0) return;
     const steps = runStepsWire(await this.store.runs.runSteps(run));

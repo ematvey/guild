@@ -260,6 +260,9 @@ export class FeedForwarder implements GenerationStreamSink {
       if (this.stopped) return;
       this.track("guild_compaction", conversationId, this.compaction(conversationId));
     },
+    guild_activity_conversation: (chatId) => {
+      if (!this.stopped) this.agentState.conversationChanged(chatId);
+    },
     guild_subagent_tree: (chatId) => {
       if (this.stopped) return;
       this.subagentTree(chatId);
