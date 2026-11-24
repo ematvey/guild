@@ -8,6 +8,7 @@ export interface AgentGatewayConfig {
   signingKeyPem?: string;
   mcpServicesPath?: string;
   serviceTokensOnly?: boolean;
+  mcpOnly?: boolean;
 }
 
 const audience = "guild-agentgateway";
@@ -57,6 +58,10 @@ export class AgentGateway {
         hashes.add(service.secretSha256);
       }
     }
+  }
+
+  get routesModels(): boolean {
+    return !this.config.serviceTokensOnly && !this.config.mcpOnly;
   }
 
   model(orgId: string, model: string, protocol: string): { baseUrl: string; authorization: string } {

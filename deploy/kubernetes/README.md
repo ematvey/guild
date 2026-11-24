@@ -244,7 +244,8 @@ gateway bearer token stays inside the cluster.
 The internal gateway serves one MCP URL per org at `/mcp/<org-id>`. Guild
 and service consumers use the same URL. Guild signs workload tokens.
 Agentgateway authorizes target discovery and tool calls. Substrate uses
-its own networking gateway.
+its own networking gateway. Set `GUILD_AGENTGATEWAY_MCP_ONLY=1` to route
+Guild MCP through agentgateway while keeping the configured model providers.
 
 Set `GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY=1` to enable the service token
 exchange while Guild uses its configured providers and direct integrations.

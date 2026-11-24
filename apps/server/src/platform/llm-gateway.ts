@@ -163,14 +163,15 @@ export async function dispatch(
   clientMaxTokens: number | null,
   clientTemperature: number | null = null,
 ): Promise<RoutedCall> {
-  const route = await ctx.gatewayStore.resolveRoute(orgId, model, ctx.agentGateway ? null : ctx.masterKey());
+  const modelGateway = ctx.agentGateway?.routesModels ? ctx.agentGateway : null;
+  const route = await ctx.gatewayStore.resolveRoute(orgId, model, modelGateway ? null : ctx.masterKey());
   await ctx.usage.ensureOnce();
   await enforceQuota(ctx.usage, orgId, model, route);
   const provider = forProtocol(route.protocol);
   if (provider === null) {
     throw ApiError.internal(`unknown protocol ${route.protocol}`);
   }
-  const downstream = ctx.agentGateway?.model(orgId, model, route.protocol);
+  const downstream = modelGateway?.model(orgId, model, route.protocol);
   // The tighter limit wins when both sides set one: a client asking for
   // less than the route cap must not be billed for output it did not ask
   // for (0 = provider default). A nonpositive cap (legacy row, hand-edited

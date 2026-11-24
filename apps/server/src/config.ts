@@ -265,6 +265,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           issuer: requireEnv(env, "GUILD_AGENTGATEWAY_ISSUER"),
           signingKeyPath: requireEnv(env, "GUILD_AGENTGATEWAY_SIGNING_KEY_FILE"),
           ...(env.GUILD_MCP_SERVICES_FILE ? { mcpServicesPath: env.GUILD_MCP_SERVICES_FILE } : {}),
+          ...(env.GUILD_AGENTGATEWAY_MCP_ONLY === "1" ? { mcpOnly: true } : {}),
           ...(env.GUILD_AGENTGATEWAY_SERVICE_TOKENS_ONLY === "1" ? { serviceTokensOnly: true } : {}),
         }
       : null,

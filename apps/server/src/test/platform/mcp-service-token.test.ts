@@ -59,6 +59,18 @@ function request(service: string, secret: string, session?: string) {
 }
 
 describe("MCP service token exchange", () => {
+  it("keeps model traffic on Guild providers in MCP-only mode", () => {
+    const config = {
+      url: "https://mcp.example.org",
+      issuer,
+      signingKeyPath: "",
+      signingKeyPem: keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    };
+    expect(new AgentGateway(config).routesModels).toBe(true);
+    expect(new AgentGateway({ ...config, mcpOnly: true }).routesModels).toBe(false);
+    expect(new AgentGateway({ ...config, serviceTokensOnly: true }).routesModels).toBe(false);
+  });
+
   it("binds a service credential to its identity and org", async () => {
     expect((await request("headless", delegatedKey)).statusCode).toBe(401);
     const response = await request("headless", headlessKey);
