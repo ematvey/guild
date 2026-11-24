@@ -266,11 +266,16 @@ pub enum WsServerMsg {
     IntegrationAccess {
         integrations: Vec<serde_json::Value>,
     },
-    /// One run, created or changed, for every member who may see its agent.
+    /// One non-internal run, created or changed, for the requesting member.
     /// A finished run carries its `call_count` and `tool_count`. Daemons
     /// tag-peek and ignore it.
     AgentRun {
         run: serde_json::Value,
+    },
+    /// Run and thread counts visible to the activity viewer.
+    ActivityRun {
+        run: serde_json::Value,
+        counts: Option<serde_json::Value>,
     },
     /// The member's open user threads with one agent, newest activity first.
     /// Daemons tag-peek and ignore it.

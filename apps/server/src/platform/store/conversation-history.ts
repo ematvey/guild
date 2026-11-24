@@ -52,6 +52,11 @@ export interface ConversationRow {
   deleted: boolean;
 }
 
+const RUN_COUNTS = `SELECT count(*)::int AS runs,
+  count(*) FILTER (WHERE r.status IN ('queued','running'))::int AS open_runs,
+  count(*) FILTER (WHERE r.status = 'failed')::int AS failed_runs
+  FROM agent_runs r`;
+
 export interface ConversationFilters {
   includeBackground?: boolean;
   orgId: string;
@@ -319,10 +324,7 @@ export class ConversationHistoryStore {
          WHERE e.chat_id = c.id AND e.type IN ('user_message','assistant_message')
        ) msg ON true
        LEFT JOIN LATERAL (
-         SELECT count(*)::int AS runs,
-                count(*) FILTER (WHERE r.status IN ('queued','running'))::int AS open_runs,
-                count(*) FILTER (WHERE r.status = 'failed')::int AS failed_runs
-         FROM agent_runs r WHERE r.thread_id = xt.id
+         ${RUN_COUNTS} WHERE r.thread_id = xt.id
        ) runs ON true
        WHERE ${predicate}
        ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC
@@ -362,16 +364,21 @@ export class ConversationHistoryStore {
          WHERE e.chat_id = c.id AND e.type IN ('user_message','assistant_message')
        ) msg ON true
        LEFT JOIN LATERAL (
-         SELECT count(*)::int AS runs,
-                count(*) FILTER (WHERE r.status IN ('queued','running'))::int AS open_runs,
-                count(*) FILTER (WHERE r.status = 'failed')::int AS failed_runs
-         FROM agent_runs r WHERE r.thread_id = xt.id
+         ${RUN_COUNTS} WHERE r.thread_id = xt.id
        ) runs ON true
        WHERE c.org_id = $1 AND c.id = $2 AND ($3 OR NOT c.internal)`,
       [orgId, chatId, includeBackground],
     );
     const row = res.rows[0];
     return row === undefined ? null : rowToConversation(row);
+  }
+
+  async runCounts(threadId: string): Promise<Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">> {
+    const result = await this.pool.query<Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>(
+      `${RUN_COUNTS} WHERE r.thread_id = $1`,
+      [threadId],
+    );
+    return result.rows[0]!;
   }
 
   /** One page of a conversation's message events, oldest first, plus the

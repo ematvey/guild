@@ -53,7 +53,7 @@ import {
   type TraceRow,
 } from "./agents-api";
 import type { AgentRun } from "./agents-api";
-import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
+import { summaryWithTrace, traceFromRun, traceWithRun, useActivityRunUpdates } from "./agents-store";
 import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
@@ -124,7 +124,14 @@ export function ActivityPage({
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [traces, setTraces] = useState<TraceRow[] | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
-  const [conversations, setConversations] = useState<ConversationRow[] | null>(null);
+  const [conversationSeed, setConversations] = useState<ConversationRow[] | null>(null);
+  const [runCounts, setRunCounts] = useState<
+    Record<string, Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>
+  >({});
+  const conversations = useMemo(
+    () => conversationSeed?.map((row) => ({ ...row, ...runCounts[row.thread?.id ?? ""] })) ?? null,
+    [conversationSeed, runCounts],
+  );
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -143,6 +150,7 @@ export function ActivityPage({
   useEffect(() => {
     let live = true;
     setError(null);
+    setRunCounts({});
     // The window ends now: computed per fetch, not per render.
     const range = windowQuery(period);
     const query: ActivityQuery = {
@@ -199,11 +207,12 @@ export function ActivityPage({
     };
   }, [tab, period, status, trigger, q, caller, model, agentId, background, tick]);
 
-  // The traces tab is live: a pushed run moves its row, and a new run that
-  // matches the filters joins the top. The calls and chats tabs are span
-  // analytics over the trace store and reload on their Refresh.
-  useAgentRunUpdates((run) => {
-    if (filters.tab !== "traces" || traces === null) return;
+  useActivityRunUpdates(({ run, counts }) => {
+    const threadId = run.thread_id;
+    if (tab === "chats" && counts !== null && threadId !== null && (!run.internal || background)) {
+      setRunCounts((current) => ({ ...current, [threadId]: counts }));
+    }
+    if (tab !== "traces" || traces === null) return;
     const before = traces.find((row) => row.trace_id === run.id);
     if (before !== undefined) {
       const after = traceWithRun(before, run);

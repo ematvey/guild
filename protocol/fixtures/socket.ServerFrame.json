@@ -365,6 +365,35 @@
     }
   },
   {
+    "type": "activity_run",
+    "counts": { "runs": 1, "open_runs": 0, "failed_runs": 0 },
+    "run": {
+      "internal": true,
+      "id": "018f0b7c-0000-7000-8000-000000000061",
+      "agent_id": "018f0b7c-0000-7000-8000-000000000041",
+      "user_id": "018f0b7c-0000-7000-8000-000000000002",
+      "thread_id": "018f0b7c-0000-7000-8000-000000000051",
+      "routine_id": "018f0b7c-0000-7000-8000-000000000071",
+      "parent_run_id": null,
+      "delegate_agent_id": null,
+      "depth": 0,
+      "trigger": "routine",
+      "status": "succeeded",
+      "summary": "Posted the morning digest.",
+      "error_code": null,
+      "error_message": null,
+      "error_step": null,
+      "tokens": 1840,
+      "started_at": "2026-11-02T09:00:01Z",
+      "finished_at": "2026-11-02T09:00:19Z",
+      "created_at": "2026-11-02T09:00:00Z",
+      "agent_name": "researcher",
+      "routine_name": "Morning digest",
+      "call_count": 3,
+      "tool_count": 1
+    }
+  },
+  {
     "type": "agent_threads",
     "agent_id": "018f0b7c-0000-7000-8000-000000000041",
     "threads": [

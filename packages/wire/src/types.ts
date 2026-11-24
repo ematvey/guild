@@ -188,6 +188,11 @@ export type ServerFrame =
   /** The Integrations the member may add to an agent they manage. */
   | { type: "integration_access"; integrations: AttachableIntegration[] }
   | { type: "agent_run"; run: AgentRun }
+  | {
+      type: "activity_run";
+      run: AgentRun;
+      counts: { runs: number; open_runs: number; failed_runs: number } | null;
+    }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }

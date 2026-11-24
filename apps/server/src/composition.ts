@@ -283,6 +283,7 @@ export class PlatformContext implements PlatformStores {
         chats: this.chats,
         threads: this.threads,
         conversations: this.conversations,
+        conversationHistory: this.conversationHistory,
         events: this.events,
         projects: this.projects,
         orgs: this.orgs,

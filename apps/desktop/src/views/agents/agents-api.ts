@@ -32,7 +32,6 @@ export interface AgentRunStep {
 /** A run as the run-detail endpoint returns it: the wire row plus its
  *  derived steps and the files they wrote. */
 export interface AgentRun extends WireAgentRun {
-  internal?: boolean;
   steps?: AgentRunStep[];
   files?: string[];
 }

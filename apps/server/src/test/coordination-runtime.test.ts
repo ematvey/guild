@@ -324,6 +324,23 @@ describe("configured coordinator conversation", () => {
     expect(listed.json()).toEqual({ traces: [], total: 0 });
     const detail = await app.inject({ method: "GET", url: `/api/v1/activity/traces/${historicalRun}`, headers });
     expect(detail.statusCode).toBe(404);
+    const adminHeaders = { authorization: `Bearer ${stack.adminToken}` };
+    const adminList = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/traces?session=${coordinator.chat_id}`,
+      headers: adminHeaders,
+    });
+    expect(adminList.statusCode).toBe(200);
+    expect(adminList.json().traces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ trace_id: historicalRun })]),
+    );
+    const adminDetail = await app.inject({
+      method: "GET",
+      url: `/api/v1/activity/traces/${historicalRun}`,
+      headers: adminHeaders,
+    });
+    expect(adminDetail.statusCode).toBe(200);
+    expect(adminDetail.json().trace.trace_id).toBe(historicalRun);
     const requests = stack.mock.requests.map((r) => JSON.stringify(r.body)).join("\n");
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);
