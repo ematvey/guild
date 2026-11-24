@@ -97,7 +97,7 @@ All navigation state is URL state. The route model parses the path into a `ChatR
 
 ## The client
 
-The client keeps server state in stores that only frames write. Seeds from HTTP fill a store the socket has not filled yet, and a frame always wins over a seed. Sign-out resets every store at once.
+The client keeps server state in stores that only frames write. Seeds from HTTP fill a store the socket has not filled yet, and a frame always wins over a seed. Activity Runs and Thread counts seed again on a new member socket connection. Updates from that connection win even when they arrive before the read starts. Sign-out resets every store at once.
 
 The only state the client owns is a pending send and the Member's drafts. A pending send retires when a frame speaks for that Thread. `busy` is derived from `generating` and the pending send; it is never stored.
 

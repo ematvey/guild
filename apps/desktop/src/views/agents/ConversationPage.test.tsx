@@ -4,12 +4,13 @@
 // run detail.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConversationDetail, ConversationRow } from "./agents-api";
+import type { ConversationDetail, ConversationRow, TraceRow } from "./agents-api";
 
 const api = vi.hoisted(() => ({
   getConversation: vi.fn(),
   getActivitySummary: vi.fn(),
   listConversations: vi.fn(),
+  listTraces: vi.fn(),
 }));
 vi.mock("./agents-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./agents-api")>()),
@@ -18,7 +19,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
 
 import { ActivityPage, ConversationPage } from "./ActivityPage";
 import { AGENTS_ACTIVITY } from "./agents-route";
-import { applyActivityRun } from "./agents-store";
+import { applyActivityRun, resetAgentSlices, traceFromRun } from "./agents-store";
 import { makeRun } from "./test-fixtures";
 
 const detail: ConversationDetail = {
@@ -160,4 +161,46 @@ it("applies background Thread counts that arrive before and after the Activity s
   );
   expect(screen.getByText("Running")).toBeTruthy();
   expect(api.listConversations).toHaveBeenCalledTimes(1);
+});
+
+it("applies Run frames over Activity snapshots during first load and reconnect", async () => {
+  const seeds: ((value: { traces: TraceRow[]; total: number }) => void)[] = [];
+  api.listTraces.mockImplementation(
+    () => new Promise<{ traces: TraceRow[]; total: number }>((resolve) => seeds.push(resolve)),
+  );
+  api.getActivitySummary.mockResolvedValue(null);
+  const running = makeRun({ id: "r1", summary: "Old snapshot title" });
+  const finished = { ...running, status: "succeeded" as const, summary: "Finished once" };
+  const queued = makeRun({ id: "r2", status: "queued", summary: "New queued run" });
+  const push = (run: ReturnType<typeof makeRun>) => applyActivityRun({ type: "activity_run", run, counts: null });
+
+  render(
+    <ActivityPage
+      filters={{ ...AGENTS_ACTIVITY.filters, tab: "traces" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+      role="admin"
+    />,
+  );
+  act(() => {
+    push(finished);
+    push(finished);
+    push(queued);
+  });
+  await act(async () => seeds[0]!({ traces: [traceFromRun(running)], total: 1 }));
+  expect(screen.queryByText("Old snapshot title")).toBeNull();
+  expect(screen.getByText("Finished once")).toBeTruthy();
+  expect(screen.getByText("New queued run")).toBeTruthy();
+  expect(screen.getByText("2 runs")).toBeTruthy();
+
+  // The new socket can deliver a frame before React begins its reseed effect.
+  act(() => {
+    resetAgentSlices();
+    push({ ...queued, status: "failed", summary: "Failed during reconnect" });
+  });
+  expect(api.listTraces).toHaveBeenCalledTimes(2);
+  await act(async () => seeds[1]!({ traces: [traceFromRun(finished), traceFromRun(queued)], total: 2 }));
+  expect(screen.queryByText("New queued run")).toBeNull();
+  expect(screen.getByText("Failed during reconnect")).toBeTruthy();
+  expect(screen.getByText("2 runs")).toBeTruthy();
 });
