@@ -52,7 +52,7 @@ for entry in entries:
     static = {
         "host": address.hostname,
         "port": address.port or (443 if address.scheme == "https" else 80),
-        "path": address.path or "/mcp",
+        "path": address.path or "/",
         "protocol": entry.get("protocol", "StreamableHTTP"),
     }
     if static["protocol"] not in ("StreamableHTTP", "SSE"):
