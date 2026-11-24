@@ -30,6 +30,8 @@ export interface SubmitTurnInput {
    *  absent (and "queue") is the default follow-up — the input waits for
    *  the turn's final boundary and starts the next run. */
   sendMode?: "queue" | "steer";
+  /** Records an inbox message without starting a model turn. */
+  passive?: boolean;
   /** The machine turn's client-assembled skills index (the combined
    *  section's local portion); browser/server turns send none. */
   skillsIndex?: string;

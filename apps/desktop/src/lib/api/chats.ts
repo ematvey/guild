@@ -209,8 +209,8 @@ export async function compactChat(chatId: string): Promise<{ seq?: number } | nu
   return typeof started.seq === "number" ? { seq: started.seq } : {};
 }
 
-/** The chat's agent and whether the picker may move it. A thread belongs to
- *  its agent: shared agents and Main threads keep theirs. */
+/** The chat's agent and whether the picker may move it. A run transcript and
+ *  a coordination thread keep their agent; an ordinary thread moves. */
 export async function chatAgentBinding(chatId: string): Promise<{ agent: unknown | null; switcheable: boolean }> {
   try {
     const body = await request<{ agent?: unknown; switcheable?: boolean } | undefined>(

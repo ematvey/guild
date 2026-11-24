@@ -181,6 +181,13 @@ describe("turn scope", () => {
   const offered = (s: IntegrationScope, info: IntegrationToolInfo, role = "member") =>
     toolOffered(turn, info, scopeCeiling(s, turn.slug, info), role);
 
+  it("rejects account impersonation for every shared Agent even with admin read grants", () => {
+    const impersonated = { ...turn, impersonated: true };
+    const read = tool("hubspot_search_deals", "read");
+    for (const role of ["member", "admin"]) expect(toolOffered(impersonated, read, "admin", role, true)).toBe(false);
+    expect(toolOffered(impersonated, read, "read", "member", false)).toBe(true);
+  });
+
   it("an Integration outside the agent's list offers nothing", () => {
     expect(offered(scope([]), tool("hubspot_search_deals", "read"))).toBe(false);
   });

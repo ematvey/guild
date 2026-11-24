@@ -1,3 +1,7 @@
+import { ApiError } from "../platform/errors.js";
+import { readWorkerOrigin, recordWorkerOutcome } from "../agents/store/coordination.js";
+import { agentThreadForChat } from "../agents/workspace.js";
+import { coordinationRole, coordinationSettings } from "../agents/coordination.js";
 // Composes model access, tool provisioning, and chat admission. ConversationHost
 // owns the scheduler lifetime; the turn backend (turn-backend.ts) decides
 // where a chat's turns run, and a worker scopes the lifetime to one chat.
@@ -55,7 +59,7 @@ import { AgentRunLifecycle } from "../agents/lifecycle.js";
 import { ChildResultDelivery, type ChildRunFinished } from "../agents/delivery.js";
 import { failStaleRuns } from "../agents/reconcile.js";
 import { AgentConflictJournal, createConflictHook } from "../agents/conflict.js";
-import { createRunHook } from "../agents/run-hook.js";
+import { createRunHook, createCoordinationCompactionHook } from "../agents/run-hook.js";
 import { createTraceHook } from "../agents/trace-hook.js";
 import { ThreadBinding, type ChatAgentBinding } from "../agents/thread-binding.js";
 import { ConversationRecovery } from "../chats/recovery.js";
@@ -528,6 +532,7 @@ export class GuildRuntime {
       },
       toolHooks: [
         createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
+        createCoordinationCompactionHook(this.pool, this.agents, chatOfConversation),
         createConflictHook(this.conflicts, chatOfConversation),
         ...(deps.trace !== undefined ? [createTraceHook(deps.trace, this.agents, chatOfConversation)] : []),
       ],
@@ -1156,15 +1161,37 @@ export class GuildRuntime {
     result: ChildResultEvent,
     model: string | null,
   ): Promise<void> {
+    const source = (
+      await readWorkerOrigin<{
+        id: string;
+        user_id: string;
+        source_thread_id: string | null;
+        source_event_id: string | null;
+        email: string;
+        name: string;
+      }>(this.pool, [result.thread_id])
+    ).rows[0];
     await this.submitTurn(chatId, orgId, {
       orgId,
       requestId: result.run_id,
-      content: childResultText(result, new Date().toISOString()),
+      content:
+        (source === undefined
+          ? ""
+          : `<worker_origin>${JSON.stringify({ ...source, input_id: source.id })}</worker_origin>\n`) +
+        childResultText(result, new Date().toISOString()),
       images: [],
       model,
       sendMode: "steer",
       entry: childResultEntry(result),
     });
+    if (source !== undefined)
+      await recordWorkerOutcome(this.pool, [
+        chatId,
+        source.user_id,
+        source.source_thread_id,
+        result.run_id,
+        result.final_text,
+      ]);
   }
 
   /** The inputs waiting in a chat's inbox, as the ThreadState frame shows
@@ -1190,7 +1217,17 @@ export class GuildRuntime {
   private async writeEntryInProcess(chatId: string, entry: EntryDraft): Promise<void> {
     await this.start();
     const conversation = await this.conversationForChat(chatId);
-    await conversation.submit({ type: "write", entry }, BACKGROUND_CONTEXT);
+    const requestId =
+      entry.data !== null &&
+      typeof entry.data === "object" &&
+      !Array.isArray(entry.data) &&
+      typeof entry.data?.["request_id"] === "string"
+        ? entry.data["request_id"]
+        : undefined;
+    await conversation.submit(
+      { type: "write", entry, ...(requestId === undefined ? {} : { requestId }) },
+      BACKGROUND_CONTEXT,
+    );
     await this.reconcileConversation(chatId, Number(conversation.id));
   }
 
@@ -1234,6 +1271,30 @@ export class GuildRuntime {
     // call the resume path makes before a re-driven run). Empty desired
     // selections clear previously configured dynamic tools.
     await this.stores.conversations.setProjectInstructions(chatId, input.agentsMd ?? "");
+    const role = await coordinationRole(this.pool, chatId);
+    const binding = await agentThreadForChat(this.pool, chatId);
+    if (binding !== null) {
+      const configured = await this.agents.fetchAgent(binding.agent_id);
+      const models = coordinationSettings(configured);
+      if (role?.execution_role === "inbox" && !models.enabled) {
+        throw ApiError.conflict(
+          "coordination_disabled",
+          "Assistant is disabled for this Agent. Open a regular thread or enable Assistant in Agent settings.",
+        );
+      }
+      input = {
+        ...input,
+        model:
+          role?.execution_role === "coordinator"
+            ? models.coordinator_model
+            : role?.execution_role === "reflection"
+              ? models.reflection_model
+              : role?.general_worker
+                ? models.worker_model
+                : configured.model,
+        passive: role?.execution_role === "inbox" || input.passive === true,
+      };
+    }
     await this.turnTools.provision(conversation, chatId, orgId, signal);
     signal.throwIfAborted();
     // The combined skills index section renders at turn start from the
@@ -1267,6 +1328,21 @@ export class GuildRuntime {
         ? null
         : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
     signal.throwIfAborted();
+    if (input.passive) {
+      const submission = await conversation.submit(
+        {
+          type: "write",
+          requestId: input.requestId,
+          entry: {
+            ...(input.entry ?? { kind: "guild.posted-turn" }),
+            model: [{ role: "user", content, timestamp: Date.now() }],
+          },
+        },
+        BACKGROUND_CONTEXT,
+      );
+      await this.reconcileConversation(chatId, Number(conversation.id));
+      return Number(submission.id);
+    }
     const submission = await conversation.submit(
       {
         type: "input",

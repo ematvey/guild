@@ -36,6 +36,7 @@ export interface ConversationThread {
 }
 
 export interface ConversationRow {
+  internal: boolean;
   id: string;
   title: string | null;
   owner: ConversationOwner;
@@ -52,6 +53,7 @@ export interface ConversationRow {
 }
 
 export interface ConversationFilters {
+  includeBackground?: boolean;
   orgId: string;
   /** When set, only this owner's conversations (a member's own history). */
   userId?: string;
@@ -245,11 +247,18 @@ export function groupConversation(
 export class ConversationHistoryStore {
   constructor(private readonly pool: PlatformPool) {}
 
+  /** The org's internal chats: coordinator and reflection histories. */
+  async internalChatIds(orgId: string): Promise<string[]> {
+    const res = await this.pool.query<{ id: string }>(`SELECT id FROM chats WHERE org_id=$1 AND internal`, [orgId]);
+    return res.rows.map(({ id }) => id);
+  }
+
   /** The org's conversations, newest activity first. Admin scope has no
    *  owner filter; a member reads only their own rows. */
   async list(filter: ConversationFilters): Promise<{ rows: ConversationRow[]; total: number }> {
     const params: unknown[] = [filter.orgId];
     const where: string[] = ["c.org_id = $1", "c.deleted_at IS NULL"];
+    if (!filter.includeBackground) where.push("NOT c.internal");
     if (filter.userId !== undefined) {
       params.push(filter.userId);
       where.push(`c.user_id = $${params.length}`);
@@ -286,7 +295,7 @@ export class ConversationHistoryStore {
     );
     params.push(filter.limit, filter.offset);
     const rows = await this.pool.query<Record<string, unknown>>(
-      `SELECT c.id, c.title, ${utcText("c.created_at")} AS created_at,
+      `SELECT c.id, c.title, c.internal, ${utcText("c.created_at")} AS created_at,
               c.user_id, u.email, u.display_name,
               c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted,
               xt.id AS thread_id, xt.type AS thread_type,
@@ -300,7 +309,7 @@ export class ConversationHistoryStore {
        FROM chats c
        JOIN users u ON u.id = c.user_id
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
-       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id
+       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id AND pt.execution_role <> 'coordinator'
        LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
@@ -327,9 +336,9 @@ export class ConversationHistoryStore {
   }
 
   /** One conversation's header by id, without an access check. */
-  async header(orgId: string, chatId: string): Promise<ConversationRow | null> {
+  async header(orgId: string, chatId: string, includeBackground = false): Promise<ConversationRow | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT c.id, c.title, ${utcText("c.created_at")} AS created_at,
+      `SELECT c.id, c.title, c.internal, ${utcText("c.created_at")} AS created_at,
               c.user_id, u.email, u.display_name,
               c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted,
               xt.id AS thread_id, xt.type AS thread_type,
@@ -343,7 +352,7 @@ export class ConversationHistoryStore {
        FROM chats c
        JOIN users u ON u.id = c.user_id
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
-       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id
+       LEFT JOIN agent_threads pt ON pt.id = xt.parent_thread_id AND ($3 OR pt.execution_role <> 'coordinator')
        LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
@@ -358,8 +367,8 @@ export class ConversationHistoryStore {
                 count(*) FILTER (WHERE r.status = 'failed')::int AS failed_runs
          FROM agent_runs r WHERE r.thread_id = xt.id
        ) runs ON true
-       WHERE c.org_id = $1 AND c.id = $2`,
-      [orgId, chatId],
+       WHERE c.org_id = $1 AND c.id = $2 AND ($3 OR NOT c.internal)`,
+      [orgId, chatId, includeBackground],
     );
     const row = res.rows[0];
     return row === undefined ? null : rowToConversation(row);
@@ -370,9 +379,9 @@ export class ConversationHistoryStore {
   async detail(
     orgId: string,
     chatId: string,
-    opts: { beforeSeq?: number; limit: number },
+    opts: { beforeSeq?: number; limit: number; includeBackground?: boolean },
   ): Promise<{ messages: ConversationMessageRow[]; runs: ConversationRunRow[]; hasMore: boolean } | null> {
-    const header = await this.header(orgId, chatId);
+    const header = await this.header(orgId, chatId, opts.includeBackground);
     if (header === null) return null;
     const res = await this.pool.query<{
       seq: string;
@@ -407,15 +416,34 @@ export class ConversationHistoryStore {
     return { messages, runs: runsRes.rows.map(rowToRun), hasMore };
   }
 
+  async relatedThreads(orgId: string, chatId: string, owner: string | undefined) {
+    const { rows } = await this.pool.query<{ id: string; title: string | null; internal: boolean }>(
+      `SELECT c.id, c.title, c.internal
+       FROM agent_threads source
+       JOIN agent_threads t ON (
+         t.parent_thread_id = source.id
+         OR ($3::uuid IS NULL AND t.agent_id = source.agent_id AND t.execution_role IN ('coordinator', 'reflection'))
+       )
+       JOIN chats c ON c.id = t.chat_id
+       WHERE source.chat_id = $2 AND c.org_id = $1 AND c.id <> $2 AND c.deleted_at IS NULL
+         AND ($3::uuid IS NULL OR (NOT c.internal AND c.user_id = $3))
+       ORDER BY (t.execution_role = 'coordinator') DESC, (t.parent_thread_id = source.id) DESC NULLS LAST,
+         c.created_at DESC, c.id
+       LIMIT 40`,
+      [orgId, chatId, owner ?? null],
+    );
+    return rows;
+  }
+
   /** The thread a run belongs to, with its parent thread's chat. */
-  async threadOfRun(orgId: string, threadId: string): Promise<ConversationThread | null> {
+  async threadOfRun(orgId: string, threadId: string, includeBackground = false): Promise<ConversationThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
       `SELECT t.id, t.chat_id, t.type, t.parent_thread_id, pt.chat_id AS parent_chat_id, pt.title AS parent_title
        FROM agent_threads t
        JOIN chats c ON c.id = t.chat_id
-       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id
-       WHERE c.org_id = $1 AND t.id = $2`,
-      [orgId, threadId],
+       LEFT JOIN agent_threads pt ON pt.id = t.parent_thread_id AND pt.execution_role <> 'coordinator'
+       WHERE c.org_id = $1 AND t.id = $2 AND ($3 OR NOT c.internal)`,
+      [orgId, threadId, includeBackground],
     );
     const row = res.rows[0];
     if (row === undefined) return null;
@@ -436,6 +464,7 @@ function rowToConversation(row: Record<string, unknown>): ConversationRow {
   const threadId = row["thread_id"];
   return {
     id: String(row["id"]),
+    internal: row["internal"] === true,
     title: row["title"] === null || row["title"] === undefined ? null : String(row["title"]),
     owner: {
       id: String(row["user_id"]),

@@ -49,6 +49,7 @@ export function AgentsPanel({
     case "run":
       return (
         <RunDetailPage
+          key={`run:${route.runId}`}
           runId={route.runId}
           view={route.traceView ?? "transcript"}
           role={viewer.role}
@@ -59,6 +60,7 @@ export function AgentsPanel({
     case "trace":
       return (
         <RunDetailPage
+          key={`trace:${route.traceId}`}
           runId={route.traceId}
           traceOnly
           view={route.traceView ?? "transcript"}

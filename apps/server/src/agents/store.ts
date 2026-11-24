@@ -45,6 +45,7 @@ export {
   type ThreadListOptions,
   type ThreadPage,
   type ThreadSort,
+  wireThread,
 } from "./store/threads.js";
 
 export interface AgentStoreDeps {

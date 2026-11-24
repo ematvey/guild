@@ -80,16 +80,18 @@ describe("agent turns", () => {
     expect(run.rows[0]).toMatchObject({ status: "succeeded", summary: "hello" });
     expect(run.rows[0]!.tokens).toBeGreaterThan(0);
 
-    // The default thread keeps its name; a turn into it never renames it.
-    const thread = await stack.env.db.query<{ id: string; title: string; chat_id: string }>(
-      "SELECT id, title, chat_id FROM agent_threads WHERE agent_id = $1 AND is_default",
+    // A turn without a thread names a new one; the thread made with the
+    // agent keeps its name.
+    const threads = await stack.env.db.query<{ id: string; title: string; chat_id: string }>(
+      "SELECT id, title, chat_id FROM agent_threads WHERE agent_id = $1 ORDER BY created_at",
       [agent.id],
     );
-    expect(thread.rows[0]!.title).toBe("Main thread");
+    expect(threads.rows).toHaveLength(2);
+    expect(threads.rows[0]!.title).toBe("Turn agent");
     const chat = await stack.env.db.query<{ title: string }>("SELECT title FROM chats WHERE id = $1", [
-      thread.rows[0]!.chat_id,
+      threads.rows[0]!.chat_id,
     ]);
-    expect(chat.rows[0]!.title).toBe("Main thread");
+    expect(chat.rows[0]!.title).toBe("Turn agent");
 
     const detail = await stack.env.app.inject({
       method: "GET",
@@ -126,7 +128,7 @@ describe("reading another member's agent", () => {
       "SELECT count(*) AS n FROM agent_threads WHERE agent_id = $1",
       [agent.id],
     );
-    // Only the owner's Main thread, made with the agent.
+    // Only the owner's first thread, made with the agent.
     expect(Number(rows.rows[0]!.n)).toBe(1);
   });
 });
@@ -226,7 +228,7 @@ describe("plain chat adoption", () => {
 });
 
 describe("agent picker", () => {
-  it("keeps an agent's Main thread on that agent", async () => {
+  it("keeps a run transcript on its own agent", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/agents",
@@ -236,10 +238,12 @@ describe("agent picker", () => {
     const agent = (JSON.parse(created.body) as { agent: { id: string } }).agent;
 
     const thread = await stack.env.db.query<{ chat_id: string }>(
-      "SELECT chat_id FROM agent_threads WHERE agent_id = $1 AND is_default",
+      "SELECT chat_id FROM agent_threads WHERE agent_id = $1 ORDER BY created_at LIMIT 1",
       [agent.id],
     );
     const chatId = thread.rows[0]!.chat_id;
+    // A spawned node belongs to its parent's agent.
+    await stack.env.db.query("UPDATE agent_threads SET type = 'subagent' WHERE chat_id = $1", [chatId]);
 
     const read = await stack.env.app.inject({
       method: "GET",

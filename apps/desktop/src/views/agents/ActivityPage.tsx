@@ -73,7 +73,7 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
   "30d": 30 * 24 * 3_600_000,
 };
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
-  ["chats", "Conversations"],
+  ["chats", "Threads"],
   ["traces", "Runs"],
   ["calls", "Model calls"],
 ];
@@ -136,6 +136,8 @@ export function ActivityPage({
   // The text filters fetch once typing pauses; the URL follows every key.
   const q = useDebounced(filters.q.trim(), SEARCH_DEBOUNCE_MS);
   const model = useDebounced(filters.model, SEARCH_DEBOUNCE_MS);
+  const admin = role === "admin";
+  const background = admin && filters.background;
   const { tab, period, status, trigger, caller } = filters;
 
   useEffect(() => {
@@ -171,7 +173,7 @@ export function ActivityPage({
             setTotal(res.total);
           })
         : tab === "chats"
-          ? listConversations(query).then((res) => {
+          ? listConversations({ ...query, ...(background ? { background } : {}) }).then((res) => {
               if (!live) return;
               setConversations(res.conversations);
               setTotal(res.total);
@@ -195,7 +197,7 @@ export function ActivityPage({
     return () => {
       live = false;
     };
-  }, [tab, period, status, trigger, q, caller, model, agentId, tick]);
+  }, [tab, period, status, trigger, q, caller, model, agentId, background, tick]);
 
   // The traces tab is live: a pushed run moves its row, and a new run that
   // matches the filters joins the top. The calls and chats tabs are span
@@ -216,7 +218,6 @@ export function ActivityPage({
     setTotal((value) => value + 1);
   });
 
-  const admin = role === "admin";
   const body = (
     <>
       <SummaryCards summary={summary} admin={admin} />
@@ -303,9 +304,19 @@ export function ActivityPage({
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
+        {admin && tab === "chats" && (
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={background}
+              onChange={(event) => set({ background: event.target.checked })}
+            />
+            Include background threads
+          </label>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, filters.tab === "chats" ? "conversation" : filters.tab === "calls" ? "call" : "run")}
+            {count(total, filters.tab === "chats" ? "thread" : filters.tab === "calls" ? "call" : "run")}
           </span>
           {filters.tab !== "traces" && (
             <Button
@@ -372,7 +383,6 @@ export function ActivityPage({
       <PageHeader
         variant="bar"
         title="Activity"
-        description="Conversations and the runs inside them, then the model and tool calls of one run."
         tabs={
           <TabBar label="Activity views" tabs={ACTIVITY_TABS} value={filters.tab} onChange={(tab) => set({ tab })} />
         }
@@ -650,15 +660,14 @@ function ConversationsTable({
     return (
       <EmptyState
         icon={MessageSquare}
-        title="No conversations in this window"
-        hint="A conversation is one chat: its trigger messages, its runs, and the agent's replies."
+        title="No threads in this window"
       />
     );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="hidden grid-cols-[minmax(0,1fr)_9rem_8rem_4rem_5rem_5rem_7rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
-        <span>Conversation</span>
+        <span>Thread</span>
         <span>Owner</span>
         <span>Agent</span>
         <span className="text-right">Runs</span>
@@ -677,8 +686,9 @@ function ConversationsTable({
           <span className="min-w-0">
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-sm font-medium">
-                {row.title !== null && row.title.trim() !== "" ? row.title : "Untitled conversation"}
+                {row.title !== null && row.title.trim() !== "" ? row.title : "Untitled thread"}
               </span>
+              {row.internal && <ToneBadge tone="neutral">Background</ToneBadge>}
               {row.open_runs > 0 && <ToneBadge tone="info">Running</ToneBadge>}
               {row.failed_runs > 0 && <ToneBadge tone="danger">{count(row.failed_runs, "failed run")}</ToneBadge>}
               {row.archived && <ToneBadge tone="neutral">Archived</ToneBadge>}
@@ -850,7 +860,7 @@ export function ConversationPage({
         title={
           conversation?.title !== null && conversation?.title !== undefined && conversation.title.trim() !== ""
             ? conversation.title
-            : "Conversation"
+            : "Thread"
         }
         description={
           conversation !== null
@@ -859,11 +869,13 @@ export function ConversationPage({
         }
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate(conversation?.internal
+              ? { ...AGENTS_ACTIVITY, filters: { ...AGENTS_ACTIVITY.filters, background: true } }
+              : AGENTS_ACTIVITY)}>
               <ArrowLeft />
               Activity
             </Button>
-            <Button variant="ghost" size="sm" aria-label="Refresh conversation" onClick={() => setTick((t) => t + 1)}>
+            <Button variant="ghost" size="sm" aria-label="Refresh thread" onClick={() => setTick((t) => t + 1)}>
               <RefreshCw />
               Refresh
             </Button>
@@ -877,7 +889,21 @@ export function ConversationPage({
                 Parent thread
               </Button>
             )}
-            {onOpenChat !== undefined && (
+            {(detail?.related_threads?.length ?? 0) > 0 && (
+              <Select value="" onValueChange={(id) => onNavigate({ view: "chat", chatId: id })}>
+                <SelectTrigger aria-label="Related threads" className="h-8 w-40 text-xs">
+                  <SelectValue placeholder="Related threads" />
+                </SelectTrigger>
+                <SelectContent>
+                  {detail?.related_threads?.map((thread) => (
+                    <SelectItem key={thread.id} value={thread.id}>
+                      {thread.title?.trim() || "Untitled thread"}{thread.internal ? " · Background" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {onOpenChat !== undefined && conversation !== null && !conversation.internal && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
                 Open chat
@@ -888,7 +914,7 @@ export function ConversationPage({
       />
       <PageBody className="max-w-[80rem]">
         {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && detail === null && <InlineLoading label="Loading conversation" />}
+        {error === null && detail === null && <InlineLoading label="Loading thread" />}
         {detail !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">

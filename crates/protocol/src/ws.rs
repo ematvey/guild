@@ -292,7 +292,9 @@ pub enum WsServerMsg {
     },
     /// The Apps the member sees, newest change first. Daemons tag-peek and
     /// ignore it.
-    AppList { apps: Vec<serde_json::Value> },
+    AppList {
+        apps: Vec<serde_json::Value>,
+    },
     /// One chat's tree facts for its header: sent inside the chat's sync
     /// bracket and whenever its title, run status, parent or flags change.
     /// Daemons tag-peek and ignore it.

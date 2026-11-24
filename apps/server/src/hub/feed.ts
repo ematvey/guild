@@ -211,7 +211,14 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_chat_status: (status) => {
       if (this.stopped) return;
       // Owner-scoped: only the owner's sockets get the frame.
-      this.sendToUser(status.user_id, { type: "chat_status", chat_id: status.chat_id, generating: status.generating });
+      void this.ensureChat(status.chat_id, false).then((identity) => {
+        if (identity !== null)
+          this.sendToUser(status.user_id, {
+            type: "chat_status",
+            chat_id: status.chat_id,
+            generating: status.generating,
+          });
+      });
       // The flip moves the chat's list row (its spinner, its unread dot):
       // each socket gets that row alone.
       void this.pushWorkspace(status.org_id, status.user_id, ["chats"]);
@@ -622,7 +629,7 @@ export class FeedForwarder implements GenerationStreamSink {
     }
     const lookup = (async (): Promise<ChatIdentity | null> => {
       const row = await this.ctx.chats.identityOf(chatId);
-      if (row === null) return null;
+      if (row === null || row.internal) return null;
       const identity: ChatIdentity = { orgId: row.org_id, userId: row.user_id, machineId: row.machine_id };
       this.remember(chatId, identity);
       return identity;

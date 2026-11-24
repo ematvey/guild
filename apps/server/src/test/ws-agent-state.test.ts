@@ -161,22 +161,25 @@ describe("agent and skill state frames", () => {
       );
 
       // A run on the private agent reaches its owner only; a run on the
-      // shared one reaches both, and a status change follows as a new frame.
+      // shared one still reaches only its requesting member.
       const privateRun = await insertRun(privateId, stack.memberId, "running");
       await waitFrame(owner, (f) => f.type === "agent_run" && (f.run as { id: string }).id === privateRun);
       const sharedRun = await insertRun(shared, stack.memberId, "running");
-      await waitFrame(peer, (f) => f.type === "agent_run" && (f.run as { id: string }).id === sharedRun);
+      await waitFrame(owner, (f) => f.type === "agent_run" && (f.run as { id: string }).id === sharedRun);
       await stack.env.db.query("UPDATE agent_runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [
         sharedRun,
       ]);
       const finished = await waitFrame(
-        peer,
+        owner,
         (f) =>
           f.type === "agent_run" &&
           (f.run as { id: string; status: string }).id === sharedRun &&
           (f.run as { status: string }).status === "succeeded",
       );
       expect((finished.run as { finished_at: string | null }).finished_at).not.toBeNull();
+      expect(textFrames(peer).some((f) => f.type === "agent_run" && (f.run as { id: string }).id === sharedRun)).toBe(
+        false,
+      );
       expect(textFrames(peer).some((f) => f.type === "agent_run" && (f.run as { id: string }).id === privateRun)).toBe(
         false,
       );

@@ -1,3 +1,5 @@
+import { request } from "../../lib/api/request";
+import { openAssistant } from "../agents/agents-api";
 // The thread view: transcript, composer and sidebar for one chat. State
 // lives in the hooks under thread/hooks/ and the chat stores, pure
 // derivations in the sibling modules, the parts in their own components, and
@@ -28,7 +30,6 @@ import {
   tabPaneLayout,
   threadAccess,
   threadFacts,
-  workingForChat,
 } from "./status";
 import { CHAT_ROOT, SURFACE_BASE } from "./route";
 import { chatsStore, resetChatStores, useSidebarRows } from "./chat-stores";
@@ -163,6 +164,41 @@ function ThreadView(props: ThreadProps) {
     () => pushRoute({ preview: previewRef, previewFull: !(route.previewFull === true) }),
     [pushRoute, previewRef, route.previewFull],
   );
+  useEffect(() => {
+    if (route.chatId === null) return;
+    void request("POST", `/api/v1/chats/${route.chatId}/surface`, {}).catch(() => {});
+  }, [route.chatId]);
+  // The Chats tab opens on the member's assistant, not on a blank composer:
+  // its inbox thread is the tab's home. A refused open (no model, coordination
+  // off) leaves the scratch composer in place, and a chat route, a surface
+  // page, an overlay or the addressed scratch composer (/chats/new) is not
+  // the tab root.
+  useEffect(() => {
+    if (route.chatId !== null || route.tab !== "chats" || route.newChat) return;
+    if (route.projectId !== null || route.overlay !== null) return;
+    if (route.skills !== null || route.agents !== null || route.integrations !== null) return;
+    if ((route.apps ?? null) !== null) return;
+    let live = true;
+    void openAssistant()
+      .then((result) => {
+        if (live) pushRoute({ chatId: result.chat_id }, { replace: true });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [
+    route.chatId,
+    route.tab,
+    route.newChat,
+    route.projectId,
+    route.overlay,
+    route.skills,
+    route.agents,
+    route.integrations,
+    route.apps,
+    pushRoute,
+  ]);
   const chatId = route.chatId;
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
@@ -234,7 +270,6 @@ function ThreadView(props: ThreadProps) {
   // The visible chat's subtree, from the per-chat map the socket fills. It
   // survives navigation, so returning to a chat renders its tree at once.
   const subagentNodes = viewChatId ? (subagentTrees[viewChatId] ?? []) : [];
-  const openWorking = workingForChat(openStatus, viewChatId ? subagentTrees[viewChatId] : undefined);
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   // Ref mirror for effects that must read the pick without re-running on
   // every pick change.
@@ -484,6 +519,7 @@ function ThreadView(props: ThreadProps) {
   // An archived thread is in the archived list, not the active one; its row
   // still supplies the title.
   const listedChat = activeChat ?? archivedChats?.find((c) => c.id === viewChatId);
+  const assistantInbox = listedChat?.assistant_inbox === true;
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
@@ -851,8 +887,10 @@ function ThreadView(props: ThreadProps) {
                 titleLoading={threadLoading && blocks.length === 0}
                 childTree={childTree}
                 isSubagent={facts.type === "subagent"}
-                showWorking={!!viewChatId && openWorking && !openGenerating}
-                showMenu={!!viewChatId && facts.type === "user" && !facts.deleted}
+                showMenu={
+                  !!viewChatId && (listedChat !== undefined || foreignChat) &&
+                  facts.type === "user" && !facts.deleted && !assistantInbox
+                }
                 foreign={foreignChat}
                 archived={chatArchived}
                 renameSeed={activeChat?.title ?? ""}
@@ -902,6 +940,7 @@ function ThreadView(props: ThreadProps) {
               </PreviewProvider>
 
               <ThreadComposer
+                assistantInbox={assistantInbox}
                 composer={composer}
                 sending={outgoing}
                 agent={agent}

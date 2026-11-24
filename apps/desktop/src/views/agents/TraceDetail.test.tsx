@@ -87,13 +87,50 @@ describe("run page", () => {
     expect(api.getTrace).toHaveBeenCalledTimes(2);
   });
 
-  it("goes back to the conversation the run belongs to", async () => {
+  it("shows background run history without requesting telemetry", async () => {
+    api.getRun.mockResolvedValueOnce({
+      run: {
+        ...running,
+        internal: true,
+        status: "succeeded",
+        steps: [{ kind: "assistant", detail: "Saved memory." }],
+      },
+      thread: { chat_id: "c1", parent_chat_id: null },
+    });
+    const onNavigate = vi.fn();
+    render(<RunDetailPage runId="r1" view="transcript" role="admin" onNavigate={onNavigate} onOpenChat={vi.fn()} />);
+    expect(await screen.findByText("Saved memory.")).toBeTruthy();
+    expect(api.getTrace).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Thread" }));
+    expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c1" });
+  });
+
+  it("renders the saved run while telemetry is pending and keeps it after a trace failure", async () => {
+    let rejectTrace!: (reason: Error) => void;
+    api.getTrace.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectTrace = reject; }));
+    api.getRun.mockResolvedValueOnce({ run: { ...running, status: "succeeded" }, thread: null });
+    render(<RunDetailPage runId="r1" view="transcript" role="member" onNavigate={() => {}} />);
+    expect(await screen.findByText("Succeeded")).toBeTruthy();
+    await act(async () => rejectTrace(new Error("no such trace")));
+    expect(screen.getByText("Succeeded")).toBeTruthy();
+    expect(screen.queryByText("no such trace")).toBeNull();
+  });
+
+  it("requires the saved run on a run URL", async () => {
+    api.getRun.mockRejectedValueOnce(new Error("no such run"));
+    render(<RunDetailPage runId="r1" view="transcript" role="member" onNavigate={() => {}} />);
+    expect(await screen.findByText("no such run")).toBeTruthy();
+    expect(api.getTrace).not.toHaveBeenCalled();
+  });
+
+  it("goes back to the thread the run belongs to", async () => {
     const trace = { ...traceFromRun(running), session_id: "c1" };
     api.getTrace.mockResolvedValueOnce({ trace, spans: [span("s1", "hi")], children: [] });
     api.getRun.mockResolvedValue({ run: running, thread: null });
     const onNavigate = vi.fn();
     render(<RunDetailPage runId="r1" view="tree" role="member" onNavigate={onNavigate} />);
-    const back = await screen.findByRole("button", { name: /Conversation/ });
+    const back = await screen.findByRole("button", { name: "Thread" });
     fireEvent.click(back);
     expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c1" });
   });

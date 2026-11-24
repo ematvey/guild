@@ -116,6 +116,10 @@ export async function createGatewayTestEnv(
     ...configOverrides,
   });
   const app = await buildApp(config);
+  // Canned model responses belong to explicitly submitted test work.
+  // Coordination scenarios advance tick() themselves; background reflection
+  // must not consume another scenario's scripted model response.
+  app.platform.coordination.stop();
 
   let done = false;
   const cleanup = async (): Promise<void> => {

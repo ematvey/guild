@@ -12,7 +12,7 @@ import { relativeTime } from "../../lib/relative-time";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
 import { getRun, getTrace, type AgentRun, type RunThread, type SpanRow, type TraceRow } from "./agents-api";
 import { AGENTS_ACTIVITY, type AgentsRoute, type TraceView } from "./agents-route";
-import { runFinishes, traceWithRun, useAgentRunUpdates } from "./agents-store";
+import { runFinishes, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
 import { compact, money, ms, statusLabel, time, toneOf, totalTokens, triggerLabel } from "./activity-format";
 import { ErrorState, InlineLoading, TabBar, ToneBadge } from "./agent-ui";
 import { SpanDetail } from "./span-detail";
@@ -42,7 +42,7 @@ export function RunDetailPage({
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [trace, setTrace] = useState<TraceRow | null>(null);
+  const [recordedTrace, setTrace] = useState<TraceRow | null>(null);
   const [spans, setSpans] = useState<SpanRow[]>([]);
   const [children, setChildren] = useState<TraceRow[]>([]);
   const [selected, setSelected] = useState<SpanRow | null>(null);
@@ -63,44 +63,44 @@ export function RunDetailPage({
   useEffect(() => {
     let live = true;
     setError(null);
-    void getTrace(runId)
-      .then((value) => {
-        if (!live) return;
-        // The trace store can lag the run row: the last pushed run still wins
-        // for the fields it carries.
-        const pushed = pushedRun.current;
-        const next = pushed !== null && pushed.id === runId ? traceWithRun(value.trace, pushed) : value.trace;
-        shownStatus.current = next.status;
-        setTrace(next);
-        setSpans(value.spans);
-        setChildren(value.children);
-        setSelected((current) => {
-          if (current !== null && value.spans.some((span) => span.span_id === current.span_id)) return current;
-          const ordered = [...value.spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
-          return ordered.find((span) => span.span_type === "llm") ?? ordered[0] ?? null;
-        });
-      })
-      .catch((err: unknown) => {
-        if (!live) return;
-        setError(err instanceof Error ? err.message : "The run did not load.");
+    const loadTrace = async () => {
+      const telemetry = await getTrace(runId);
+      if (!live) return;
+      const pushed = pushedRun.current;
+      const { trace: row, spans: recordedSpans, children: childTraces } = telemetry;
+      const next = pushed === null ? row : traceWithRun(row, pushed);
+      if (traceOnly) shownStatus.current = next.status;
+      setTrace(next);
+      setSpans(recordedSpans);
+      setChildren(childTraces);
+      setSelected((current) => {
+        if (current !== null && recordedSpans.some((span) => span.span_id === current.span_id)) return current;
+        const ordered = [...recordedSpans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
+        return ordered.find((span) => span.span_type === "llm") ?? ordered[0] ?? null;
       });
-    if (traceOnly) {
+    };
+    const showError = (err: unknown) => {
+      if (!live) return;
       setRun(null);
       setThread(null);
+      setTrace(null);
+      setSpans([]);
+      setChildren([]);
+      setSelected(null);
+      setError(err instanceof Error ? err.message : "The run did not load.");
+    };
+    if (traceOnly) {
+      void loadTrace().catch(showError);
     } else {
-      void getRun(runId)
-        .then(({ run: value, thread: parent }) => {
-          if (!live) return;
-          shownStatus.current ??= value.status;
-          setRun(value);
-          setThread(parent);
-        })
-        .catch(() => {
-          if (live) {
-            setRun(null);
-            setThread(null);
-          }
-        });
+      void getRun(runId).then(({ run: stored, thread: parent }) => {
+        if (!live) return;
+        const pushed = pushedRun.current;
+        const current = pushed === null ? stored : { ...stored, ...pushed };
+        shownStatus.current = current.status;
+        setRun(current);
+        setThread(parent);
+        if (!stored.internal) void loadTrace().catch(() => {});
+      }, showError);
     }
     return () => {
       live = false;
@@ -123,6 +123,14 @@ export function RunDetailPage({
     if (finishes) setTick((t) => t + 1);
   });
 
+  const trace = useMemo(
+    () => {
+      if (run === null) return recordedTrace;
+      const row = recordedTrace === null ? traceFromRun(run) : traceWithRun(recordedTrace, run);
+      return { ...row, session_id: thread?.chat_id ?? row.session_id };
+    },
+    [recordedTrace, run, thread],
+  );
   const ordered = useMemo(
     () => [...spans].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time)),
     [spans],
@@ -160,7 +168,7 @@ export function RunDetailPage({
             onClick={() => onNavigate(chatId === null ? AGENTS_ACTIVITY : { view: "chat", chatId })}
           >
             <ArrowLeft />
-            {chatId === null ? "Activity" : "Conversation"}
+            {chatId === null ? "Activity" : "Thread"}
           </Button>
           {trace !== null && (
             <>
@@ -192,7 +200,7 @@ export function RunDetailPage({
                 Parent thread
               </Button>
             )}
-            {chatId !== null && onOpenChat !== undefined && (
+            {chatId !== null && onOpenChat !== undefined && !run?.internal && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
                 Open chat
@@ -206,7 +214,7 @@ export function RunDetailPage({
             <span className="text-2xs text-muted-foreground">
               {trace.agent_name || "Agent"} · {time(trace.started_at)} · {ms(trace.duration_ms)} ·{" "}
               {compact(totalTokens(trace))} tokens
-              {admin ? ` · ${money(trace.cost_usd)}` : ""}
+              {admin && recordedTrace !== null ? ` · ${money(trace.cost_usd)}` : ""}
             </span>
           )}
         </div>
@@ -242,7 +250,7 @@ export function RunDetailPage({
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2" data-scrollable>
                 {view === "timeline" &&
-                  (bounds === null ? (
+                  (bounds === null || ordered.length === 0 ? (
                     <p className="py-6 text-center text-sm text-muted-foreground">
                       No spans were recorded for this trace.
                     </p>
@@ -269,7 +277,7 @@ export function RunDetailPage({
                     <Meta label="Agent" value={trace.agent_name || "—"} />
                     {trace.session_id !== null ? (
                       <div>
-                        <dt className="text-muted-foreground">Chat</dt>
+                        <dt className="text-muted-foreground">Thread</dt>
                         <dd>
                           <button
                             type="button"
