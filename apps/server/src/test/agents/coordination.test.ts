@@ -242,6 +242,7 @@ suite("persistent coordination", () => {
           databaseUrl: env!.databaseUrl,
           pool: single,
           store: ownerStore,
+          routeSupportsImages: async () => false,
           log: pino({ level: "silent" }),
           runtime: {
             submitTurn: async (chatId) => {
