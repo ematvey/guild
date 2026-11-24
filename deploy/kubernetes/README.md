@@ -148,8 +148,8 @@ pool's worker pod. It checks both markers after resume.
 Run `verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN` to verify the
 default cluster's Guild, sandbox adapter, gateway, and workspace mount.
 The probe writes to both workspace types, verifies that only the Guild
-pod gets a PostgreSQL protocol response, and persists an Assistant reply
-through the configured public origin. It uses a temporary session and chat.
+pod gets a PostgreSQL protocol response, and exercises a GitHub gateway read and
+persists an Assistant reply through the configured public origin. It uses a temporary session and chat.
 
 ## Gateway fixtures
 
