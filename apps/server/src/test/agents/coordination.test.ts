@@ -172,7 +172,7 @@ suite("persistent coordination", () => {
     expect(await runTraceRow(env!.db, run.id)).toBeNull();
   });
 
-  it("preserves newer memory across equivalent paths and workspace shell calls", async () => {
+  it("runs workspace shell commands without a memory read and detects stale native writes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "guild-memory-"));
     const one = await store.threads.createThread(agent.id, alice.id, "Memory writer");
     const two = await store.threads.createThread(agent.id, bob.id, "Reflection writer");
@@ -188,7 +188,8 @@ suite("persistent coordination", () => {
             execute: async (args) => {
               const a = args as Record<string, string>;
               if (name === "write") await writeFile(path.join(root, "MEMORY.md"), a["content"]!);
-              if (name === "bash") await writeFile(path.join(root, "MEMORY.md"), "shell revision");
+              if (name === "bash" && a["command"] === "update memory")
+                await writeFile(path.join(root, "MEMORY.md"), "shell revision");
               return { output: [{ type: "text", text: await readFile(path.join(root, "MEMORY.md"), "utf8") }] };
             },
           };
@@ -199,14 +200,13 @@ suite("persistent coordination", () => {
       b = tools(two.id);
     const run = (tool: ToolRegistration, args: Record<string, string>) => tool.execute(args, {} as never, {} as never);
     try {
+      expect((await run(b["bash"]!, { command: "pwd" })).isError).toBeFalsy();
       await run(a["read"]!, { path: "MEMORY.md" });
       await run(b["read"]!, { path: "./MEMORY.md" });
       await run(a["write"]!, { path: "/workspace/MEMORY.md", content: "newer" });
       expect((await run(b["write"]!, { path: "./MEMORY.md", content: "stale" })).isError).toBe(true);
-      expect((await run(b["bash"]!, { command: "update memory" })).isError).toBe(true);
       expect(await readFile(path.join(root, "MEMORY.md"), "utf8")).toBe("newer");
-      await run(b["read"]!, { path: "./MEMORY.md" });
-      await run(b["bash"]!, { command: "update memory" });
+      expect((await run(b["bash"]!, { command: "update memory" })).isError).toBeFalsy();
       expect((await run(a["write"]!, { path: "MEMORY.md", content: "stale native" })).isError).toBe(true);
       expect(await readFile(path.join(root, "MEMORY.md"), "utf8")).toBe("shell revision");
     } finally {
