@@ -78,11 +78,15 @@ func (s *server) scheduleSuspend(use *actorUse, name string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		ctx, err := actorContext(ctx)
+		retry := false
 		if err == nil {
-			err = s.control.suspendIfNeeded(ctx, name)
+			retry, err = s.control.suspendIdleActor(ctx, name)
 		}
 		if err != nil && status.Code(err) != codes.NotFound {
 			log.Printf("suspend %s: %v", name, err)
+			retry = true
+		}
+		if retry {
 			s.scheduleSuspend(use, name)
 		}
 	})
@@ -104,7 +108,7 @@ func (s *server) restoreIdleTimers(ctx context.Context) error {
 		}
 		for _, actor := range page.GetActors() {
 			name := actor.GetMetadata().GetName()
-			if !actorName.MatchString(name) || actor.GetStatus().GetState() != ate.ActorState_ACTOR_STATE_RUNNING {
+			if !actorName.MatchString(name) || !needsIdleSuspend(actor.GetStatus().GetState()) {
 				continue
 			}
 			template, err := s.control.ate.GetActorTemplate(ctx, &ate.GetActorTemplateRequest{ActorTemplate: actor.GetActorTemplate()})

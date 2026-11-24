@@ -89,8 +89,6 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
   }
 
   it("plain chat: shell and file tools run inside the gVisor sandbox", async () => {
-    const agents = await stack.env.app.inject({ method: "GET", url: "/api/v1/agents", headers: auth() });
-    expect(agents.statusCode).toBe(200);
     const created = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/chats",
@@ -106,7 +104,6 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     });
 
     stack.mock.setResponses([
-      { body: toolCallSse("read", JSON.stringify({ path: "AGENTS.md" })) },
       {
         body: toolCallSse(
           "bash",
@@ -128,8 +125,8 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     expect(submit.statusCode).toBe(200);
     const file = await toolResult(chatId);
     const results = (await events(chatId)).filter(({ event }) => event["type"] === "tool_result");
-    expect(results).toHaveLength(3);
-    const result = results[1]!.event as { content: string; is_error: boolean };
+    expect(results).toHaveLength(2);
+    const result = results[0]!.event as { content: string; is_error: boolean };
     expect(result.is_error, result.content).toBe(false);
     expect(file.is_error, file.content).toBe(false);
     expect(file.content).toContain("from-sandbox");

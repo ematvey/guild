@@ -230,6 +230,33 @@ func usesWorkspace(template *ate.ActorTemplate, path string) bool {
 	return false
 }
 
+func needsIdleSuspend(state ate.ActorState) bool {
+	switch state {
+	case ate.ActorState_ACTOR_STATE_RESUMING, ate.ActorState_ACTOR_STATE_RUNNING,
+		ate.ActorState_ACTOR_STATE_SUSPENDING, ate.ActorState_ACTOR_STATE_REVERTING:
+		return true
+	default:
+		return false
+	}
+}
+
+// Returns whether an idle check should run again while the Actor is still
+// transitioning. Substrate can start or continue a suspension in two states.
+func (c controller) suspendIdleActor(ctx context.Context, name string) (bool, error) {
+	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	if err != nil {
+		return false, err
+	}
+	state := actor.GetStatus().GetState()
+	switch state {
+	case ate.ActorState_ACTOR_STATE_RUNNING, ate.ActorState_ACTOR_STATE_SUSPENDING:
+		_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+		return false, err
+	default:
+		return needsIdleSuspend(state), nil
+	}
+}
+
 func (c controller) suspendIfNeeded(ctx context.Context, name string) error {
 	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
 	if err != nil || actor.GetStatus().GetState() == ate.ActorState_ACTOR_STATE_SUSPENDED {
@@ -241,6 +268,10 @@ func (c controller) suspendIfNeeded(ctx context.Context, name string) error {
 
 func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {
 	switch actor.GetStatus().GetState() {
+	case ate.ActorState_ACTOR_STATE_SUSPENDING:
+		// Resume requires a completed suspension. Substrate can re-enter it.
+		_, err := c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(actor.GetMetadata().GetName())})
+		return err
 	case ate.ActorState_ACTOR_STATE_CRASHED, ate.ActorState_ACTOR_STATE_REVERTING:
 		// Revert is restartable and preserves the last completed snapshot and external workspace.
 		_, err := c.ate.RevertActor(ctx, &ate.RevertActorRequest{Actor: ref(actor.GetMetadata().GetName())})

@@ -40,7 +40,14 @@ try {
   console.log("Public Assistant send returned HTTP 200 and acknowledged its message ID");
   for(let n=0;n<60;n++){
     const {events}=await api("/api/v1/chats/"+chat+"/thread");
-    if(events.some(({event})=>event.type==="assistant_message")){
+    const replies = events.map(({event}) => event).filter((event) => event.type === "assistant_message" && !event.posted);
+    if (replies.some((event) => event.error || event.interrupted)) {
+      throw new Error("Assistant reply failed or was interrupted");
+    }
+    if (replies.some((event) =>
+      !event.blocks.some((block) => block.type === "tool_call") &&
+      event.blocks.some((block) => block.type === "text" && block.text.trim() !== "")
+    )) {
       console.log("Public thread returned the persisted Assistant reply");
       break;
     }

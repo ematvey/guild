@@ -15,6 +15,13 @@ probe() {
     PROBE_PHASE="$1" PROBE_VALUE="$marker" bun - < "$manifest_dir/probe-substrate-runner.mjs"
 }
 
+name=""
+cleanup() {
+  if [[ -n "$name" ]]; then
+    "${ate[@]}" delete actor "$name" -a guild-experiment >/dev/null
+  fi
+}
+trap cleanup EXIT
 name="$(probe write)"
 printf '%s created and wrote through Guild RunnerClient\n' "$name"
 suspended=false

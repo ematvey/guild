@@ -84,7 +84,8 @@ ONLY through a project binding: the workdir is the bound project's folder.
 
 **SRS-8 — Server executor.**
 The `server` executor runs the same client-tool specs in a gVisor sandbox
-via the `sandbox-runner` service: a plain chat gets
+via the sandbox runner protocol. Compose uses the Docker runner. Kubernetes
+uses the Substrate adapter to attach a gVisor Actor. A plain chat gets
 `chats/<org>/<conversationId>`, an agent chat gets the agent workspace
 `agents/<org>/<agent>`. Every unbound chat (web or desktop origin) uses it. The static exec-policy gate and the interactive approval
 gate both run before execution; `execute` additionally requires the server

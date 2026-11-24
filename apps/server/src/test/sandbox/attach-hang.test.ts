@@ -5,7 +5,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { RunnerClient } from "../../sandbox/client.js";
 import { SandboxExecutionEnv } from "../../sandbox/env.js";
@@ -67,5 +67,29 @@ describe("sandbox attach", () => {
     const result = await pending;
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error.message, /aborted/);
+  });
+});
+
+describe("sandbox removal", () => {
+  it("retries while a closing connection is still attached", async () => {
+    const request = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 409 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    try {
+      await new RunnerClient("http://example.test", "").remove("chat:example:1");
+      assert.equal(request.mock.calls.length, 2);
+    } finally {
+      request.mockRestore();
+    }
+  });
+
+  it("reports a runner failure without retrying", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+    try {
+      await assert.rejects(new RunnerClient("http://example.test", "").remove("chat:example:1"), /503/);
+      assert.equal(request.mock.calls.length, 1);
+    } finally {
+      request.mockRestore();
+    }
   });
 });
