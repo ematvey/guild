@@ -274,7 +274,8 @@ export class TurnTools {
       },
     });
     const role = await coordinationRole(deps.pool, chatId);
-    if (role?.execution_role === "coordinator" && subagents !== null) {
+    if (role?.execution_role === "coordinator") {
+      if (subagents === null) return [];
       return coordinatorTools({ pool: deps.pool, store: deps.agents, agent, identity: deps.identity, subagents });
     }
     const sendFile =
@@ -301,6 +302,8 @@ export class TurnTools {
       threads: deps.threads,
       agent,
       userId: ref.user_id,
+      identity: deps.identity,
+      coordinatorManaged: role?.coordinator_managed === true,
       chatId,
       deliverMessage: (targetChatId, orgId, text, model) =>
         deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),

@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { UserRow } from "../../platform/store/identity.js";
+import { IdentityStore, type UserRow } from "../../platform/store/identity.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { AgentStore } from "../../agents/store.js";
@@ -26,6 +26,7 @@ dbDescribe("agent conversation tools", () => {
   let store: AgentStore;
   let threads: ThreadStore;
   let chats: ChatStore;
+  let identity: IdentityStore;
   let owner: UserRow;
   let orgId: string;
   let agent: Awaited<ReturnType<AgentStore["create"]>>;
@@ -36,6 +37,7 @@ dbDescribe("agent conversation tools", () => {
     store = new AgentStore({ pool: env.db, chats: new ChatStore(env.db) });
     threads = new ThreadStore(env.db);
     chats = new ChatStore(env.db);
+    identity = new IdentityStore(env.db);
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-tools-org')", [orgId]);
     const id = randomUUID();
@@ -253,7 +255,16 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("registers the routine management tools", () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
+    const tools = createAgentTools({
+      pool: env!.db,
+      store,
+      threads,
+      identity,
+      deliverMessage,
+      agent,
+      userId: owner.id,
+      coordinatorManaged: false,
+    });
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("schedule_reminder");
     expect(names).toContain("list_routines");
@@ -262,8 +273,71 @@ dbDescribe("agent conversation tools", () => {
     expect(names).toContain("delete_routine");
   });
 
+  it("checks current Routine mutation authority for ordinary Threads and refuses delegated workers", async () => {
+    const shared = await store.create(owner, { name: "Shared", model: "GLM-Test", visibility: "org" });
+    const memberId = randomUUID();
+    await env!.db.query(
+      "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) VALUES ($1, $2, 'operator@example.test', '', 'admin', 'managed')",
+      [memberId, orgId],
+    );
+    const forActor = (userId: string, coordinatorManaged: boolean) =>
+      createAgentTools({
+        pool: env!.db,
+        store,
+        threads,
+        identity,
+        deliverMessage,
+        agent: shared,
+        userId,
+        coordinatorManaged,
+      });
+    const memberTools = forActor(memberId, false);
+    const ownerTools = forActor(owner.id, false);
+    const workerTools = forActor(owner.id, true);
+    const invoke = (tools: ReturnType<typeof forActor>, name: string, args: Record<string, unknown>) =>
+      tools.find((tool) => tool.name === name)!.execute(args as never, {} as never, {} as never);
+    const creation = { name: "Weekly review", schedule: "0 9 * * 1", prompt: "Review the week." };
+    const created = await invoke(memberTools, "create_routine", creation);
+    expect(created.isError).toBeUndefined();
+    const { id: routineId } = (await store.runs.listRoutines(shared.id))[0]!;
+    expect(
+      (await invoke(ownerTools, "update_routine", { routine_id: routineId, prompt: "Review the schedule." })).isError,
+    ).toBeUndefined();
+
+    await env!.db.query("UPDATE users SET role='member' WHERE id=$1", [memberId]);
+    const reminder = { at: new Date(Date.now() + 60_000).toISOString(), prompt: "Ask again." };
+    const mutations = [
+      ["create_routine", creation],
+      ["schedule_reminder", reminder],
+      ["update_routine", { routine_id: routineId, prompt: "Different instructions." }],
+      ["delete_routine", { routine_id: routineId }],
+    ] as const;
+    for (const [name, args] of mutations) {
+      expect(await invoke(memberTools, name, args)).toMatchObject({
+        isError: true,
+        output: [{ text: "you cannot manage this agent" }],
+      });
+      expect(await invoke(workerTools, name, args)).toMatchObject({
+        isError: true,
+        output: [{ text: "Coordinator-managed workers cannot change Routines" }],
+      });
+    }
+    expect(await store.runs.listRoutines(shared.id)).toMatchObject([{ id: routineId, prompt: "Review the schedule." }]);
+    expect((await invoke(ownerTools, "schedule_reminder", reminder)).isError).toBeUndefined();
+    expect((await invoke(ownerTools, "delete_routine", { routine_id: routineId })).isError).toBeUndefined();
+  });
+
   it("set_description rewrites only the caller's own description", async () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
+    const tools = createAgentTools({
+      pool: env!.db,
+      store,
+      threads,
+      identity,
+      deliverMessage,
+      agent,
+      userId: owner.id,
+      coordinatorManaged: false,
+    });
     const setDescription = tools.find((tool) => tool.name === "set_description");
     expect(setDescription).toBeDefined();
     const call = (args: Record<string, unknown>) =>
@@ -295,7 +369,16 @@ dbDescribe("agent conversation tools", () => {
   });
 
   it("conversations_list filters by type and flags and pages with a cursor", async () => {
-    const tools = createAgentTools({ pool: env!.db, store, threads, deliverMessage, agent, userId: owner.id });
+    const tools = createAgentTools({
+      pool: env!.db,
+      store,
+      threads,
+      identity,
+      deliverMessage,
+      agent,
+      userId: owner.id,
+      coordinatorManaged: false,
+    });
     const list = tools.find((tool) => tool.name === "conversations_list");
     expect(list).toBeDefined();
     const call = (args: Record<string, unknown>) =>
