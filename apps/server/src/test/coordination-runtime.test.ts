@@ -179,10 +179,23 @@ describe("configured coordinator conversation", () => {
     ]);
   }, 30000);
 
-  it("delivers an explicit reply to the inbox without leaking its internal final answer", async () => {
+  it("delivers a shared inbox reply and keeps internal Activity private after purge", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
-    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
+    const shared = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers,
+      payload: {
+        name: "Shared Assistant",
+        model: "coordination-test",
+        visibility: "org",
+        resources: { assistant: { enabled: true } },
+      },
+    });
+    expect(shared.statusCode, shared.body).toBe(200);
+    const agentId = shared.json().agent.id as string;
+    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: agentId } });
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string; agent_id: string };
     const index = await app.inject({ method: "GET", url: "/api/v1/threads", headers });
@@ -335,7 +348,7 @@ describe("configured coordinator conversation", () => {
     );
     const adminDetail = await readAdminTrace();
     expect(adminDetail.statusCode).toBe(200);
-    expect(adminDetail.json().trace.trace_id).toBe(run.id);
+    expect(adminDetail.json().trace).toMatchObject({ trace_id: run.id, user_id: null });
     expect(adminDetail.json().spans).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ span_type: "llm", session_id: coordinator.chat_id }),
@@ -349,6 +362,43 @@ describe("configured coordinator conversation", () => {
     });
     expect(memberSpans.statusCode).toBe(200);
     expect(memberSpans.json()).toEqual({ spans: [], total: 0 });
+    const runsUrl = `/api/v1/runs/${run.id}`;
+    const assertPrivate = async () => {
+      expect((await app.inject({ method: "GET", url: runsUrl, headers })).statusCode).toBe(404);
+      expect((await app.inject({ method: "GET", url: traceUrl, headers })).statusCode).toBe(404);
+      const [traces, spans, sessions] = await Promise.all([
+        app.inject({ method: "GET", url: `/api/v1/activity/traces?session=${coordinator.chat_id}`, headers }),
+        app.inject({ method: "GET", url: `/api/v1/activity/spans?trace=${run.id}`, headers }),
+        app.inject({ method: "GET", url: "/api/v1/activity/sessions", headers }),
+      ]);
+      expect(traces.json()).toEqual({ traces: [], total: 0 });
+      expect(spans.json()).toEqual({ spans: [], total: 0 });
+      expect(sessions.json().sessions).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ session_id: coordinator.chat_id })]),
+      );
+      const adminAfter = await readAdminTrace();
+      expect(adminAfter.statusCode, adminAfter.body).toBe(200);
+      expect(adminAfter.json().spans).toEqual(expect.arrayContaining([
+        expect.objectContaining({ span_type: "llm", session_id: coordinator.chat_id }),
+        expect.objectContaining({ span_type: "tool", session_id: coordinator.chat_id }),
+      ]));
+    };
+
+    await waitFor(async () =>
+      (await stack.env.db.query(
+        `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.chat_id=$1 AND r.finished_at IS NULL`, [coordinator.chat_id],
+      )).rowCount === 0,
+    );
+    await app.platform.trace.idle();
+    await stack.env.db.query("DELETE FROM chats WHERE id = $1", [coordinator.chat_id]);
+    expect((await stack.env.db.query("SELECT internal, thread_id FROM agent_runs WHERE id = $1", [run.id])).rows)
+      .toEqual([{ internal: true, thread_id: null }]);
+    expect((await app.inject({ method: "GET", url: runsUrl, headers: adminHeaders })).statusCode).toBe(200);
+    await assertPrivate();
+    await app.platform.agents.lifecycle.purgeById(stack.orgId, agentId);
+    await assertPrivate();
+
     const requests = stack.mock.requests.map((r) => JSON.stringify(r.body)).join("\n");
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);

@@ -135,7 +135,7 @@ Coordinator-managed descendants and Routines run unattended. Static denies and g
 
 ## Activity and usage
 
-An admin reads the whole Org's usage, Runs, traces and Thread history, including internal Threads. A Member reads their own non-internal Activity. Run detail uses the saved Run record and the same Org and ownership rules as Thread history. Recorded traces provide optional telemetry. Raw model payloads are admin-only. An admin's personal Agent carries the same read as its `guild` tools; no other Agent has it, and no admin read is a write.
+An admin reads the whole Org's usage, Runs, traces and Thread history, including internal Threads. A Member reads their own non-internal Activity. Run detail uses the saved Run record and the same Org and ownership rules as Thread history. Recorded traces provide optional telemetry. Internal Runs keep their privacy classification after Thread removal, and their telemetry carries organization scope so retention or Agent purge cannot expose it to a Member. Raw model payloads are admin-only. An admin's personal Agent carries the same read as its `guild` tools; no other Agent has it, and no admin read is a write.
 
 ## Rejected
 

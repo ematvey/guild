@@ -320,21 +320,20 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     if (!isUuid(id)) throw ApiError.badRequest(`invalid trace id: ${id}`);
     let result: Awaited<ReturnType<typeof infra.trace.trace>>;
     try {
-      result = await infra.trace.trace(user.org_id, id);
+      result = await infra.trace.trace(user.org_id, id, {
+        userId: ownerScope(user),
+        excludeSessions: await excludedSessions(user),
+      });
     } catch (error) {
       if (isUnknownTable(error)) result = { trace: null, spans: [], children: [] };
       else throw ApiError.internal(`trace query failed: ${errorText(error)}`);
     }
     if (result.trace === null) throw ApiError.notFound("no such trace");
-    const excluded = new Set(await excludedSessions(user));
-    const visible = (row: Record<string, unknown>) => !excluded.has(String(row["session_id"]));
-    if (!visible(result.trace)) throw ApiError.notFound("no such trace");
-    const owner = result.trace["user_id"];
-    if (!canReadOwned(user, owner)) throw ApiError.notFound("no such trace");
+    if (!canReadOwned(user, result.trace["user_id"])) throw ApiError.notFound("no such trace");
     return JSON.stringify({
       trace: renderTrace(result.trace),
-      spans: result.spans.filter(visible).map(renderSpan),
-      children: result.children.filter(visible).map(renderTrace),
+      spans: result.spans.map(renderSpan),
+      children: result.children.map(renderTrace),
     });
   });
 
