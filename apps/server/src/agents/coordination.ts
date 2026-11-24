@@ -1,5 +1,4 @@
 import {
-  findCoordinationThread,
   readCoordinationRole,
   retryCoordinationInput,
   claimCoordinationInputs,
@@ -19,6 +18,9 @@ import {
 } from "./store/coordination.js";
 // One Agent's persistent coordination: durable attributed inputs, passive
 // observations, timed wakes and background memory/context maintenance.
+import { memberMessageEntry } from "../chats/member-message.js";
+import { mediaPartsFor } from "../chats/turn-text.js";
+import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import { withTransaction } from "../platform/db.js";
@@ -75,6 +77,7 @@ export interface CoordinationInput {
   occurrence_id?: string | null;
   kind: string;
   content: string;
+  attachments: MessageAttachment[];
   wake: boolean;
   name: string;
   email: string;
@@ -87,7 +90,10 @@ export function coordinationPreamble(input: CoordinationInput): string {
     user: { id: input.user_id, name: input.name, email: input.email },
     thread_id: input.source_thread_id,
     message_id: input.source_event_id,
-    ...(input.kind === "routine" ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null } : {}),
+    ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+    ...(input.kind === "routine"
+      ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null }
+      : {}),
   })}\n</coordination_input>\n${input.content}`;
 }
 
@@ -100,29 +106,18 @@ function inboxTitle(agent: Agent): string {
 /** Serializes first creation across processes. Coordinator history is an
  *  internal chat; member-facing inboxes are separate ordinary Threads. */
 export async function ensureCoordinationThread(
-  pool: PlatformPool,
   store: AgentStore,
   agent: Agent,
   userId: string,
   role: "coordinator" | "inbox",
 ): Promise<AgentThread> {
-  const lock = await pool.connect();
-  const key = `coordinator:${agent.id}:${role}:${role === "inbox" ? userId : ""}`;
-  try {
-    await lock.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
-    const current = await findCoordinationThread<{ id: string }>(lock, [agent.id, role, userId]);
-    if (current.rows[0] !== undefined) return (await store.threads.threadById(current.rows[0].id))!;
-    return await store.threads.createThread(
-      agent.id,
-      role === "coordinator" ? agent.owner_user_id : userId,
-      role === "coordinator" ? "Coordinator" : inboxTitle(agent),
-      "user",
-      { executionRole: role, internal: role === "coordinator" },
-    );
-  } finally {
-    await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-    lock.release();
-  }
+  return store.threads.createThread(
+    agent.id,
+    role === "coordinator" ? agent.owner_user_id : userId,
+    role === "coordinator" ? "Coordinator" : inboxTitle(agent),
+    "user",
+    { executionRole: role, internal: role === "coordinator" },
+  );
 }
 
 export async function coordinationRole(
@@ -155,6 +150,7 @@ export class AgentCoordination {
       pool: PlatformPool;
       store: AgentStore;
       runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat">;
+      routeSupportsImages(orgId: string, model: string): Promise<boolean>;
       log: Logger;
     },
   ) {}
@@ -205,20 +201,30 @@ export class AgentCoordination {
   private async deliver(input: CoordinationInput): Promise<void> {
     const { pool, store, runtime } = this.deps;
     const agent = await store.fetchAgent(input.agent_id);
-    const coordinator = await ensureCoordinationThread(pool, store, agent, agent.owner_user_id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, agent.owner_user_id, "coordinator");
     const sourceThread =
       input.source_thread_id === null ? null : await store.threads.threadById(input.source_thread_id);
     const content = coordinationPreamble(
       sourceThread?.type === "subagent" && !input.wake ? { ...input, kind: "worker_thread_observation" } : input,
     );
     if (input.wake) {
+      const model = coordinationSettings(agent).coordinator_model;
+      const attachments = input.attachments;
+      const images =
+        attachments.some((file) => file.modality === "image") &&
+        (await this.deps.routeSupportsImages(agent.org_id, model))
+          ? mediaPartsFor(["image"], attachments).images
+          : [];
       await runtime.submitTurn(coordinator.chat_id, agent.org_id, {
         orgId: agent.org_id,
         requestId: input.id,
         content,
-        images: [],
-        model: coordinationSettings(agent).coordinator_model,
-        entry: { kind: "guild.coordination-input", data: { input_id: input.id } },
+        images,
+        model,
+        entry:
+          input.kind === "request"
+            ? memberMessageEntry({ message_id: input.id, text: content, attachments })
+            : { kind: "guild.coordination-input", data: { input_id: input.id } },
       });
     } else {
       const entry: EntryDraft = {

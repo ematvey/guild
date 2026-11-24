@@ -235,7 +235,13 @@ export class PlatformContext implements PlatformStores {
     });
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
-    this.coordination = new AgentCoordination({ pool: this.pool, store: this.agents, runtime: this.runtime, log });
+    this.coordination = new AgentCoordination({
+      pool: this.pool,
+      store: this.agents,
+      runtime: this.runtime,
+      routeSupportsImages: this.runtime.routeSupportsImages,
+      log,
+    });
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: this.agents,

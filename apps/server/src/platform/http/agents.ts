@@ -439,7 +439,7 @@ export function registerAgentRoutes(
     if (agent === null) throw ApiError.badRequest("Configure a model before opening Assistant");
     if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is not enabled for this Agent");
     refuseDeletingAgent(agent);
-    const thread = await ensureCoordinationThread(infra.pool, store, agent, user.id, "inbox");
+    const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
     return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
   });
 
