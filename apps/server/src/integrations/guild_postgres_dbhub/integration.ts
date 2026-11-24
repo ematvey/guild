@@ -1,7 +1,7 @@
 import { mcpIntegration } from "@guild/integration-sdk";
 
 export default mcpIntegration({
-  name: "postgres",
+  name: "guild_postgres_dbhub",
   title: "PostgreSQL",
   version: "1.0.0",
   publisher: "Guild",

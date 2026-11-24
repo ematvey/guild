@@ -1,7 +1,7 @@
 import { mcpIntegration } from "@guild/integration-sdk";
 
 export default mcpIntegration({
-  name: "clickhouse",
+  name: "guild_clickhouse_mcp",
   title: "ClickHouse",
   version: "1.0.0",
   publisher: "Guild",
