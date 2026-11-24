@@ -1,0 +1,60 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: guild
+  ports:
+    - port: 8080
+
+---
+{{ if .Values.storage.createDataClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guild-data-dir
+  annotations:
+    helm.sh/resource-policy: keep
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.storage.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size | quote }}
+{{ end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guild
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "guild.workloadSpec" (list . "guild" (include "guild.spec.guild" .)) | nindent 2 }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: curl-fetch
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: curl-fetch
+  ports:
+    - port: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curl-fetch
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "guild.workloadSpec" (list . "curl-fetch" (include "guild.spec.curl-fetch" .)) | nindent 2 }}

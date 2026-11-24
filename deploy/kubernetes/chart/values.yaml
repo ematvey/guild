@@ -1,0 +1,27 @@
+images:
+  server: ""
+  curl-fetch: ""
+  adapter: ""
+  csi: ""
+  actor: ""
+  pullPolicy: IfNotPresent
+
+# Empty uses the Helm release namespace. Pin this for an existing installation.
+atespace: ""
+clusterDomain: cluster.local
+workerReplicas: 3
+
+storage:
+  createDataClaim: true
+  size: 5Gi
+  storageClass: ""
+
+ingress:
+  host: ""
+  className: ""
+  tlsSecret: ""
+  annotations: {}
+
+# Optional complete specs, keyed by workload name. Images, pull policy and the
+# adapter atespace still come from the top-level values.
+workloadSpecs: {}

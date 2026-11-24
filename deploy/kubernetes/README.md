@@ -1,10 +1,15 @@
 # Deploy Guild on Kubernetes
 
-Use `deploy.py` on a Kubernetes cluster with Agent Substrate already installed.
-The deployer takes an explicit Kubernetes context and namespace, renders the
-checked-in manifests, and applies them with a dedicated field manager. Running
-it twice with the same settings does not recreate the workspace or rotate
-credentials. Python 3, PyYAML, kubectl, and kubectl-ate are required.
+The [Guild Helm chart](chart/) installs and upgrades the server, fetch service,
+Substrate adapter, Actor workers, JuiceFS and workspace CSI on a cluster with
+Agent Substrate already installed. Helm, kubectl, and kubectl-ate are required.
+Keep the release name and namespace stable across upgrades.
+
+This reference supports one Guild installation per cluster. The CSI driver
+name, workspace host paths, and Actor worker selector are shared within a
+cluster. Use a dedicated production cluster, or migrate the existing release
+before installing in another namespace on the same cluster. Creating an empty
+`guild-prod` namespace alongside dev does not provide that isolation.
 
 ## Prepare the cluster and images
 
@@ -20,7 +25,7 @@ credentials. Python 3, PyYAML, kubectl, and kubectl-ate are required.
    CSI (`deploy/kubernetes/workspace-csi`) images. For the sandbox image, use
    the Actor image build/publish flow below. Make the images accessible to both
    Kubernetes and the Substrate workers. Use immutable image references.
-3. Copy `settings.example.yaml`, set the image references and optionally set
+3. Copy `values.example.yaml`, set the image references and optionally set
    the ingress host, class, annotations, and TLS Secret. The base app manifests
    expect PostgreSQL, ClickHouse, and RustFS at services named `postgres`,
    `clickhouse`, and `rustfs` in the target namespace. Provision the databases,
@@ -28,21 +33,24 @@ credentials. Python 3, PyYAML, kubectl, and kubectl-ate are required.
    existing services, supply Deployment and DaemonSet overrides for the
    connection settings and any host paths. Use Secret references for credentials.
    The base mounts a `guild-data-dir` PVC at `/data`. Set
-   `createDataClaim: false` if your Deployment override supplies it another way.
+   `storage.createDataClaim: false` if your Deployment override supplies it another way.
 
 ## Apply and verify
 
-Run from the repository root in Bash. Set `KUBECONFIG` to your kubeconfig
-file. Use `--kubeconfig PATH` on the deployer to select a different file.
+Run from the repository root. Set `KUBECONFIG` to the target cluster's
+kubeconfig and verify the context before provisioning resources.
 
 ```sh
-context=my-cluster
-namespace=guild-dev
-settings=/path/to/guild-dev.yaml
-deploy=(deploy/kubernetes/deploy.py --context "$context" --namespace "$namespace" --config "$settings")
+context=my-production-cluster
+namespace=guild-prod
+values=/path/to/guild-prod-values.yaml
+chart=deploy/kubernetes/chart
 
-"${deploy[@]}" > /tmp/guild-rendered.yaml
-"${deploy[@]}" --groups foundation --apply
+helm lint --strict "$chart" -f "$values"
+helm template guild "$chart" --namespace "$namespace" -f "$values"
+kubectl --context "$context" create namespace "$namespace" --dry-run=client -o yaml |
+  kubectl --context "$context" apply -f -
+kubectl --context "$context" label namespace "$namespace" ate.dev/api-access=true --overwrite
 ```
 
 Provide the `guild-server` Secret with the Guild master key, JWT and internal
@@ -66,51 +74,62 @@ existing `source.spiffeId` allowlist in that ConfigMap and roll
 Make the same change in the cluster's source of truth if it manages the router.
 
 ```sh
-"${deploy[@]}" --apply
-deploy/kubernetes/verify-default-dev.sh "$KUBECONFIG" https://guild-dev.example.org "$namespace" "$context"
+helm upgrade --install guild "$chart" --kube-context "$context" \
+  --namespace "$namespace" -f "$values" --dry-run=server
+helm upgrade --install guild "$chart" --kube-context "$context" \
+  --namespace "$namespace" -f "$values" --wait --timeout 10m
+kubectl --context "$context" -n "$namespace" rollout status daemonset/guild-juicefs daemonset/guild-workspace-csi
+kubectl --context "$context" -n "$namespace" get workerpool guild-actor-workers
+deploy/kubernetes/verify-default-dev.sh "$KUBECONFIG" https://guild.example.org "$namespace" "$context"
 deploy/kubernetes/verify-substrate-runner.sh "$KUBECONFIG" "$namespace" "$namespace" "$context"
 ```
 
-Pass the configured atespace as the third argument to the runner check when it
-differs from the namespace. The deployer waits for storage DaemonSets, the
-worker pool, and app rollouts. Use `--groups foundation mount csi workers app`
-to select phases and `--override PATH` to supply a YAML document per resource
-with only `kind`, `metadata.name`, and the complete replacement `spec`. Omit
-`--apply` to inspect changes. Use `--takeover` only after reviewing field
-conflicts during an intentional ownership transfer.
+The worker pool is a Substrate custom resource. Verify its ready replica
+count matches `workerReplicas` separately from Helm's rollout wait. Pass the
+configured atespace as the third argument to the runner check when it differs
+from the namespace. The first verification script runs integration and chat
+probes against the configured Guild instance. Use test credentials and an
+approved test workspace when running it in production.
 
-## Move an existing deployment
+To use existing backing services or site-specific node placement, set
+`workloadSpecs.<workload-name>` to the complete replacement Kubernetes
+`spec`. Keep connection credentials in Secret references. The chart still
+sets image references, pull policy, and the adapter's atespace through their
+top-level values. The data PVC is retained on Helm uninstall. Store the
+release values and referenced Secret provisioning in your cluster's
+configuration source of truth.
 
-Keep the existing atespace in the settings to retain Actor and snapshot
-identities. The Kubernetes namespace and the Substrate atespace are independent.
-Keep the existing JuiceFS metadata URL, object storage, workspace host paths,
-and data credentials. The CSI driver is cluster-scoped and the supplied driver
-name supports one active Guild installation per cluster.
+## One-time namespace migration
 
-1. Apply the target foundation, transfer the required Secrets securely,
-   update Substrate access for the new service account, and bring up the
-   target worker pool.
-2. Stop Guild and wait for in-flight sessions to drain and Actors to suspend.
-   Stop the source CSI and JuiceFS DaemonSets before starting their target
-   replacements. They share host mount paths and sockets. Retain the source
-   definitions for rollback. Apply `--groups mount csi` in the target.
-3. Confirm the CSI controller points at the target service and is ready.
-   Substrate v1.0.1 may retain gRPC connections to the old CSI service. After
-   changing that endpoint, roll the Substrate API Deployment and wait for its
-   replicas before testing new workspace operations:
-   `kubectl --context "$context" -n ate-system rollout restart deployment/ate-api-server`
-   followed by `kubectl --context "$context" -n ate-system rollout status deployment/ate-api-server`.
-   Then apply the target app, switch the ingress, and run the workspace,
-   chat, and Actor suspend/resume verification. A host/path can only be
-   owned by one ingress on controllers that enforce uniqueness.
-4. Scale the source workers to zero and repeat the Actor check against the
-   target workers. Only after verification, remove the old namespace. Keep
-   the atespace, storage classes, and their backing data.
+Keep the existing atespace in the Helm values to retain Actor and snapshot
+identities. Preserve the JuiceFS metadata URL, object storage, workspace host
+paths, and data credentials. The Kubernetes namespace and Substrate atespace
+have independent lifecycles.
 
-For rollback, stop the target app and storage DaemonSets, restore the previous
-CSI controller endpoint and roll the Substrate API Deployment, bring back the source mounts and workers, and restore
-the previous app and ingress. Avoid formatting or deleting any storage during
-a namespace move.
+1. Prepare the target namespace, Secrets, and Substrate permissions as above.
+   Render the target chart with `helm template` and inspect the manifests.
+   Retain the source workload definitions, ingress, and CSI driver endpoint
+   for rollback.
+2. Stop the source Guild workload, drain sessions, and wait for Actors to
+   suspend. Stop the source CSI and JuiceFS DaemonSets before starting target
+   replacements because they share host mount paths and sockets. Change the
+   cluster-wide `CSIDriverConfig` endpoint to the target service as part of
+   this maintenance window. This is an explicit ownership transfer.
+3. Install the target release. Review any existing target objects and the
+   cluster-scoped CSI config before adopting them with Helm's
+   `--take-ownership`. Apply that flag only when the resource list has been
+   checked and no other release should manage those objects. Wait for the
+   target mounts and workers. Substrate v1.0.1 can retain gRPC connections to
+   the old service after the CSI endpoint changes. Roll
+   `deployment/ate-api-server` in `ate-system` and wait for it.
+4. Switch the ingress, run the workspace, chat, and Actor suspend/resume
+   verification, then retire the source workers and repeat the Actor check.
+   Remove the source namespace after verification. Retain the atespace, storage
+   classes, and backing data.
+
+For rollback, stop the target workloads and mounts, restore the previous CSI
+endpoint and roll the Substrate API Deployment. Bring back the source mounts,
+workers, app, and ingress. Preserve all storage during the move.
 
 ## Local k3d experiment
 
