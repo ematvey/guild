@@ -73,12 +73,16 @@ func (b *bridge) NodeGetCapabilities(context.Context, *csi.NodeGetCapabilitiesRe
 }
 
 func workspaceDir(key string) (int, error) {
-	root, err := unix.Open(workspaces, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	rootPath := workspaces
+	if plain := os.Getenv("GUILD_PLAIN_WORKSPACE_ROOT"); plain != "" && !strings.HasPrefix(key, "agents/") {
+		rootPath = plain
+	}
+	root, err := unix.Open(rootPath, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return -1, err
 	}
 	var fs unix.Statfs_t
-	if err := unix.Fstatfs(root, &fs); err != nil || fs.Type != unix.FUSE_SUPER_MAGIC {
+	if err := unix.Fstatfs(root, &fs); err != nil || (rootPath == workspaces && fs.Type != unix.FUSE_SUPER_MAGIC) {
 		unix.Close(root)
 		return -1, errors.New("JuiceFS mount unavailable")
 	}

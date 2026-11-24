@@ -58,9 +58,10 @@ func ref(name string) *ate.ObjectRef {
 }
 
 type controller struct {
-	ate   ate.ControlClient
-	kube  *http.Client
-	image string
+	ate              ate.ControlClient
+	kube             *http.Client
+	image            string
+	snapshotLocation string
 }
 
 func roots(path string) (*x509.CertPool, error) {
@@ -148,7 +149,11 @@ func (c controller) ensureStorage(ctx context.Context, name, path string) error 
 
 func (c controller) ensure(ctx context.Context, name, path string) error {
 	legacyTemplate := resourceName(path + "\n" + c.image)
-	template := resourceName(path + "\n" + c.image + "\npackage-home")
+	templateSpec := path + "\n" + c.image + "\npackage-home"
+	if c.snapshotLocation != "" {
+		templateSpec += "\n" + c.snapshotLocation
+	}
+	template := resourceName(templateSpec)
 	existing, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
 	if err == nil {
 		if existing.GetActorTemplate().GetName() != template && existing.GetActorTemplate().GetName() != legacyTemplate {
@@ -190,7 +195,7 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 			StorageClassName: class, CapacityBytes: 1 << 30,
 		}}}},
 		Resources:      &ate.ResourceRequirements{Limits: &ate.Resources{CpuMillicores: 500, MemoryBytes: 512 << 20}},
-		SnapshotConfig: &ate.SnapshotConfig{PreferredFidelity: ate.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY},
+		SnapshotConfig: &ate.SnapshotConfig{StorageLocation: c.snapshotLocation, PreferredFidelity: ate.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY},
 	}})
 	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return err

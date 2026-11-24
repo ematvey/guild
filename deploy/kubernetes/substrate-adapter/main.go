@@ -428,6 +428,7 @@ func main() {
 	}
 	handler := &server{control: controller{
 		ate: ate.NewControlClient(channel), kube: kube, image: image,
+		snapshotLocation: os.Getenv("GUILD_ACTOR_SNAPSHOT_LOCATION"),
 	}, token: token, idleTime: idle}
 	go func() {
 		for {
