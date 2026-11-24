@@ -16,9 +16,9 @@ import type { Context } from "@earendil-works/chord";
 import { getOrThrow, type ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { attachmentObjectKey, type AttachmentStore } from "../platform/store/attachments.js";
 import { toolArtifactObjectKey, type ToolArtifactStore } from "../platform/store/tool-artifacts.js";
-import { relativeDestination } from "../platform/domain/paths.js";
+import { relativeDestination, isProtectedMemoryPath } from "../platform/domain/paths.js";
 import type { ObjectStore } from "../platform/s3.js";
-import { withMachineTarget } from "./agent-tools.js";
+import { withMachineTarget, isMachineToolCall } from "./agent-tools.js";
 
 export interface DownloadDeps {
   attachments: Pick<AttachmentStore, "reachableFromChat">;
@@ -103,10 +103,16 @@ export async function writeIntoEnv(
   path: string,
   bytes: Uint8Array,
   context: Context,
-  options: { overwrite?: boolean } = {},
+  options: { overwrite?: boolean; protectMemory?: boolean } = {},
 ): Promise<{ ok: true; value: WrittenFile } | { ok: false; reason: string }> {
   const destination = relativeDestination(path);
   if (!destination.ok) return { ok: false, reason: destination.reason };
+  if (options.protectMemory !== false && isProtectedMemoryPath(destination.path)) {
+    return {
+      ok: false,
+      reason: "Protected memory must be reconciled with the read/edit/write tools. Download to another path first.",
+    };
+  }
   const absolute = getOrThrow(await env.absolutePath(destination.path, context));
   if (options.overwrite !== true) {
     const existing = await env.fileInfo(absolute, context);
@@ -154,6 +160,7 @@ export function createDownloadTool(deps: DownloadDeps): ToolRegistration {
           const bytes = await deps.objects.get(picked.key);
           const written = await writeIntoEnv(env, args.path ?? "", bytes, context, {
             overwrite: args.overwrite === true,
+            protectMemory: !isMachineToolCall(api),
           });
           if (!written.ok) return fail(written.reason);
           const target = written.value.path;

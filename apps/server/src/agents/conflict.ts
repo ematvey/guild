@@ -1,3 +1,5 @@
+import { isProtectedMemoryPath } from "../platform/domain/paths.js";
+import { readMemoryRevision, recordMemoryRevision } from "./store/coordination.js";
 // writeJournal: the per-turn workspace conflict journal. Tool calls that
 // write files append their paths to agent_workspace_turns; overlapping paths between running
 // turns produce a notice in the other turn's conversation (its agent reads
@@ -34,6 +36,109 @@ import {
 } from "./store/workspace-turns.js";
 import type { AgentStore } from "./store.js";
 import type { AgentRun } from "./types.js";
+import { createHash } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { withTransaction } from "../platform/db.js";
+import { readWorkspaceFile, WorkspaceFsError } from "./workspace-fs.js";
+
+/** Memory edits use the revision actually read by this Thread. A rejected
+ *  stale edit asks the Agent to reconcile; it never overwrites newer notes. */
+export function guardMemoryTool(
+  tool: ToolRegistration,
+  pool: PlatformPool,
+  root: string,
+  threadId: string,
+): ToolRegistration {
+  if (!["read", "write", "edit", "bash"].includes(tool.name)) return tool;
+  return {
+    ...tool,
+    execute: async (args, api, context) => {
+      const fields = args as Record<string, unknown>;
+      const input = fields["path"];
+      if (fields["machine"] !== undefined) return tool.execute(args, api, context);
+      if (tool.name === "bash") {
+        return withTransaction(pool, async (client) => {
+          await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memory:${root}`]);
+          const paths = ["MEMORY.md", "AGENTS.md", "AGENTS.override.md"];
+          const walk = async (dir: string, depth: number): Promise<void> => {
+            if (depth > 8 || paths.length > 256) throw new Error("Use native file tools for memory maintenance");
+            const entries = await readdir(path.join(root, dir), { withFileTypes: true }).catch(() => []);
+            for (const entry of entries) {
+              const file = `${dir}/${entry.name}`;
+              if (entry.isDirectory()) await walk(file, depth + 1);
+              else if (entry.isFile()) paths.push(file);
+            }
+          };
+          await walk("memories", 0);
+          await walk("notes", 0);
+          const hash = async (file: string): Promise<string> => {
+            try {
+              return createHash("sha256")
+                .update((await readWorkspaceFile(root, file, { maxBytes: 4 * 1024 * 1024, overflow: "refuse" })).bytes)
+                .digest("hex");
+            } catch (error) {
+              if (error instanceof WorkspaceFsError && error.reason === "not_found") return "absent";
+              throw error;
+            }
+          };
+          for (const file of paths) {
+            const current = await hash(file);
+            const expected = (await readMemoryRevision<{ hash: string }>(client, [threadId, file])).rows[0]?.hash;
+            if (current !== "absent" && current !== expected)
+              return {
+                isError: true,
+                output: [
+                  {
+                    type: "text" as const,
+                    text: `Read the current memory file ${file} with the read tool before workspace execution. Shell execution shares the memory revision lock.`,
+                  },
+                ],
+              };
+          }
+          const result = await tool.execute(args, api, context);
+          // A shell can create a new note. Re-enumerate before recording revisions.
+          await walk("memories", 0);
+          await walk("notes", 0);
+          for (const file of new Set(paths)) await recordMemoryRevision(client, [threadId, file, await hash(file)]);
+          return result;
+        });
+      }
+      if (typeof input !== "string") return tool.execute(args, api, context);
+      const rel = normalizeRelativePath(input.startsWith("/workspace/") ? input.slice(11) : input);
+      if (!isProtectedMemoryPath(rel)) return tool.execute(args, api, context);
+      const hash = async (): Promise<string> => {
+        try {
+          const file = await readWorkspaceFile(root, rel, { maxBytes: 4 * 1024 * 1024, overflow: "refuse" });
+          return createHash("sha256").update(file.bytes).digest("hex");
+        } catch (error) {
+          if (error instanceof WorkspaceFsError && error.reason === "not_found") return "absent";
+          throw error;
+        }
+      };
+      return withTransaction(pool, async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memory:${root}`]);
+        const before = await hash();
+        const expected = (await readMemoryRevision<{ hash: string }>(client, [threadId, rel])).rows[0]?.hash;
+        if (tool.name !== "read" && before !== "absent" && expected !== before) {
+          return {
+            isError: true,
+            output: [
+              {
+                type: "text" as const,
+                text: "Memory changed or has not been read in this thread. Read the latest file and reconcile your edit; newer notes were preserved.",
+              },
+            ],
+          };
+        }
+        const result = await tool.execute(args, api, context);
+        if (!result.isError) await recordMemoryRevision(client, [threadId, rel, await hash()]);
+        return result;
+      });
+    },
+  };
+}
 
 /** Test/support helper: the run's journal row (or null). */
 export { workspaceTurnForRun } from "./store/workspace-turns.js";

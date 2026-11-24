@@ -167,14 +167,14 @@ describe("thread access", () => {
     ).toBe("writable");
   });
 
-  it("marks a subagent or routine thread read-only even before the lists load", () => {
+  it("waits for subagent ownership and keeps routine threads read-only", () => {
     expect(
       threadAccess({
         ...base,
         chats: null,
         facts: { type: "subagent", archived: false, deleted: false, owned: null },
       }),
-    ).toBe("readonly");
+    ).toBe("unknown");
     expect(
       threadAccess({
         ...base,
@@ -194,6 +194,18 @@ describe("thread access", () => {
     ).toBe("writable");
   });
 
+  it("allows a member to continue their own worker thread", () => {
+    expect(
+      threadAccess({ ...base, chats: null, facts: { type: "subagent", archived: false, deleted: false, owned: true } }),
+    ).toBe("writable");
+    expect(
+      threadAccess({
+        ...base,
+        chats: null,
+        facts: { type: "subagent", archived: false, deleted: false, owned: false },
+      }),
+    ).toBe("readonly");
+  });
   it("never marks the scratch composer read-only", () => {
     expect(threadAccess({ ...base, chatId: null })).toBe("writable");
   });

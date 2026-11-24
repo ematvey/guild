@@ -103,7 +103,7 @@ export function ContentImage({
   if (failed || broken) {
     return (
       <span
-        className={`inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground ${className ?? ""}`}
+        className={`inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-base text-muted-foreground ${className ?? ""}`}
         title={src ?? undefined}
       >
         <ImageOff className="size-3.5 shrink-0" aria-hidden />
@@ -148,11 +148,11 @@ function RemotePlaceholder({
         {icon}
         <span className="min-w-0 truncate">{label}</span>
       </span>
-      <span className="line-clamp-3 font-mono text-2xs break-all">{url}</span>
+      <span className="line-clamp-3 font-mono text-base break-all">{url}</span>
     </>
   );
   const cls =
-    "flex w-fit max-w-full flex-col items-start gap-1 rounded-md border border-border px-2.5 py-1.5 text-left text-xs text-muted-foreground";
+    "flex w-fit max-w-full flex-col items-start gap-1 rounded-md border border-border px-2.5 py-1.5 text-left text-base text-muted-foreground";
   return onClick ? (
     <button
       type="button"

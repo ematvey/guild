@@ -137,8 +137,6 @@ export interface AgentThread {
   title: string;
   title_locked: boolean;
   type: AgentThreadType;
-  /** The Main thread the agent was created with; only its creator has one. */
-  is_default: boolean;
   /** The spawning thread, or null for a root thread. */
   parent_thread_id: string | null;
   /** The thread this one was opened from, or null when the user opened it.
@@ -154,6 +152,8 @@ export interface AgentThread {
 }
 
 export interface AgentRun {
+  /** Internal coordination histories are not member-visible runs. */
+  internal?: true;
   id: string;
   agent_id: string;
   /** The user on whose behalf the run happens. */

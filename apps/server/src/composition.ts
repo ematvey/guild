@@ -1,3 +1,4 @@
+import { AgentCoordination } from "./agents/coordination.js";
 // The composition root. It builds the per-process Postgres pool, object
 // store, ClickHouse sinks, typed store facades and the services above them
 // (runtime, hub, feed, scheduler, push) once, then hands each route group a
@@ -120,6 +121,7 @@ export class PlatformContext implements PlatformStores {
   readonly runtime: GuildRuntime;
   /** The routine scheduler loop (started after the runtime opens). */
   readonly scheduler: AgentScheduler;
+  readonly coordination: AgentCoordination;
   /** Worker-per-chat: the fork supervisor (undefined when worker mode is
    *  off). The runtime routes admission through it and closes it. */
   readonly supervisor: ForkSupervisor | undefined;
@@ -236,6 +238,7 @@ export class PlatformContext implements PlatformStores {
     });
     this.supervisor?.setRemoteSubmit((chatId, input) => this.runtime.submitTurn(chatId, input.orgId, input));
     this.runtime.setTurnEnded((chatId, failed) => this.pushTurnEnded(chatId, failed));
+    this.coordination = new AgentCoordination({ pool: this.pool, store: this.agents, runtime: this.runtime, log });
     this.scheduler = new AgentScheduler({
       pool: this.pool,
       store: this.agents,
@@ -339,11 +342,13 @@ export class PlatformContext implements PlatformStores {
     }
     await this.runtime.start();
     this.scheduler.start();
+    this.coordination.start();
   }
 
   /** A turn ended for a chat: the notifier decides, after its grace period,
    *  whether the owner needs a push. The turn path does not wait for it. */
   private async pushTurnEnded(chatId: string, failed: boolean): Promise<void> {
+    if ((await this.chats.identityOf(chatId))?.internal) return;
     const owner = await this.chats.ownerOf(chatId);
     if (owner === null) return;
     const target = await turnEndPushTarget(this.agents.threads, chatId).catch((error: unknown) => {
@@ -372,6 +377,7 @@ export class PlatformContext implements PlatformStores {
    *  after a failed start. */
   async close(): Promise<void> {
     this.scheduler.stop();
+    this.coordination.stop();
     this.feed.stop();
     await this.runtime.close();
     await this.notify.close();

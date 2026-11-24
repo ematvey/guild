@@ -751,6 +751,10 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "assistant_inbox": {
+          "type": "boolean",
+          "description": "Persistent Assistant inbox; pinned separately from ordinary Threads."
+        },
         "id": { "$ref": "#/$defs/Uuid" },
         "org_id": { "$ref": "#/$defs/Uuid" },
         "user_id": { "$ref": "#/$defs/Uuid" },
@@ -1015,7 +1019,7 @@
         "title": { "type": "string" },
         "title_locked": { "type": "boolean" },
         "type": { "type": "string", "enum": ["user", "subagent", "routine"] },
-        "is_default": { "type": "boolean", "description": "The user's Main thread with this agent." },
+        "is_default": { "type": "boolean", "description": "False for every thread." },
         "parent_thread_id": { "type": ["string", "null"], "format": "uuid" },
         "origin_thread_id": { "type": ["string", "null"], "format": "uuid", "description": "The run thread this one was opened from, when an agent delivered it." },
         "depth": { "type": "integer" },

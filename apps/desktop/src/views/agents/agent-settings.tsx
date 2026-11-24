@@ -3,14 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Viewer } from "./AgentPage";
-import {
-  Archive,
-  ArchiveRestore,
-  Download,
-  Loader2,
-  MoreHorizontal,
-  Trash2,
-} from "lucide-react";
+import { Archive, ArchiveRestore, Download, Loader2, MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   AlertDialog,
@@ -31,13 +24,7 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Input } from "@guild/ui/components/input";
 import { Textarea } from "@guild/ui/components/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { modelLabel } from "../../lib/api/models";
 import {
   archiveAgent,
@@ -45,6 +32,7 @@ import {
   exportAgent,
   groupTools,
   listAgentTools,
+  openAssistant,
   restoreAgent,
   updateAgent,
   type Agent,
@@ -53,11 +41,7 @@ import {
 import { AccessPanel } from "../access/AccessPanel";
 import { Mono, Section } from "./agent-ui";
 import { ModelName, useModelOptions } from "./agent-model";
-import {
-  AgentIntegrationsEditor,
-  CLASS_LABEL,
-  IntegrationWarnings,
-} from "./agent-integrations";
+import { AgentIntegrationsEditor, CLASS_LABEL, IntegrationWarnings } from "./agent-integrations";
 import { useAttachableIntegrations } from "./agents-store";
 import type { AgentIntegration } from "@guild/wire/rest";
 
@@ -66,25 +50,29 @@ export function AgentSettings({
   manage,
   viewer,
   onDeleted,
+  onOpenChat,
 }: {
   agent: Agent;
   manage: boolean;
   viewer: Viewer;
   onDeleted: () => void;
+  onOpenChat?: (chatId: string) => void;
 }) {
+  const agentResources = (
+    agent.resources && typeof agent.resources === "object" && !Array.isArray(agent.resources) ? agent.resources : {}
+  ) as Record<string, unknown>;
+  const rawAssistant = agentResources["assistant"];
+  const initialAssistant =
+    rawAssistant && typeof rawAssistant === "object" ? (rawAssistant as Record<string, unknown>) : {};
+  const [assistant, setAssistant] = useState<Record<string, unknown>>(initialAssistant);
+  const assistantEnabled = typeof assistant["enabled"] === "boolean" ? assistant["enabled"] : agent.is_personal;
   const [name, setName] = useState(agent.name);
   const [description, setDescription] = useState(agent.description);
   const [model, setModel] = useState(agent.model);
   const [tools, setTools] = useState<string[]>(agent.tools);
-  const [toolsMode, setToolsMode] = useState<"selected" | "all">(
-    agent.tools_mode ?? "selected",
-  );
-  const [generativeUi, setGenerativeUi] = useState<boolean>(
-    agent.generative_ui ?? true,
-  );
-  const [integrations, setIntegrations] = useState<AgentIntegration[]>(
-    agent.integrations,
-  );
+  const [toolsMode, setToolsMode] = useState<"selected" | "all">(agent.tools_mode ?? "selected");
+  const [generativeUi, setGenerativeUi] = useState<boolean>(agent.generative_ui ?? true);
+  const [integrations, setIntegrations] = useState<AgentIntegration[]>(agent.integrations);
   const attachable = useAttachableIntegrations();
   const models = useModelOptions();
   const [catalog, setCatalog] = useState<AgentToolInfo[]>([]);
@@ -112,13 +100,12 @@ export function AgentSettings({
         tools,
         tools_mode: toolsMode,
         generative_ui: generativeUi,
+        resources: { ...agentResources, assistant },
         ...(toolsMode === "selected" ? { integrations } : {}),
       });
       setSaved(true);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not save the agent.",
-      );
+      setError(err instanceof Error ? err.message : "Could not save the agent.");
     } finally {
       setSaving(false);
     }
@@ -128,9 +115,7 @@ export function AgentSettings({
     return (
       <div className="space-y-4">
         <Section title="Settings">
-          <p className="text-sm text-muted-foreground">
-            Only the owner or an admin can change this agent.
-          </p>
+          <p className="text-sm text-muted-foreground">Only the owner or an admin can change this agent.</p>
         </Section>
         <ReadOnlyConfig agent={agent} />
       </div>
@@ -139,15 +124,89 @@ export function AgentSettings({
 
   return (
     <div className="space-y-4">
+      <Section title="Assistant">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={Boolean(assistantEnabled)}
+            onChange={(e) => setAssistant({ ...assistant, enabled: e.target.checked })}
+          />
+          Persistent coordination
+        </label>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Keeps track of conversations and ongoing work, delegates tasks and follows up. Scheduled checks and
+          responsibilities use this agent's workspace.
+        </p>
+        {assistantEnabled && (
+          <>
+            <Button
+              className="mt-3"
+              variant="outline"
+              disabled={onOpenChat === undefined}
+              onClick={() => {
+                void openAssistant(agent.id)
+                  .then(({ chat_id }) => onOpenChat?.(chat_id))
+                  .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)));
+              }}
+            >
+              Open assistant
+            </Button>
+            {!agent.is_personal && (
+              <label className="mt-3 block space-y-1 text-xs">
+                Access scope
+                <Select
+                  value={assistant["scope"] === "member" ? "member" : "agent"}
+                  onValueChange={(v) => setAssistant({ ...assistant, scope: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">Agent grants</SelectItem>
+                    <SelectItem value="member">Member scope</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            )}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {["coordinator", "worker", "reflection", "compaction"].map((role) => (
+                <label key={role} className="space-y-1 text-xs">
+                  <span className="capitalize">{role} model</span>
+                  <Select
+                    value={
+                      typeof assistant[`${role}_model`] === "string" && assistant[`${role}_model`] !== ""
+                        ? String(assistant[`${role}_model`])
+                        : "inherit"
+                    }
+                    onValueChange={(v) => setAssistant({ ...assistant, [`${role}_model`]: v === "inherit" ? "" : v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">Use agent model</SelectItem>
+                      {(models ?? []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {modelLabel(m)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Shared agents use their granted integrations and do not support account impersonation. New integration
+              grants start read-only.
+            </p>
+          </>
+        )}
+      </Section>
       <Section title="Agent configuration">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="space-y-1.5">
             <span className="text-xs font-medium">Name</span>
-            <Input
-              value={name}
-              maxLength={80}
-              onChange={(e) => setName(e.target.value)}
-            />
+            <Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="space-y-1.5">
             <span className="text-xs font-medium">Model</span>
@@ -176,9 +235,7 @@ export function AgentSettings({
               placeholder="What this agent does and when to spawn it."
               onChange={(e) => setDescription(e.target.value)}
             />
-            <span className="text-xs text-muted-foreground">
-              Other agents read this to decide whom to spawn.
-            </span>
+            <span className="text-xs text-muted-foreground">Other agents read this to decide whom to spawn.</span>
           </label>
         </div>
         <div className="mt-4 space-y-2">
@@ -195,8 +252,7 @@ export function AgentSettings({
           <span className="min-w-0">
             <span className="block text-sm font-medium">Generated UI</span>
             <span className="block text-xs text-muted-foreground">
-              Replies can include interactive cards, tables, charts, forms and
-              buttons.
+              Replies can include interactive cards, tables, charts, forms and buttons.
             </span>
           </span>
         </label>
@@ -204,18 +260,10 @@ export function AgentSettings({
 
       <Section
         title="Tools"
-        description={
-          toolsMode === "all"
-            ? "All available tools"
-            : `${tools.length} selected`
-        }
+        description={toolsMode === "all" ? "All available tools" : `${tools.length} selected`}
         action={
           toolsMode === "selected" && catalog.length > 0 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTools(catalog.map((t) => t.name))}
-            >
+            <Button variant="outline" size="sm" onClick={() => setTools(catalog.map((t) => t.name))}>
               Select all tools
             </Button>
           ) : undefined
@@ -231,13 +279,10 @@ export function AgentSettings({
               onChange={() => setToolsMode("all")}
             />
             <span className="min-w-0">
-              <span className="block text-sm font-medium">
-                All available tools
-              </span>
+              <span className="block text-sm font-medium">All available tools</span>
               <span className="block text-xs text-muted-foreground">
-                Every built-in tool and every integration an admin makes
-                available to the people who use this agent, at the access the
-                admin grants. Nothing else to set.
+                Every built-in tool and every integration an admin makes available to the people who use this agent, at
+                the access the admin grants. Nothing else to set.
               </span>
             </span>
           </label>
@@ -251,9 +296,7 @@ export function AgentSettings({
             />
             <span className="min-w-0">
               <span className="block text-sm font-medium">Choose tools</span>
-              <span className="block text-xs text-muted-foreground">
-                Only the tools selected below.
-              </span>
+              <span className="block text-xs text-muted-foreground">Only the tools selected below.</span>
             </span>
           </label>
         </div>
@@ -265,23 +308,19 @@ export function AgentSettings({
         {toolsMode === "all" ? (
           <div className="space-y-1.5">
             <p className="text-sm text-muted-foreground">
-              This agent uses every built-in tool and these integrations, as an
-              admin set them up:
+              This agent uses every built-in tool and these integrations, as an admin set them up:
             </p>
             <DerivedIntegrations entries={agent.integrations} />
           </div>
         ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            The org tool catalog did not load. The current allowlist is shown
-            below.
+            The org tool catalog did not load. The current allowlist is shown below.
           </p>
         ) : (
           <div className="space-y-3">
             {groups.map((group) => (
               <div key={group.group} className="space-y-1.5">
-                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.group}
-                </p>
+                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{group.group}</p>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {group.tools.map((tool) => {
                     const checked = tools.includes(tool.name);
@@ -305,12 +344,8 @@ export function AgentSettings({
                           }
                         />
                         <span className="min-w-0">
-                          <span className="block text-sm font-medium">
-                            {tool.label || tool.name}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {tool.description}
-                          </span>
+                          <span className="block text-sm font-medium">{tool.label || tool.name}</span>
+                          <span className="block text-xs text-muted-foreground">{tool.description}</span>
                         </span>
                       </label>
                     );
@@ -323,10 +358,7 @@ export function AgentSettings({
         {groups.length === 0 && tools.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {tools.map((tool) => (
-              <span
-                key={tool}
-                className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs"
-              >
+              <span key={tool} className="rounded-md border border-border px-2 py-0.5 font-mono text-2xs">
                 {tool}
               </span>
             ))}
@@ -335,15 +367,9 @@ export function AgentSettings({
       </Section>
 
       {toolsMode === "selected" && (
-        <Section
-          title="Integrations"
-          description={
-            integrations.length === 0 ? "None" : `${integrations.length} added`
-          }
-        >
+        <Section title="Integrations" description={integrations.length === 0 ? "None" : `${integrations.length} added`}>
           <p className="mb-3 text-xs text-muted-foreground">
-            Everyone who can use this agent reaches what is listed here,
-            whatever their own access.
+            Everyone who can use this agent reaches what is listed here, whatever their own access.
           </p>
           <AgentIntegrationsEditor
             value={integrations}
@@ -374,14 +400,11 @@ export function AgentSettings({
       >
         <div className="flex flex-wrap items-center gap-2">
           <AgentActions agent={agent} manage={manage} onDeleted={onDeleted} />
-          <span className="text-xs text-muted-foreground">
-            Archive, restore, export or delete this agent.
-          </span>
+          <span className="text-xs text-muted-foreground">Archive, restore, export or delete this agent.</span>
         </div>
         {agent.status === "deleting" && agent.purge_after && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Purge is scheduled after{" "}
-            {new Date(agent.purge_after).toLocaleString()}.
+            Purge is scheduled after {new Date(agent.purge_after).toLocaleString()}.
           </p>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
@@ -395,21 +418,13 @@ export function AgentSettings({
 /** An `all`-tools agent's integrations: what the admin's integration
  *  access gives everyone who uses it. Read-only. */
 function DerivedIntegrations({ entries }: { entries: AgentIntegration[] }) {
-  if (entries.length === 0)
-    return (
-      <p className="text-xs text-muted-foreground">No integrations yet.</p>
-    );
+  if (entries.length === 0) return <p className="text-xs text-muted-foreground">No integrations yet.</p>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {entries.map((entry) => (
-        <span
-          key={entry.slug}
-          className="rounded-md border border-border px-2 py-0.5 text-xs"
-        >
+        <span key={entry.slug} className="rounded-md border border-border px-2 py-0.5 text-xs">
           <span className="font-mono">{entry.slug}</span>{" "}
-          <span className="text-muted-foreground">
-            {CLASS_LABEL[entry.ceiling].toLowerCase()}
-          </span>
+          <span className="text-muted-foreground">{CLASS_LABEL[entry.ceiling].toLowerCase()}</span>
         </span>
       ))}
     </div>
@@ -454,9 +469,7 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
           <dt className="text-muted-foreground">Tools</dt>
           <dd className="mt-1 flex flex-wrap gap-1.5">
             {agent.tools_mode === "all" ? (
-              <span className="text-xs">
-                Every built-in tool and integration an admin makes available
-              </span>
+              <span className="text-xs">Every built-in tool and integration an admin makes available</span>
             ) : (
               agent.tools.map((tool) => <Mono key={tool}>{tool}</Mono>)
             )}
@@ -471,13 +484,10 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
               agent.integrations.map((entry) => (
                 <div key={entry.slug}>
                   <span className="text-xs">
-                    <Mono>{entry.slug}</Mono>{" "}
-                    {CLASS_LABEL[entry.ceiling].toLowerCase()}
+                    <Mono>{entry.slug}</Mono> {CLASS_LABEL[entry.ceiling].toLowerCase()}
                   </span>
                   <IntegrationWarnings
-                    warnings={agent.integration_warnings.filter(
-                      (w) => w.integration === entry.slug,
-                    )}
+                    warnings={agent.integration_warnings.filter((w) => w.integration === entry.slug)}
                     title={entry.slug}
                   />
                 </div>
@@ -490,15 +500,7 @@ export function ReadOnlyConfig({ agent }: { agent: Agent }) {
   );
 }
 
-export function AgentActions({
-  agent,
-  manage,
-  onDeleted,
-}: {
-  agent: Agent;
-  manage: boolean;
-  onDeleted: () => void;
-}) {
+export function AgentActions({ agent, manage, onDeleted }: { agent: Agent; manage: boolean; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -545,60 +547,42 @@ export function AgentActions({
         {manage && (
           <>
             {archived ? (
-              <DropdownMenuItem
-                onSelect={() => void act(() => restoreAgent(agent.id))}
-              >
+              <DropdownMenuItem onSelect={() => void act(() => restoreAgent(agent.id))}>
                 <ArchiveRestore className="size-4" />
                 Restore agent
               </DropdownMenuItem>
             ) : (
-              <DropdownMenuItem
-                onSelect={() => void act(() => archiveAgent(agent.id))}
-              >
+              <DropdownMenuItem onSelect={() => void act(() => archiveAgent(agent.id))}>
                 <Archive className="size-4" />
                 Archive agent
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => void download()}
-              disabled={exporting}
-            >
+            <DropdownMenuItem onSelect={() => void download()} disabled={exporting}>
               <Download className="size-4" />
               {exporting ? "Preparing export…" : "Export data"}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setConfirmOpen(true)}
-            >
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setConfirmOpen(true)}>
               <Trash2 className="size-4" />
               Delete agent
             </DropdownMenuItem>
           </>
         )}
-        {!manage && (
-          <DropdownMenuItem disabled>Owner or admin only</DropdownMenuItem>
-        )}
+        {!manage && <DropdownMenuItem disabled>Owner or admin only</DropdownMenuItem>}
       </DropdownMenuContent>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The agent stops now and disappears from the directory. Its
-              workspace, threads and runs stay recoverable during the
-              organization&apos;s grace period (30 days by default); after that
-              they are purged. Download an export first if you need the
-              definitions and run history.
+              The agent stops now and disappears from the directory. Its workspace, threads and runs stay recoverable
+              during the organization&apos;s grace period (30 days by default); after that they are purged. Download an
+              export first if you need the definitions and run history.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button
-              variant="outline"
-              onClick={() => void download()}
-              disabled={exporting}
-            >
+            <Button variant="outline" onClick={() => void download()} disabled={exporting}>
               <Download />
               {exporting ? "Preparing…" : "Download export"}
             </Button>

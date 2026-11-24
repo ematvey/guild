@@ -1,3 +1,4 @@
+import { ensureCoordinationThread, coordinationSettings } from "../../agents/coordination.js";
 // Agent HTTP surface: CRUD and lifecycle, thread index, read-only files,
 // runs/activity, the inbox and conversation search. Every route resolves the
 // caller through the session and checks agent visibility/role before it
@@ -6,6 +7,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
+import { canReadOwned, readsWholeOrg } from "../domain/access.js";
 import { sortedJson } from "../domain/json.js";
 import { parseUuidParam, queryParam, requireUser } from "./error.js";
 import { submitTurn } from "../../chats/submit-turn.js";
@@ -25,6 +27,7 @@ import { agentWire } from "../../hub/agent-state.js";
 import type { Agent as WireAgent } from "@guild/wire/rest";
 import {
   refuseDeletingAgent,
+  wireThread,
   type ActivityFilters,
   type RunFilters,
   type UpdateAgentInput,
@@ -417,6 +420,29 @@ export function registerAgentRoutes(
   const files = new AgentFiles(infra.config.agentWorkspaceRoot);
   const integrationAccess = new IntegrationAccessStore(infra.pool);
 
+  app.post("/api/v1/chats/:id/surface", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getOwnChat(user.org_id, chatId, user);
+    const thread = await store.threads.threadByChatId(chatId);
+    if (thread !== null) await store.threads.surfaceThread(thread.id, user.id);
+    return sendJson(reply, { surfaced: true });
+  });
+
+  app.post("/api/v1/assistant", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const body = jsonBody(req);
+    const agent =
+      typeof body["agent_id"] === "string"
+        ? (await store.requireAccess(user, body["agent_id"], "use")).agent
+        : await store.ensurePersonalAgentFor(user.org_id, user.id);
+    if (agent === null) throw ApiError.badRequest("Configure a model before opening Assistant");
+    if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is not enabled for this Agent");
+    refuseDeletingAgent(agent);
+    const thread = await ensureCoordinationThread(infra.pool, store, agent, user.id, "inbox");
+    return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
+  });
+
   /** Agents on the wire, with their Integration warnings. */
   const wire = async (orgId: string, agents: Agent[]): Promise<WireAgent[]> => {
     const context = await integrationAccess.context(orgId);
@@ -667,8 +693,8 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    const page = await store.threads.listThreads(agentId, user.id);
-    return sendJson(reply, { threads: page.threads });
+    const threads = (await store.threads.displayThreads(agentId, user.id)).map(wireThread);
+    return sendJson(reply, { threads });
   });
 
   app.post("/api/v1/agents/:id/threads", async (req, reply) => {
@@ -722,13 +748,12 @@ export function registerAgentRoutes(
       const thread = await store.threads.getThread(agentId, user.id, requested);
       return agentTurn(req, reply, user, agent, thread);
     }
-    // The caller's own Main thread, or a new thread of theirs: a shared agent
-    // never posts into another user's conversation, and reading an agent
-    // never creates a thread.
+    // A turn without a thread names a new thread of the caller's own: a
+    // shared agent never posts into another user's conversation, and reading
+    // an agent never creates a thread.
     refuseDeletingAgent(agent);
     requiredString(jsonBody(req), "message");
-    const thread =
-      (await store.threads.mainThread(agentId, user.id)) ?? (await store.threads.createThread(agentId, user.id, ""));
+    const thread = await store.threads.createThread(agentId, user.id, "");
     return agentTurn(req, reply, user, agent, thread);
   });
 
@@ -930,6 +955,7 @@ export function registerAgentRoutes(
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
     const filters: RunFilters = {
+      userId: user.id,
       status: statusFilter(req),
       trigger: triggerFilter(req),
       limit: limitParam(req),
@@ -943,7 +969,10 @@ export function registerAgentRoutes(
   app.get("/api/v1/runs/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
     const run = await store.runs.getRun(parseUuidParam(req, "id"));
-    await store.requireAccess(user, run.agent_id, "use");
+    if (!canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) {
+      throw ApiError.notFound("no such run");
+    }
+    await store.fetchInOrg(user.org_id, run.agent_id);
     const steps = await store.runs.runSteps(run);
     const files = steps.flatMap((step) => (step.type === "file" ? (step.paths ?? []) : []));
     const mapped = steps.map((step) => ({
@@ -963,7 +992,7 @@ export function registerAgentRoutes(
       is_error: step.is_error ?? null,
     }));
     const thread =
-      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id);
+      run.thread_id === null ? null : await infra.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
     return sendJson(reply, {
       run: { ...run, steps: mapped, files },
       steps,
@@ -974,7 +1003,10 @@ export function registerAgentRoutes(
   app.get("/api/v1/runs/:id/children", async (req, reply) => {
     const user = await requireUser(auth, req);
     const run = await store.runs.getRun(parseUuidParam(req, "id"));
-    await store.requireAccess(user, run.agent_id, "use");
+    if (!canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) {
+      throw ApiError.notFound("no such run");
+    }
+    await store.fetchInOrg(user.org_id, run.agent_id);
     return sendJson(reply, { children: await store.runs.childRuns(run.id) });
   });
 

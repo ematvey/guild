@@ -19,6 +19,7 @@ import type {
   AgentStore,
   AgentThreadStore,
 } from "../agents/store.js";
+import { wireThread } from "../agents/store.js";
 import type {
   Agent as StoreAgent,
   AgentRoutine as StoreRoutine,
@@ -49,7 +50,7 @@ export interface AgentStateDeps {
   readonly agents: Pick<AgentStore, "ensurePersonalAgent" | "listForOrg"> & {
     readonly grants: Pick<AgentGrants, "visibleUserIds" | "visibleAgentIds">;
     readonly runs: Pick<AgentRunStore, "getRun" | "listRoutines">;
-    readonly threads: Pick<AgentThreadStore, "listThreads">;
+    readonly threads: Pick<AgentThreadStore, "displayThreads">;
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
@@ -305,11 +306,14 @@ export class AgentStateFeed {
     } catch {
       return;
     }
+    if (run.internal) return;
     const wire = runWire(run);
     if (run.finished_at !== null)
       Object.assign(wire, await this.callCounts(orgId, runId));
     const frame: WsServerMsg = { type: "agent_run", run: wire };
-    for (const userId of viewers) this.send(userId, frame);
+    for (const userId of viewers) {
+      if (run.user_id === userId) this.send(userId, frame);
+    }
   }
 
   /** A finished run's model and tool call counts, from the same spans the
@@ -356,11 +360,13 @@ export class AgentStateFeed {
 
   private async sendThreads(userId: string, agentId: string): Promise<void> {
     if (!this.connected(userId)) return;
-    const page = await this.store.threads.listThreads(agentId, userId);
+    const viewers = await this.store.grants.visibleUserIds(agentId, [userId]);
+    if (viewers.length === 0) return;
+    const threads = (await this.store.threads.displayThreads(agentId, userId)).map(wireThread);
     this.sendKeyed(userId, `agent_threads:${agentId}`, {
       type: "agent_threads",
       agent_id: agentId,
-      threads: page.threads,
+      threads,
     });
   }
 

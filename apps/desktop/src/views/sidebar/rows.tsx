@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   ChevronRight,
+  Circle,
   EllipsisVertical,
   Loader2,
   Pencil,
@@ -46,7 +47,7 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
         }
       }}
       onClick={(e) => e.stopPropagation()}
-      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-sm outline-none"
+      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-base outline-none"
     />
   );
 }
@@ -157,11 +158,13 @@ export function ChatListItem({
   onArchive,
   onDelete,
   archiveLabel,
+  assistantInbox,
   routine,
 }: {
   title: string;
   active: boolean;
   status: RowState;
+  assistantInbox?: boolean;
   /** The routine whose output this chat is: the row leads with its mark. */
   routine?: string;
   onClick: () => void;
@@ -205,7 +208,9 @@ export function ChatListItem({
         title={title}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
-        {routine !== undefined && (
+        {assistantInbox ? (
+          <Circle aria-hidden="true" className="size-4 shrink-0" />
+        ) : routine !== undefined ? (
           <Repeat
             data-routine-mark
             aria-label={`Routine: ${routine}`}
@@ -213,7 +218,7 @@ export function ChatListItem({
           >
             <title>{`Routine: ${routine}`}</title>
           </Repeat>
-        )}
+        ) : null}
         {title === "" ? (
           <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
             New thread
@@ -223,12 +228,14 @@ export function ChatListItem({
         )}
         <RowStatus status={status} />
       </button>
-      <RowActions
-        onRename={onRename ? () => setEditing(true) : undefined}
-        onArchive={onArchive}
-        onDelete={onDelete}
-        archiveLabel={archiveLabel}
-      />
+      {!assistantInbox && (
+        <RowActions
+          onRename={onRename ? () => setEditing(true) : undefined}
+          onArchive={onArchive}
+          onDelete={onDelete}
+          archiveLabel={archiveLabel}
+        />
+      )}
     </div>
   );
 }

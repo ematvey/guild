@@ -216,6 +216,43 @@ describe("conversation activity", () => {
     expect(memberBody.conversations.map((item) => item.id)).toEqual([mine.chatId]);
   });
 
+  it("lets admins opt into background threads and navigate to a delegated child", async () => {
+    const coordinator = await seedConversation({
+      userId: stack.memberId,
+      agentName: "Coordinator agent",
+      title: "Coordinator",
+    });
+    await stack.env.db.query("UPDATE chats SET internal = true WHERE id = $1", [coordinator.chatId]);
+    await stack.env.db.query("UPDATE agent_threads SET execution_role = 'coordinator' WHERE id = $1", [
+      coordinator.threadId,
+    ]);
+    await stack.env.db.query("UPDATE agent_threads SET parent_thread_id = $1 WHERE id = $2", [
+      coordinator.threadId,
+      mine.threadId,
+    ]);
+    try {
+      const activity = "/api/v1/activity/conversations?q=Coordinator";
+      const detail = `/api/v1/activity/conversations/${coordinator.chatId}`;
+      const get = (url: string, token: string) =>
+        stack.env.app.inject({ method: "GET", url, headers: auth(token) });
+      expect((await get(activity, stack.adminToken)).json().conversations).toEqual([]);
+      expect((await get(`${activity}&background=true`, stack.memberToken)).json().conversations).toEqual([]);
+      const list = await get(`${activity}&background=true`, stack.adminToken);
+      expect(list.json().conversations).toMatchObject([{ id: coordinator.chatId, internal: true }]);
+      expect((await get(detail, stack.memberToken)).statusCode).toBe(404);
+      const runUrl = `/api/v1/runs/${coordinator.runIds[0]}`;
+      expect((await get(runUrl, stack.memberToken)).statusCode).toBe(404);
+      const runDetail = await get(runUrl, stack.adminToken);
+      expect(runDetail.statusCode, runDetail.body).toBe(200);
+      expect(runDetail.json().thread.chat_id).toBe(coordinator.chatId);
+      expect((await get(detail, stack.adminToken)).json().related_threads).toMatchObject([{ id: mine.chatId }]);
+      const childDetail = await get(`/api/v1/activity/conversations/${mine.chatId}`, stack.adminToken);
+      expect(childDetail.json().conversation.thread.parent_chat_id).toBe(coordinator.chatId);
+    } finally {
+      await stack.env.db.query("UPDATE agent_threads SET parent_thread_id = NULL WHERE id = $1", [mine.threadId]);
+    }
+  });
+
   it("searches by owner and title", async () => {
     const res = await stack.env.app.inject({
       method: "GET",

@@ -36,6 +36,7 @@ export function chatWire(hub: ChatWireHub, row: ChatListRow): Chat {
     ...(row.project_machine_label !== null ? { project_machine_label: row.project_machine_label } : {}),
     machine_online: online,
     type: row.type,
+    ...(row.assistant_inbox ? { assistant_inbox: true } : {}),
     archived: row.archived,
     deleted: row.deleted,
     ...(row.routine !== null ? { routine: row.routine } : {}),

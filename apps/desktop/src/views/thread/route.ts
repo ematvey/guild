@@ -439,7 +439,11 @@ export interface RoutePatch {
 
 /** Leaves any chat, project and overlay: the base a top-level surface
  *  (skills, agents) patches onto. */
-export const SURFACE_BASE = { chatId: null, projectId: null, overlay: null } as const satisfies RoutePatch;
+export const SURFACE_BASE = {
+  chatId: null,
+  projectId: null,
+  overlay: null,
+} as const satisfies RoutePatch;
 
 /** The chat root: no chat, project, page or overlay open. */
 export const CHAT_ROOT = {

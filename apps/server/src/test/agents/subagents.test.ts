@@ -148,6 +148,42 @@ dbDescribe("subagent tree tools", () => {
     await env?.cleanup();
   });
 
+  it("replays a managed spawn at capacity and reserves pending children atomically", async () => {
+    const thread = await store.threads.createThread(parentAgent.id, owner.id, "Coordinator", "routine", {
+      executionRole: "coordinator",
+      internal: true,
+    });
+    const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
+    const fake = fakeRuntime();
+    const context = {
+      ...(await contextFor({ thread, run, fake, maxChildrenPerNode: 1 })),
+      coordination: { managed: true, actionKey: "durable-action-1" },
+    };
+    const a = await spawn(context, { agent: parentAgent.id, task: "Inspect a document" });
+    const b = await spawn(context, { agent: parentAgent.id, task: "Inspect a document" });
+    expect(b.thread_id).toBe(a.thread_id);
+    expect(b.run_id).toBe(a.run_id);
+    expect(
+      (await threads.listEvents(orgId, thread.chat_id)).filter((e) => e.event.type === "child_spawned"),
+    ).toHaveLength(1);
+    await expect(
+      spawn(
+        { ...context, coordination: { managed: true, actionKey: "durable-action-2" } },
+        { agent: parentAgent.id, task: "Another task" },
+      ),
+    ).rejects.toMatchObject({ code: "child_limit" });
+    await store.runs.updateRun(a.run_id, { status: "succeeded", finished_at: new Date().toISOString() });
+    const reserved = await Promise.allSettled(
+      ["a", "b"].map((key) =>
+        store.threads.createChildThread(thread.id, parentAgent.id, owner.id, key, false, 1, {
+          managed: true,
+          actionKey: key,
+        }),
+      ),
+    );
+    expect(reserved.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+  });
+
   it("spawn creates the child thread and run, posts the task and returns at once", async () => {
     const thread = await store.threads.createThread(parentAgent.id, owner.id, "Spawn flow");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });

@@ -173,6 +173,8 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
   /** Admins see the org; members see their own traces and calls. */
   const viewer = async (req: FastifyRequest) => requireUser(ctx, req);
 
+  const internalSessions = (orgId: string) => infra.conversationHistory.internalChatIds(orgId);
+
   /** The page's token, cost and error totals, keyed by chat id. An
    *  unreachable ClickHouse degrades to no totals, like every activity
    *  read. */
@@ -207,6 +209,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     const result = await infra.conversationHistory.list({
       orgId: user.org_id,
       userId: owner,
+      includeBackground: user.role === "admin" && queryParam(req, "background") === "true",
       from: window.from,
       to: window.to,
       ...(agent === undefined ? {} : { agentId: agent }),
@@ -236,14 +239,18 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
       throw ApiError.badRequest("before must be a nonnegative integer");
     }
+    const includeBackground = user.role === "admin";
+    const header = await infra.conversationHistory.header(user.org_id, id, includeBackground);
+    if (header === null || !canReadOwned(user, header.owner.id)) throw ApiError.notFound("no such conversation");
     const detail = await infra.conversationHistory.detail(user.org_id, id, {
       ...(before === undefined ? {} : { beforeSeq: before }),
+      includeBackground,
       limit: limitOf(req),
     });
     if (detail === null) throw ApiError.notFound("no such conversation");
-    const header = await infra.conversationHistory.header(user.org_id, id);
-    if (header === null) throw ApiError.notFound("no such conversation");
-    if (!canReadOwned(user, header.owner.id)) throw ApiError.notFound("no such conversation");
+    const relatedThreads = before === undefined
+      ? await infra.conversationHistory.relatedThreads(user.org_id, id, ownerScope(user))
+      : [];
     let counts = new Map<string, { call_count: number; tool_count: number }>();
     try {
       counts = await infra.trace.runCallCounts(
@@ -256,6 +263,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     const totals = await chatTotals(user.org_id, [id]);
     return JSON.stringify({
       conversation: renderConversation(header, totals.get(id)),
+      related_threads: relatedThreads,
       items: groupConversation(
         detail.messages,
         detail.runs,
@@ -280,6 +288,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       const res = await infra.trace.traces({
         orgId: user.org_id,
         userId: ownerScope(user),
+        excludeSessions: await internalSessions(user.org_id),
         from: window.from,
         to: window.to,
         ...(agent === undefined ? {} : { agentId: agent }),
@@ -316,12 +325,15 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       else throw ApiError.internal(`trace query failed: ${errorText(error)}`);
     }
     if (result.trace === null) throw ApiError.notFound("no such trace");
+    const excluded = new Set(await internalSessions(user.org_id));
+    const visible = (row: Record<string, unknown>) => !excluded.has(String(row["session_id"]));
+    if (!visible(result.trace)) throw ApiError.notFound("no such trace");
     const owner = result.trace["user_id"];
     if (!canReadOwned(user, owner)) throw ApiError.notFound("no such trace");
     return JSON.stringify({
       trace: renderTrace(result.trace),
-      spans: result.spans.map(renderSpan),
-      children: result.children.map(renderTrace),
+      spans: result.spans.filter(visible).map(renderSpan),
+      children: result.children.filter(visible).map(renderTrace),
     });
   });
 
@@ -345,6 +357,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       const res = await infra.trace.spans({
         orgId: user.org_id,
         userId: ownerScope(user),
+        excludeSessions: await internalSessions(user.org_id),
         from: window.from,
         to: window.to,
         ...(spanType === undefined || spanType === "" ? {} : { spanType }),
@@ -379,6 +392,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       const res = await infra.trace.sessions({
         orgId: user.org_id,
         userId: ownerScope(user),
+        excludeSessions: await internalSessions(user.org_id),
         from: window.from,
         to: window.to,
         limit: limitOf(req),
@@ -405,6 +419,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
       result = await infra.trace.summary({
         orgId: user.org_id,
         userId: ownerScope(user),
+        excludeSessions: await internalSessions(user.org_id),
         from: window.from,
         to: window.to,
       });
@@ -446,7 +461,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     if (!isUuid(id)) throw ApiError.badRequest(`invalid span id: ${id}`);
     let rows: Record<string, unknown>[];
     try {
-      rows = await infra.trace.payloads(user.org_id, id);
+      rows = await infra.trace.payloads(user.org_id, id, await internalSessions(user.org_id));
     } catch (error) {
       if (isUnknownTable(error)) rows = [];
       else throw ApiError.internal(`payload query failed: ${errorText(error)}`);

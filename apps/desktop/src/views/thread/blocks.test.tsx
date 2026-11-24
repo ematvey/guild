@@ -48,24 +48,24 @@ describe("chat markdown", () => {
 
 describe("HoverStamp", () => {
   it("renders nothing without a stamp", () => {
-    expect(renderToStaticMarkup(<HoverStamp side="left" />)).toBe("");
-    expect(renderToStaticMarkup(<HoverStamp ts="not-a-date" side="left" />)).toBe("");
+    expect(renderToStaticMarkup(<HoverStamp />)).toBe("");
+    expect(renderToStaticMarkup(<HoverStamp ts="not-a-date" />)).toBe("");
   });
 
   it("renders the formatted time", () => {
-    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} side="right" />);
+    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} />);
     expect(html).toMatch(/\d{1,2}:\d{2}/);
     expect(html).not.toContain("Copy message");
   });
 
   it("puts the copy button before the time", () => {
-    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} side="right" copyText="hi" />);
+    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} copyText="hi" />);
     expect(html).toContain('aria-label="Copy message"');
     expect(html.indexOf("Copy message")).toBeLessThan(html.search(/\d{1,2}:\d{2}/));
   });
 
   it("renders the copy button without a stamp", () => {
-    expect(renderToStaticMarkup(<HoverStamp side="left" copyText="hi" />)).toContain("Copy message");
+    expect(renderToStaticMarkup(<HoverStamp copyText="hi" />)).toContain("Copy message");
   });
 });
 

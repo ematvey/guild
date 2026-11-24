@@ -26,6 +26,7 @@ export interface ActivityFilters {
   q: string;
   caller: string;
   model: string;
+  background: boolean;
 }
 
 export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
@@ -36,6 +37,7 @@ export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
   q: "",
   caller: "all",
   model: "",
+  background: false,
 };
 
 /** The reading a trace page shows its spans in. */
@@ -64,7 +66,7 @@ export type AgentsRoute =
   | { view: "chat"; chatId: string };
 
 export const AGENTS_DIRECTORY: AgentsRoute = { view: "directory" };
-export const AGENTS_ACTIVITY: AgentsRoute = {
+export const AGENTS_ACTIVITY: Extract<AgentsRoute, { view: "activity" }> = {
   view: "activity",
   filters: DEFAULT_ACTIVITY_FILTERS,
 };
@@ -99,6 +101,7 @@ function filtersFrom(search: string): ActivityFilters {
     q: params.get("q") ?? DEFAULT_ACTIVITY_FILTERS.q,
     caller: params.get("caller") ?? DEFAULT_ACTIVITY_FILTERS.caller,
     model: params.get("model") ?? DEFAULT_ACTIVITY_FILTERS.model,
+    background: params.get("background") === "true",
   };
 }
 
@@ -107,7 +110,7 @@ function filtersSearch(filters: ActivityFilters): string {
   for (const [key, value] of Object.entries(filters)) {
     const fallback = DEFAULT_ACTIVITY_FILTERS[key as keyof ActivityFilters];
     if (value === "" || value === "all" || value === fallback) continue;
-    params.set(key, value);
+    params.set(key, String(value));
   }
   const query = params.toString();
   return query === "" ? "" : `?${query}`;

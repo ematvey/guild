@@ -80,9 +80,9 @@ export async function chatTreeFacts(pool: PlatformPool, chatId: string, viewerId
      FROM agent_threads t
      JOIN agents a ON a.id = t.agent_id
      LEFT JOIN chats tc ON tc.id = t.chat_id
-     LEFT JOIN agent_threads p ON p.id = t.parent_thread_id
+     LEFT JOIN agent_threads p ON p.id = t.parent_thread_id AND p.execution_role <> 'coordinator'
      LEFT JOIN chats pc ON pc.id = p.chat_id
-     LEFT JOIN agent_threads o ON o.id = t.origin_thread_id
+     LEFT JOIN agent_threads o ON o.id = t.origin_thread_id AND o.execution_role <> 'coordinator'
      LEFT JOIN chats oc ON oc.id = o.chat_id
      WHERE t.chat_id = $1`,
     [chatId],

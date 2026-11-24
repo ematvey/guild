@@ -58,14 +58,15 @@ only what the repo cannot tell you.
   `apps/desktop/src/views/thread/route.ts` (driven by
   `thread/hooks/use-thread-route.ts`); the reference implementation of
   the contract is `apps/desktop/src/views/skills/skills-route.ts`.
-- **Always redeploy after a change.** The user tests against
-  `http://localhost:18080`; a local build or container restart ships
-  nothing. Every task ends with the compose rebuild recipe from
-  `deploy-nuances.md` §2 and a live-bundle check (§2 end). Run the rebuild
-  detached — the npm install and vite build inside Docker are the long pole.
-- **Desktop-affecting changes get a signed client release in the same task.**
-  Publish a GitHub prerelease from the working branch and approve it on the dev
-  stack; verify all four platforms in its updater manifest (`docs/clients.md` §4).
+- **Local iterations use local tools.** Run builds and checks on the
+  development host. For app changes, rebuild the dev Compose stack at
+  `http://localhost:18080` using `docs/deploy-nuances.md` §2. Run the rebuild
+  detached and verify the served bundle. Run GitHub Actions or other CI only
+  when the user explicitly requests CI or a release.
+- **Signed desktop releases require an explicit request.** For a requested dev
+  release, publish a prerelease from the working branch, approve it on the dev
+  stack, and verify all four platforms in its updater manifest
+  (`docs/clients.md` §4).
 - **Committed versions change only in the master release workflow.**
   `scripts/bump-version.sh` updates the synchronized product version on `master`.
   Branch/local builds use `scripts/release.mjs preview` to stamp a temporary
