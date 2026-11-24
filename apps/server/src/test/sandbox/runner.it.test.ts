@@ -98,7 +98,8 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       ];
       const [first, second, background] = targets.map((target) => envFor(target));
       try {
-        expect((await first!.writeFile("/workspace/shared.txt", "shared", ctx)).ok).toBe(true);
+        const shared = await first!.writeFile("/workspace/shared.txt", "shared", ctx);
+        if (!shared.ok) throw shared.error;
         expect((await first!.writeFile("/tmp/run.txt", "first", ctx)).ok).toBe(true);
         expect((await second!.writeFile("/tmp/run.txt", "second", ctx)).ok).toBe(true);
         expect((await background!.writeFile("/tmp/run.txt", "background", ctx)).ok).toBe(true);

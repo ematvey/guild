@@ -30,6 +30,7 @@ var (
 	agentPath   = regexp.MustCompile("^agents/(" + uuid + ")/(" + uuid + ")$")
 	chatPath    = regexp.MustCompile("^chats/(" + uuid + ")/([0-9]+)$")
 	sessionPath = regexp.MustCompile("^workspaces/(" + uuid + ")/([A-Za-z0-9_-]{1,64})$")
+	agentScope  = regexp.MustCompile("^:member:" + uuid + "$")
 	actorName   = regexp.MustCompile("^guild-[0-9a-f]{32}$")
 )
 
@@ -37,7 +38,9 @@ type sandboxTarget struct{ Key, Subpath string }
 
 func (target sandboxTarget) valid() bool {
 	if match := agentPath.FindStringSubmatch(target.Subpath); match != nil {
-		return target.Key == "agent:"+match[1]+":"+match[2]
+		key := "agent:" + match[1] + ":" + match[2]
+		scope, ok := strings.CutPrefix(target.Key, key)
+		return ok && (scope == "" || scope == ":background" || agentScope.MatchString(scope))
 	}
 	if match := chatPath.FindStringSubmatch(target.Subpath); match != nil {
 		return target.Key == "chat:"+match[1]+":"+match[2]
