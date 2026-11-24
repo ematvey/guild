@@ -143,6 +143,14 @@ It creates a disposable worker pool, writes separate markers to the Actor's
 local filesystem and JuiceFS, suspends synchronously, and replaces that
 pool's worker pod. It checks both markers after resume.
 
+## Default dev verification
+
+Run `verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN` to verify the
+default cluster's Guild, sandbox adapter, gateway, and workspace mount.
+The probe writes to both workspace types, verifies that only the Guild
+pod gets a PostgreSQL protocol response, and persists an Assistant reply
+through the configured public origin. It uses a temporary session and chat.
+
 ## Gateway fixtures
 
 Guild forks Pi Durable workers inside the Guild server pod. Substrate
