@@ -303,7 +303,11 @@ function ThreadView(props: ThreadProps) {
   sendRef.current = outgoing.send;
   const genuiHost = useMemo<GenuiHost>(() => ({ send: (text) => void sendRef.current("normal", text) }), []);
   const recoverMissingChatRef = useRef<() => void>(() => {});
+  const activityRunId = route.agents?.view === "run" ? route.agents.runId : null;
+  const activityChatId = route.agents?.view === "chat" ? route.agents.chatId : null;
   const { socketRef } = useMemberSocket({
+    runId: activityRunId,
+    activityChatId,
     signOut,
     thread,
     outgoing: { outgoingRef, observedUserIdsRef: composer.observedUserIdsRef, settleOutgoing: outgoing.settleOutgoing },
@@ -403,8 +407,10 @@ function ThreadView(props: ThreadProps) {
   openForChatRef.current = openForChat;
   useEffect(() => {
     openForChatRef.current(chatId);
+  }, [chatId]);
+  useEffect(() => {
     socketRef.current?.resync();
-  }, [chatId, socketRef]);
+  }, [chatId, activityRunId, activityChatId, socketRef]);
 
   // The composer belongs to the displayed chat, not the route target: a
   // pending swap keeps the old transcript and its draft until the one
@@ -752,6 +758,7 @@ function ThreadView(props: ThreadProps) {
           viewer={{ email, displayName, role }}
           pushRoute={pushRoute}
           onOpenChat={openChat}
+          onRefreshConversation={() => socketRef.current?.resync()}
         />
       </RoutePage>
     ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (

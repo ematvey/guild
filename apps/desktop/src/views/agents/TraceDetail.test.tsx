@@ -14,7 +14,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
   ...api,
 }));
 
-import { applyAgentRun, clearAgentState, runFinishes } from "./agents-store";
+import { applyActivityRun, clearAgentState, runFinishes } from "./agents-store";
 import { RunDetailPage } from "./TraceDetail";
 
 const running: AgentRun = makeRun({ agent_name: "Echo", started_at: "2026-11-01T00:00:00Z" });
@@ -77,17 +77,32 @@ describe("run page", () => {
       children: [],
     });
     api.getRun.mockResolvedValue({ run: done, thread: null });
-    act(() => applyAgentRun(done));
+    act(() => applyActivityRun({ type: "activity_run", run: done, counts: null }));
 
     await waitFor(() => expect(api.getTrace).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText(/3\.0s · 1\.5k tokens/)).toBeTruthy());
     expect(screen.getByText("Succeeded")).toBeTruthy();
 
-    act(() => applyAgentRun(done));
+    act(() => applyActivityRun({ type: "activity_run", run: done, counts: null }));
     expect(api.getTrace).toHaveBeenCalledTimes(2);
   });
 
-  it("shows background run history without requesting telemetry", async () => {
+  it("renders newly durable steps from the watching socket when telemetry is unavailable", async () => {
+    api.getRun.mockResolvedValueOnce({ run: running, thread: null });
+    api.getTrace.mockRejectedValue(new Error("analytics unavailable"));
+    render(<RunDetailPage runId="r1" view="transcript" role="member" onNavigate={() => {}} />);
+    expect(await screen.findByText("Running")).toBeTruthy();
+    act(() => applyActivityRun({
+      type: "activity_run",
+      run: { ...running, status: "succeeded" },
+      counts: null,
+      steps: [{ kind: "assistant", detail: "The new durable response." }],
+    }));
+    expect(await screen.findByText("The new durable response.")).toBeTruthy();
+    expect(api.getRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads recorded telemetry for a background Run while preserving Thread navigation", async () => {
     api.getRun.mockResolvedValueOnce({
       run: {
         ...running,
@@ -97,10 +112,15 @@ describe("run page", () => {
       },
       thread: { chat_id: "c1", parent_chat_id: null },
     });
+    api.getTrace.mockResolvedValueOnce({
+      trace: traceFromRun(running),
+      spans: [span("s1", "Recorded model output.")],
+      children: [],
+    });
     const onNavigate = vi.fn();
     render(<RunDetailPage runId="r1" view="transcript" role="admin" onNavigate={onNavigate} onOpenChat={vi.fn()} />);
     expect(await screen.findByText("Saved memory.")).toBeTruthy();
-    expect(api.getTrace).not.toHaveBeenCalled();
+    expect(api.getTrace).toHaveBeenCalledWith("r1");
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Thread" }));
     expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c1" });

@@ -127,7 +127,7 @@ An Approval is answered once: the first answer wins under the Thread's lock. No 
 
 ## Coordinator authority
 
-The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. It has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
+The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. The coordinator creates, updates or deletes Routines only for direct requests in the active Turn from one Member who currently has manage access to the Agent. In ordinary Threads, creating a Routine or reminder and updating or deleting a Routine require the Thread owner to have current manage access. Coordinator-managed workers cannot change Routines. The coordinator has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
 
 A shared Agent defaults to Agent acting scope, using its explicit Integration grants, with read as the default grant. Member acting scope additionally intersects those grants with the originating Member's current audience. Personal Agents always act in personal scope. Shared Agents cannot call impersonating Integrations or inherit a Member's personal MCP connections. These restrictions also apply to App data functions and are checked at execution.
 
@@ -135,7 +135,7 @@ Coordinator-managed descendants and Routines run unattended. Static denies and g
 
 ## Activity and usage
 
-An admin reads the whole Org's usage, Runs, traces and Thread history, including internal Threads. A Member reads their own non-internal Activity. Run detail uses the saved Run record and the same Org and ownership rules as Thread history. Recorded traces provide optional telemetry. Raw model payloads are admin-only. An admin's personal Agent carries the same read as its `guild` tools; no other Agent has it, and no admin read is a write.
+An admin reads the whole Org's usage, Runs, traces and Thread history, including internal Threads. A Member reads their own non-internal Activity. Run detail uses the saved Run record and the same Org and ownership rules as Thread history. Recorded traces provide optional telemetry. Internal Runs keep their privacy classification after Thread removal, and their telemetry carries organization scope so retention or Agent purge cannot expose it to a Member. Raw model payloads are admin-only. An admin's personal Agent carries the same read as its `guild` tools; no other Agent has it, and no admin read is a write.
 
 ## Rejected
 

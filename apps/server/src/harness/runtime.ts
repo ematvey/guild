@@ -237,6 +237,8 @@ export class GuildRuntime {
   private readonly machineTargets: MachineTargets;
   private readonly hub?: MachineDispatchHost;
 
+  readonly routeSupportsImages: (orgId: string, model: string | null) => Promise<boolean>;
+
   constructor(deps: RuntimeDeps) {
     const { config, pool, log, stores, objects } = deps;
     this.config = config;
@@ -396,19 +398,20 @@ export class GuildRuntime {
       },
       this.registry,
     );
+    this.routeSupportsImages = async (orgId, model) => {
+      if (model === null) return false;
+      try {
+        const route = await stores.gatewayStore.resolveRoute(orgId, model, deps.masterKey());
+        return route.modalities.includes("image");
+      } catch {
+        return false;
+      }
+    };
     this.bridge = new ChatBridge({
       threads: stores.threads,
       chats: stores.chats,
       turnCommands: stores.turnCommands,
-      routeSupportsImages: async (orgId, model) => {
-        if (model === null) return false;
-        try {
-          const route = await stores.gatewayStore.resolveRoute(orgId, model, deps.masterKey());
-          return route.modalities.includes("image");
-        } catch {
-          return false;
-        }
-      },
+      routeSupportsImages: this.routeSupportsImages,
       ...(objects !== undefined ? { spill: { artifacts: stores.toolArtifacts, objects } } : {}),
       agentRuns: {
         postedMessage: (chatId, row) => this.agentRuns.postedMessage(chatId, row),

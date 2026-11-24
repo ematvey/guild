@@ -18,7 +18,11 @@ import type { ThreadStore } from "../platform/store/thread.js";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
 import { agentThreadForChat, agentWorkspaceSubpath, resolveConversationWorkspace } from "../agents/workspace.js";
 import type { AgentRunStore } from "../agents/store.js";
-import { addTurnAttachments, materializeTurnAttachments } from "../chats/attachment-materialize.js";
+import {
+  materializeTurnAttachments,
+  pruneTurnAttachments,
+  turnAttachmentDir,
+} from "../chats/attachment-materialize.js";
 import type { SkillRuntime } from "./skills.js";
 
 export interface ExecutorDeps {
@@ -29,7 +33,7 @@ export interface ExecutorDeps {
   readonly chats: Pick<ChatStore, "identityOf" | "ownerOf">;
   readonly threads: Pick<ThreadStore, "turnAttachmentIds">;
   readonly attachments: Pick<AttachmentStore, "byIds">;
-  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat"> };
+  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat" | "removableAttachmentRunIds"> };
   readonly objects?: ObjectStore;
   /** The conversation's chat id (null for unmapped conversations). */
   chatOfConversation(conversationId: number): Promise<string | null>;
@@ -42,9 +46,8 @@ export class ConversationExecutors {
   private readonly sandboxes: SandboxPool | null;
   /** Sandbox key → chat id, for the connect-time skill materialization. */
   private readonly sandboxChats = new Map<string, string>();
-  /** Chat → the run whose turn directory is materialized, and the
-   *  attachment ids already written there. */
-  private readonly materializedTurns = new Map<string, { runId: string; ids: Set<string> }>();
+  /** Chat → the current Run directory, its written IDs and pending writes. */
+  private readonly materializedTurns = new Map<string, { runId: string; ids: Set<string>; write: Promise<void> }>();
 
   constructor(private readonly deps: ExecutorDeps) {
     const { sandbox } = deps.config;
@@ -178,32 +181,39 @@ export class ConversationExecutors {
     }
   }
 
-  /** Writes the turn's attachments into the sandbox at
-   *  /tmp/attachments/<runId>/. The run's first tool call wipes the previous
-   *  turn's directory and writes the files of the inputs taken so far; every
-   *  later call adds the files of inputs placed since (a steer, a child
-   *  result), so a file never misses the turn that took it. */
+  /** Materializes only this Run's inputs. Concurrent tools wait for each
+   *  other's writes without blocking other Runs in the same sandbox. */
   private async materializeAttachmentsForTurn(chatId: string, orgId: string, env: ExecutionEnv): Promise<void> {
-    const objects = this.deps.objects;
-    if (objects === undefined || this.deps.config.sandbox.mode !== "runner") return;
-    const run = await this.deps.agents.runs.runningRunForChat(chatId).catch(() => null);
+    const { agents, objects, config, log } = this.deps;
+    if (objects === undefined || config.sandbox.mode !== "runner") return;
+    const run = await agents.runs.runningRunForChat(chatId).catch(() => null);
     if (run === null) return;
-    try {
-      const ids = await this.deps.threads.turnAttachmentIds(chatId, run.started_at ?? run.created_at);
-      const known = this.materializedTurns.get(chatId);
-      if (known !== undefined && known.runId === run.id) {
+    const previous = this.materializedTurns.get(chatId);
+    const known =
+      previous?.runId === run.id ? previous : { runId: run.id, ids: new Set<string>(), write: Promise.resolve() };
+    this.materializedTurns.set(chatId, known);
+    known.write = known.write
+      .then(async () => {
+        if (known.ids.size > 0) {
+          // Runner replacement can lose the directory while the Run is still active.
+          const dir = await env.fileInfo(turnAttachmentDir(run.id), BACKGROUND_CONTEXT);
+          if (!dir.ok || dir.value.kind !== "directory") known.ids.clear();
+        }
+        const ids = await this.deps.threads.turnAttachmentIds(chatId, run.started_at ?? run.created_at);
         const fresh = ids.filter((id) => !known.ids.has(id));
+        if (known !== previous || fresh.length > 0) {
+          await pruneTurnAttachments(env, BACKGROUND_CONTEXT, (ids, staleIds) =>
+            agents.runs.removableAttachmentRunIds(ids, staleIds),
+          ).catch((error) => log.warn({ err: error, chatId, runId: run.id }, "attachment cleanup failed"));
+        }
         if (fresh.length === 0) return;
         const rows = await this.deps.attachments.byIds(orgId, fresh);
-        await addTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
-        for (const id of fresh) known.ids.add(id);
-        return;
-      }
-      const rows = await this.deps.attachments.byIds(orgId, ids);
-      await materializeTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
-      this.materializedTurns.set(chatId, { runId: run.id, ids: new Set(ids) });
-    } catch (error) {
-      this.deps.log.warn({ err: error, chatId, runId: run.id }, "attachment materialization failed");
-    }
+        await materializeTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
+        for (const row of rows) known.ids.add(row.id);
+      })
+      .catch((error) => {
+        log.warn({ err: error, chatId, runId: run.id }, "attachment materialization failed");
+      });
+    await known.write;
   }
 }

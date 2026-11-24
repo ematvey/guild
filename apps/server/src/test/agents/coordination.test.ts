@@ -10,10 +10,14 @@ import { AgentCoordination, coordinationSettings, ensureCoordinationThread } fro
 import { expireReflectedInputContent } from "../../agents/store/coordination.js";
 import { runTraceRow } from "../../agents/store/run-finish.js";
 import { AgentStore } from "../../agents/store.js";
+import { createPlatformPool } from "../../platform/db.js";
+import { mediaRefOf } from "../../platform/media-ref.js";
+import { memberMessageOf } from "../../chats/member-message.js";
 import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { UserRow } from "../../platform/store/identity.js";
 import type { Agent, AgentThread } from "../../agents/types.js";
+import { coordinatorCompactionActivity } from "../../storage/postgres/queries.js";
 import { createAgentsTestEnv } from "./harness.js";
 
 const env = await createAgentsTestEnv();
@@ -26,7 +30,13 @@ suite("persistent coordination", () => {
   let agent: Agent;
   let alice: UserRow;
   let bob: UserRow;
-  const calls: { kind: string; chat: string; content: unknown }[] = [];
+  const calls: {
+    kind: string;
+    chat: string;
+    content: unknown;
+    images?: { mimeType: string; data: string }[];
+    message?: ReturnType<typeof memberMessageOf>;
+  }[] = [];
   let coordination: AgentCoordination;
 
   beforeAll(async () => {
@@ -48,15 +58,23 @@ suite("persistent coordination", () => {
       name: "Team assistant",
       model: "test",
       visibility: "org",
-      resources: { assistant: { enabled: true } },
+      resources: { assistant: { enabled: true, coordinator_model: "vision" } },
     });
     coordination = new AgentCoordination({
+      databaseUrl: env!.databaseUrl,
+      routeSupportsImages: async (_orgId, model) => model === "vision",
       pool: env!.db,
       store,
       log: pino({ level: "silent" }),
       runtime: {
         submitTurn: async (chat, _org, input) => {
-          calls.push({ kind: "wake", chat, content: input.content });
+          calls.push({
+            kind: "wake",
+            chat,
+            content: input.content,
+            images: input.images,
+            message: memberMessageOf(input.entry),
+          });
           return 1;
         },
         writeEntry: async (chat, entry) => {
@@ -74,13 +92,13 @@ suite("persistent coordination", () => {
 
   it("creates one internal coordinator but distinct member-facing inboxes", async () => {
     const [a, b] = await Promise.all([
-      ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator"),
-      ensureCoordinationThread(env!.db, store, agent, bob.id, "coordinator"),
+      ensureCoordinationThread(store, agent, alice.id, "coordinator"),
+      ensureCoordinationThread(store, agent, bob.id, "coordinator"),
     ]);
     expect(a.id).toBe(b.id);
     await expect(chats.getChat(agent.org_id, a.chat_id, alice)).rejects.toThrow();
-    const ia = await ensureCoordinationThread(env!.db, store, agent, alice.id, "inbox");
-    const ib = await ensureCoordinationThread(env!.db, store, agent, bob.id, "inbox");
+    const ia = await ensureCoordinationThread(store, agent, alice.id, "inbox");
+    const ib = await ensureCoordinationThread(store, agent, bob.id, "inbox");
     expect(ia.id).not.toBe(ib.id);
     const ordinary = await store.threads.createThread(agent.id, alice.id, "Assistant");
     const rows = await chats.listChats(agent.org_id, alice.id);
@@ -90,9 +108,35 @@ suite("persistent coordination", () => {
     await expect(chats.getChat(agent.org_id, ib.chat_id, alice)).rejects.toThrow();
   });
 
+  it("creates and reuses coordination threads with a single pool connection", async () => {
+    const pool = createPlatformPool(env!.databaseUrl, 1);
+    try {
+      const singleConnectionStore = new AgentStore({ pool, chats: new ChatStore(pool) });
+      const otherAgent = await store.create(alice, { name: "Single connection", model: "test" });
+      const [a, b] = await Promise.all([
+        ensureCoordinationThread(singleConnectionStore, otherAgent, alice.id, "coordinator"),
+        ensureCoordinationThread(singleConnectionStore, otherAgent, bob.id, "coordinator"),
+      ]);
+      expect(a.id).toBe(b.id);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("atomically captures inbox requests with source identity and wakes the same coordinator", async () => {
-    const inbox = await ensureCoordinationThread(env!.db, store, agent, bob.id, "inbox");
-    await threads.appendEvent(inbox.chat_id, { type: "user_message", attachments: [], content: "Check the project" });
+    const inbox = await ensureCoordinationThread(store, agent, bob.id, "inbox");
+    const attachment = {
+      id: randomUUID(),
+      filename: "diagram.png",
+      content_type: "image/png",
+      size_bytes: 128,
+      modality: "image" as const,
+    };
+    await threads.appendEvent(inbox.chat_id, {
+      type: "user_message",
+      attachments: [attachment],
+      content: "Check the project",
+    });
     const before = calls.length;
     await coordination.tick();
     expect(calls.length).toBeGreaterThan(before);
@@ -100,6 +144,8 @@ suite("persistent coordination", () => {
     expect(String(calls.at(-1)?.content)).toContain(bob.id);
     expect(String(calls.at(-1)?.content)).toContain("bob@example.test");
     expect(String(calls.at(-1)?.content)).toContain(inbox.id);
+    expect(calls.at(-1)?.images).toEqual([{ mimeType: "image/png", data: mediaRefOf("attachment", attachment.id) }]);
+    expect(calls.at(-1)?.message?.attachments).toEqual([attachment]);
     const n = calls.length;
     await coordination.tick();
     expect(calls.length).toBe(n);
@@ -114,7 +160,7 @@ suite("persistent coordination", () => {
   });
 
   it("keeps recent unsurfaced tasks in the private display index", async () => {
-    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     const tasks: AgentThread[] = [];
     for (let n = 0; n < 23; n++)
       tasks.push(
@@ -158,8 +204,8 @@ suite("persistent coordination", () => {
     expect((await readInput()).rows).toEqual([]);
   });
 
-  it("keeps the coordinator run summary out of the Activity trace mirror", async () => {
-    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+  it("keeps the coordinator chat identity in the Activity trace mirror", async () => {
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     expect(coordinator.type).toBe("user");
     const run = await store.runs.createRun({
       agent_id: agent.id,
@@ -169,10 +215,134 @@ suite("persistent coordination", () => {
       status: "succeeded",
       summary: "Internal coordination output",
     });
-    expect(await runTraceRow(env!.db, run.id)).toBeNull();
+    expect(await runTraceRow(env!.db, run.id)).toMatchObject({
+      id: run.id,
+      chat_id: coordinator.chat_id,
+      user_id: null,
+      summary: "Internal coordination output",
+    });
   });
 
-  it("preserves newer memory across equivalent paths and workspace shell calls", async () => {
+  it("runs reflection once across two maintenance passes using a one-slot pool", async () => {
+    const single = createPlatformPool(env!.databaseUrl, 1);
+    // A regression fails quickly rather than leaving the suite's cleanup waiting for the held client.
+    single.options.connectionTimeoutMillis = 1000;
+    try {
+      const ownerStore = new AgentStore({ pool: single, chats: new ChatStore(single) });
+      const reflectingAgent = await ownerStore.create(alice, {
+        name: "Reflecting assistant",
+        model: "test",
+        visibility: "org",
+        resources: { assistant: { enabled: true, reflection_events: 1 } },
+      });
+      await ensureCoordinationThread(ownerStore, reflectingAgent, alice.id, "coordinator");
+      await single.query(
+        `INSERT INTO agent_coordination_inputs(agent_id,user_id,content,delivered_at)
+         VALUES($1,$2,'Remember the decision',now())`,
+        [reflectingAgent.id, alice.id],
+      );
+      const reflectedChats: string[] = [];
+      const runPass = () =>
+        new AgentCoordination({
+          databaseUrl: env!.databaseUrl,
+          pool: single,
+          store: ownerStore,
+          routeSupportsImages: async () => false,
+          log: pino({ level: "silent" }),
+          runtime: {
+            submitTurn: async (chatId) => {
+              await single.query("SELECT 1");
+              reflectedChats.push(chatId);
+              return 1;
+            },
+            writeEntry: async () => {},
+            compactChat: async () => null,
+            stopChat: async () => {},
+          },
+        }).tick();
+
+      await Promise.all([runPass(), runPass()]);
+      expect(reflectedChats).toHaveLength(1);
+      const { rows } = await single.query(
+        "SELECT status FROM agent_runs WHERE agent_id=$1 AND summary='Memory reflection'",
+        [reflectingAgent.id],
+      );
+      expect(rows).toEqual([{ status: "queued" }]);
+
+      // A fresh owner reads the saved reservation and settles the completed batch.
+      await single.query("UPDATE agent_runs SET status='succeeded' WHERE agent_id=$1", [reflectingAgent.id]);
+      await runPass();
+      expect(reflectedChats).toHaveLength(1);
+      const settled = await single.query(
+        "SELECT reflected_at IS NOT NULL AS reflected FROM agent_coordination_inputs WHERE agent_id=$1",
+        [reflectingAgent.id],
+      );
+      expect(settled.rows).toEqual([{ reflected: true }]);
+    } finally {
+      await single.end();
+    }
+  });
+
+  it("counts placed inputs until an applied compaction covers them", async () => {
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
+    const conversationId = 10_000;
+    await env!.db.query("INSERT INTO chat_conversations(chat_id,conversation_id) VALUES($1,$2)", [
+      coordinator.chat_id,
+      conversationId,
+    ]);
+    try {
+      // Include a worker result, whose durable submission is keyed by its run ID.
+      for (const [status, entry, kind] of [
+        ["done", 10_001, "request"],
+        ["placed", 10_003, "worker_result"],
+        ["queued", null, "observation"],
+      ] as const) {
+        const inputId = randomUUID();
+        const eventId = randomUUID();
+        await env!.db.query(
+          `INSERT INTO agent_coordination_inputs(id,agent_id,user_id,source_event_id,kind,delivered_at)
+           VALUES($1,$2,$3,$4,$5,now())`,
+          [inputId, agent.id, alice.id, eventId, kind],
+        );
+        await env!.db.query(
+          "INSERT INTO submissions(id,conversation_id,request_id,status,record) VALUES($1,$2,$3,$4,$5)",
+          [
+            entry ?? 10_005,
+            conversationId,
+            JSON.stringify(kind === "worker_result" ? eventId : inputId),
+            status,
+            JSON.stringify({ entry }),
+          ],
+        );
+      }
+      const read = () => coordinatorCompactionActivity(env!.db, coordinator.chat_id);
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: true });
+
+      // A terminal attempt with no applied summary preserves eligibility.
+      await env!.db.query(
+        `INSERT INTO tasks(id,conversation_id,kind,status,abort_requested,background,record)
+         VALUES(10006,$1,'"pi.compaction"','terminal',false,false,$2)`,
+        [conversationId, JSON.stringify({ endedAt: Date.now() })],
+      );
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: false });
+      await env!.db.query("UPDATE tasks SET record=$1 WHERE id=10006", [
+        JSON.stringify({ endedAt: Date.now() - 61_000 }),
+      ]);
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: true });
+
+      await env!.db.query(
+        `INSERT INTO entries(id,conversation_id,head,commit_seq,kind,record)
+         VALUES(10007,$1,10003,1,'pi.compaction',$2)`,
+        [conversationId, JSON.stringify({ model: [{ timestamp: Date.now(), content: "summary\u0000" }] })],
+      );
+      expect(await read()).toMatchObject({ remaining: 1 });
+      expect((await read()).age).toBeLessThan(10);
+    } finally {
+      await env!.db.query("DELETE FROM chat_conversations WHERE chat_id=$1", [coordinator.chat_id]);
+    }
+  });
+
+  it("runs workspace shell commands without a memory read and detects stale native writes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "guild-memory-"));
     const one = await store.threads.createThread(agent.id, alice.id, "Memory writer");
     const two = await store.threads.createThread(agent.id, bob.id, "Reflection writer");
@@ -188,7 +358,8 @@ suite("persistent coordination", () => {
             execute: async (args) => {
               const a = args as Record<string, string>;
               if (name === "write") await writeFile(path.join(root, "MEMORY.md"), a["content"]!);
-              if (name === "bash") await writeFile(path.join(root, "MEMORY.md"), "shell revision");
+              if (name === "bash" && a["command"] === "update memory")
+                await writeFile(path.join(root, "MEMORY.md"), "shell revision");
               return { output: [{ type: "text", text: await readFile(path.join(root, "MEMORY.md"), "utf8") }] };
             },
           };
@@ -199,14 +370,13 @@ suite("persistent coordination", () => {
       b = tools(two.id);
     const run = (tool: ToolRegistration, args: Record<string, string>) => tool.execute(args, {} as never, {} as never);
     try {
+      expect((await run(b["bash"]!, { command: "pwd" })).isError).toBeFalsy();
       await run(a["read"]!, { path: "MEMORY.md" });
       await run(b["read"]!, { path: "./MEMORY.md" });
       await run(a["write"]!, { path: "/workspace/MEMORY.md", content: "newer" });
       expect((await run(b["write"]!, { path: "./MEMORY.md", content: "stale" })).isError).toBe(true);
-      expect((await run(b["bash"]!, { command: "update memory" })).isError).toBe(true);
       expect(await readFile(path.join(root, "MEMORY.md"), "utf8")).toBe("newer");
-      await run(b["read"]!, { path: "./MEMORY.md" });
-      await run(b["bash"]!, { command: "update memory" });
+      expect((await run(b["bash"]!, { command: "update memory" })).isError).toBeFalsy();
       expect((await run(a["write"]!, { path: "MEMORY.md", content: "stale native" })).isError).toBe(true);
       expect(await readFile(path.join(root, "MEMORY.md"), "utf8")).toBe("shell revision");
     } finally {

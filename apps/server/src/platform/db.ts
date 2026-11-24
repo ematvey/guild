@@ -27,6 +27,23 @@ export function createPlatformPool(databaseUrl: string, poolMax = 10, log?: Pick
   return pool;
 }
 
+/** A short-lived session for advisory locks that span calls into the pool. */
+export async function withPlatformSession<T>(
+  databaseUrl: string,
+  onError: (error: Error) => void,
+  fn: (session: pg.Client) => Promise<T>,
+): Promise<T> {
+  // The platform pool uses the same connection string, including its TLS options.
+  const session = new pg.Client({ connectionString: databaseUrl });
+  session.on("error", onError);
+  try {
+    await session.connect();
+    return await fn(session);
+  } finally {
+    await session.end().catch(onError);
+  }
+}
+
 /** Runs `fn` inside one transaction on a dedicated pooled client: COMMIT
  *  when it resolves, ROLLBACK (best effort; the original error wins) when it
  *  throws. */

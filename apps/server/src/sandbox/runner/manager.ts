@@ -48,6 +48,14 @@ interface Usage {
 
 const NAME_PATTERN = /^guild-sbx-[A-Za-z0-9_.-]+-[0-9a-f]{20}$/;
 
+/** Only the unpartitioned personal Agent target stays on when idle. */
+function alwaysOnAgentSandbox(labels: ContainerSummary["Labels"]): boolean {
+  const subpath = labels?.[`${LABEL}.subpath`] ?? "";
+  if (!isAgentSubpath(subpath)) return false;
+  const [, orgId, agentId] = subpath.split("/");
+  return labels?.[`${LABEL}.key`] === `agent:${orgId}:${agentId}`;
+}
+
 export class SandboxManager {
   private readonly usage = new Map<string, Usage>();
   private reaper: NodeJS.Timeout | null = null;
@@ -253,7 +261,7 @@ export class SandboxManager {
     let excess = running.length - this.config.maxRunning + 1;
     if (excess <= 0) return;
     const idle = running
-      .filter((c) => !isAgentSubpath(c.Labels?.[`${LABEL}.subpath`] ?? ""))
+      .filter((c) => !alwaysOnAgentSandbox(c.Labels))
       .map((c) => ({ name: c.Names[0]!.replace(/^\//, ""), usage: this.usage.get(c.Names[0]!.replace(/^\//, "")) }))
       .filter((c) => c.name !== except && (c.usage?.attached ?? 0) === 0)
       .sort((a, b) => (a.usage?.lastUsed ?? 0) - (b.usage?.lastUsed ?? 0));
@@ -393,11 +401,11 @@ export class SandboxManager {
   }
 
   /** Stops sandboxes idle past idleStopMs, removes those stopped and idle
-   *  past idleRemoveMs. Agent sandboxes are always-on: never reaped. */
+   *  past idleRemoveMs. Personal Agent sandboxes stay on. */
   async reap(now = Date.now()): Promise<void> {
     for (const c of await this.list()) {
       const name = c.Names[0]!.replace(/^\//, "");
-      if (isAgentSubpath(c.Labels?.[`${LABEL}.subpath`] ?? "")) continue;
+      if (alwaysOnAgentSandbox(c.Labels)) continue;
       const usage = this.usage.get(name) ?? this.touch(name);
       if (usage.attached > 0) continue;
       const idle = now - usage.lastUsed;

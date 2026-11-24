@@ -7,6 +7,7 @@ import { attachmentObjectKey, type AttachmentRow } from "../platform/store/attac
 import type { ObjectStore } from "../platform/s3.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import { isTextual, modalityOf } from "../platform/domain/mime.js";
+import { mediaRefOf } from "../platform/media-ref.js";
 
 /** Loaded attachment bytes for the current turn, wire-ready: base64 plus
  *  the content type (data URIs are derived at use time, gated by the
@@ -113,4 +114,21 @@ export async function loadMediaMap(
     }
   }
   return map;
+}
+
+/** The model-facing image parts of the arrival turn, gated by the route's
+ *  modalities. The part names its attachment; the bytes stay in object
+ *  storage and the model request resolves them (chats/media-ref.ts), so no
+ *  image rides the durable entry. */
+export function mediaPartsFor(
+  modalities: readonly string[],
+  chips: MessageAttachment[],
+): { images: { mimeType: string; data: string }[] } {
+  const images: { mimeType: string; data: string }[] = [];
+  if (!modalities.includes("image")) return { images };
+  for (const chip of chips) {
+    if (modalityOf(chip.content_type) !== "image") continue;
+    images.push({ mimeType: chip.content_type, data: mediaRefOf("attachment", chip.id) });
+  }
+  return { images };
 }

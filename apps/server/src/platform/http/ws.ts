@@ -467,6 +467,12 @@ async function driveSocket(
       if (current === null) return;
 
       if (message.type === "sync") {
+        if (machineId === null) {
+          sink.runView = message.run_id ?? null;
+          sink.runViewChat = null;
+          sink.activityConversation = message.activity_chat_id ?? null;
+          await chats.sockets.syncActivity(current, sink);
+        }
         if (message.chat_id === null) {
           // The socket displays no chat: no chat's view frames reach it.
           sink.view = null;

@@ -116,15 +116,15 @@ export async function cancelOpenRuns(
  *  trace mirror records it. */
 export async function runTraceRow(pool: PlatformPool, runId: string): Promise<Record<string, unknown> | null> {
   const res = await pool.query<Record<string, unknown>>(
-    `SELECT r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
+    `SELECT r.id, r.agent_id, CASE WHEN r.internal THEN NULL ELSE r.user_id END AS user_id,
+            r.thread_id, r.routine_id, r.parent_run_id,
             r.trigger, r.status, r.summary, r.error_message, r.tokens,
             r.started_at, r.finished_at, r.created_at,
             a.org_id, a.name AS agent_name, t.chat_id
      FROM agent_runs r
      JOIN agents a ON a.id = r.agent_id
      LEFT JOIN agent_threads t ON t.id = r.thread_id
-     LEFT JOIN chats c ON c.id = t.chat_id
-     WHERE r.id = $1 AND c.internal IS DISTINCT FROM true`,
+     WHERE r.id = $1`,
     [runId],
   );
   return res.rows[0] ?? null;
