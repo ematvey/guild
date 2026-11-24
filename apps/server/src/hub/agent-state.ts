@@ -58,7 +58,7 @@ export interface AgentStateDeps {
     readonly threads: Pick<AgentThreadStore, "displayThreads">;
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
-  readonly conversationHistory: Pick<ConversationHistoryStore, "detail" | "runCounts" | "threadOfRun">;
+  readonly conversationHistory: Pick<ConversationHistoryStore, "detail" | "runCounts" | "threadOfRun" | "watchedChatsOwnedBy">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   /** The Apps each member sees. */
   readonly apps: Pick<AppStore, "listVisible">;
@@ -326,20 +326,45 @@ export class AgentStateFeed {
   syncConversation(user: UserRow, sink: SocketSink, chatId: string, seed = true): Promise<void> {
     return this.chains.run(`activity-conversation:${chatId}`, "sync_activity_conversation", async () => {
       if (sink.activityConversation !== chatId) return;
-      const page = await this.ctx.conversationHistory.detail(user, chatId, { limit: ACTIVITY_CONVERSATION_PAGE });
-      if (page === null || sink.activityConversation !== chatId) return;
-      const frame = {
-        type: "activity_conversation",
-        detail: {
-          conversation: page.header,
-          related_threads: page.relatedThreads,
-          items: groupConversation(page.messages, page.runs, () => ({ call_count: 0, tool_count: 0 })),
-          has_more: page.hasMore,
+      const viewer = seed ? (await this.ctx.identity.getUsers([user.id]))[0] : user;
+      const page =
+        viewer === undefined || viewer.org_id !== user.org_id
+          ? null
+          : await this.ctx.conversationHistory.detail(viewer, chatId, { limit: ACTIVITY_CONVERSATION_PAGE });
+      if (sink.activityConversation !== chatId) return;
+      sendChanged(
+        sink,
+        "activity_conversation",
+        {
+          type: "activity_conversation",
+          chat_id: chatId,
+          detail: page === null ? null : {
+            conversation: page.header,
+            related_threads: page.relatedThreads,
+            items: groupConversation(page.messages, page.runs, () => ({ call_count: 0, tool_count: 0 })),
+            has_more: page.hasMore,
+          },
         },
-      } as const;
-      if (seed) sink.send(frame);
-      else sendChanged(sink, "activity_conversation", frame);
+        seed,
+      );
     });
+  }
+
+  async conversationProfilesChanged(orgId: string, userId: string): Promise<void> {
+    const chats = new Set<string>();
+    for (const viewerId of this.ctx.hub.memberUsersOfOrg(orgId)) {
+      for (const sink of this.ctx.hub.memberSinksOfUser(viewerId)) {
+        const chatId = sink.activityConversation;
+        if (typeof chatId !== "string") continue;
+        // A role change can affect what this member is allowed to watch.
+        if (viewerId === userId) this.conversationChanged(chatId);
+        else chats.add(chatId);
+      }
+    }
+    if (chats.size === 0) return;
+    for (const id of await this.ctx.conversationHistory.watchedChatsOwnedBy(orgId, userId, [...chats])) {
+      this.conversationChanged(id);
+    }
   }
 
   conversationChanged(chatId: string): void {

@@ -273,9 +273,9 @@ describe("agent and skill state frames", () => {
       const watch = JSON.stringify({ type: "sync", activity_chat_id: thread.chat_id });
       admin.send(watch);
       owner.send(watch);
-      const selected = (frame: Frame) =>
-        frame.type === "activity_conversation" &&
-        (frame.detail as { conversation: { id: string } }).conversation.id === thread.chat_id;
+      const watched = (frame: Frame) => frame.type === "activity_conversation" && frame.chat_id === thread.chat_id;
+      const selected = (frame: Frame) => watched(frame) && frame.detail !== null;
+      const forbidden = await waitFrame(owner, (frame) => watched(frame) && frame.detail === null);
       const seeded = await waitFrame(admin, selected);
       expect(seeded.detail).toMatchObject({ conversation: { internal: true, open_runs: 1 } });
 
@@ -344,6 +344,35 @@ describe("agent and skill state frames", () => {
       expect(afterReconnect.detail).toMatchObject({ conversation: { open_runs: 0, failed_runs: 1 } });
       expect(JSON.stringify(afterReconnect.detail)).toContain("A message committed while disconnected");
       expect(JSON.stringify(afterReconnect.detail)).toContain('"status":"failed"');
+      const original = await stack.env.app.platform.identity.getUser(stack.memberId);
+      try {
+        await stack.env.db.query("UPDATE users SET display_name=$2, email=$3 WHERE id=$1", [
+          stack.memberId,
+          "Conversation owner",
+          "conversation-owner@example.test",
+        ]);
+        const renamedOwner = await waitFrame(
+          reconnected,
+          (frame) =>
+            selected(frame) &&
+            (frame.detail as { conversation: { owner: { display_name: string } } }).conversation.owner.display_name ===
+              "Conversation owner",
+        );
+        expect(renamedOwner.detail).toMatchObject({
+          conversation: { owner: { email: "conversation-owner@example.test" } },
+        });
+      } finally {
+        await stack.env.db.query("UPDATE users SET display_name=$2, email=$3 WHERE id=$1", [
+          stack.memberId,
+          original.display_name,
+          original.email,
+        ]);
+      }
+      expect(textFrames(idleAdmin).some(watched)).toBe(false);
+
+      await stack.env.app.platform.agents.lifecycle.purgeById(stack.orgId, agentId);
+      const purged = await waitFrame(reconnected, (frame) => watched(frame) && frame.detail === null);
+      expect(purged).toEqual(forbidden);
     } finally {
       admin.end();
       owner.end();

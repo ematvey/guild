@@ -70,13 +70,13 @@ export function useActivityRunUpdates(listener: (frame: ActivityRunFrame, epoch:
 }
 
 type ActivityConversationFrame = Extract<ServerFrame, { type: "activity_conversation" }>;
-const conversationListeners = new Set<(detail: ActivityConversationFrame["detail"]) => void>();
+const conversationListeners = new Set<(frame: ActivityConversationFrame) => void>();
 
-export function applyActivityConversation({ detail }: ActivityConversationFrame): void {
-  for (const listener of conversationListeners) listener(detail);
+export function applyActivityConversation(frame: ActivityConversationFrame): void {
+  for (const listener of conversationListeners) listener(frame);
 }
 
-export function useActivityConversationUpdates(listener: (detail: ActivityConversationFrame["detail"]) => void): void {
+export function useActivityConversationUpdates(listener: (frame: ActivityConversationFrame) => void): void {
   useEffect(() => {
     conversationListeners.add(listener);
     return () => {

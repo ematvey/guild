@@ -127,6 +127,7 @@ describe("conversation page", () => {
     act(() =>
       applyActivityConversation({
         type: "activity_conversation",
+        chat_id: "c1",
         detail: {
           ...detail,
           items: [{ ...run, run: { ...run.run, status: "failed" } }, message],
@@ -170,6 +171,7 @@ describe("conversation page", () => {
     act(() =>
       applyActivityConversation({
         type: "activity_conversation",
+        chat_id: "c1",
         detail: { ...detail, items: [...detail.items, newer], has_more: true },
       }),
     );
@@ -185,17 +187,38 @@ describe("conversation page", () => {
     const onResync = vi.fn(() =>
       applyActivityConversation({
         type: "activity_conversation",
+        chat_id: "c1",
         detail: { ...detail, conversation: { ...detail.conversation, title: "Refreshed title" } },
       }),
     );
     render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} onResync={onResync} />);
     await screen.findByText("Quarterly numbers");
-    act(() => applyActivityConversation({ type: "activity_conversation", detail }));
+    act(() => applyActivityConversation({ type: "activity_conversation", chat_id: "c1", detail }));
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh thread" }));
     expect(onResync).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(api.getConversation).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Refreshed title")).toBeTruthy();
+    expect(screen.queryByText("Quarterly numbers")).toBeNull();
+  });
+
+  it("clears only the selected Conversation and ignores a late seed after it is unavailable", async () => {
+    let showSnapshot!: (value: ConversationDetail) => void;
+    api.getConversation.mockReturnValueOnce(
+      new Promise((resolve) => {
+        showSnapshot = resolve;
+      }),
+    );
+    render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} />);
+    const frame = { type: "activity_conversation", chat_id: "c1" } as const;
+
+    act(() => applyActivityConversation({ ...frame, detail }));
+    expect(screen.getByText("Quarterly numbers")).toBeTruthy();
+    act(() => applyActivityConversation({ ...frame, chat_id: "c2", detail: null }));
+    expect(screen.getByText("Quarterly numbers")).toBeTruthy();
+    act(() => applyActivityConversation({ ...frame, detail: null }));
+    await act(async () => showSnapshot(detail));
+    expect(screen.getByText("This conversation is unavailable.")).toBeTruthy();
     expect(screen.queryByText("Quarterly numbers")).toBeNull();
   });
 

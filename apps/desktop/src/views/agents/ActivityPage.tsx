@@ -7,7 +7,7 @@
 // filters ride the query, the open run is /runs/<id>, the conversation is
 // /chats/<id>.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -858,7 +858,7 @@ export function ConversationPage({
   onOpenChat?: (chatId: string) => void;
   onResync?: () => void;
 }) {
-  const [snapshot, setSnapshot] = useState<{ detail: ConversationSnapshot; socket: boolean } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ detail: ConversationSnapshot | null; socket: boolean } | null>(null);
   const [analytics, setAnalytics] = useState<ConversationDetail | null>(null);
   const [liveCallCounts, setLiveCallCounts] = useState<Record<string, { call_count?: number; tool_count?: number }>>(
     {},
@@ -867,6 +867,9 @@ export function ConversationPage({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const detail = snapshot?.detail ?? null;
+  const unavailable = snapshot?.socket === true && detail === null;
+  const unavailableRef = useRef(false);
+  const loadError = unavailable ? "This conversation is unavailable." : error;
   const refresh = () => {
     onResync?.();
     setTick((current) => current + 1);
@@ -885,9 +888,17 @@ export function ConversationPage({
     }));
   });
 
-  useActivityConversationUpdates((page) => {
-    if (page.conversation.id !== chatId) return;
-    setSnapshot((current) => ({ detail: mergeConversationPage(current?.detail ?? null, page), socket: true }));
+  useActivityConversationUpdates(({ chat_id: watchedId, detail: page }) => {
+    if (watchedId !== chatId) return;
+    unavailableRef.current = page === null;
+    if (page === null) {
+      setAnalytics(null);
+      setLiveCallCounts({});
+    }
+    setSnapshot((current) => ({
+      detail: page === null ? null : mergeConversationPage(current?.detail ?? null, page),
+      socket: true,
+    }));
     setError(null);
   });
 
@@ -896,7 +907,7 @@ export function ConversationPage({
     setError(null);
     void getConversation(chatId, { limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
-        if (!live) return;
+        if (!live || unavailableRef.current) return;
         setAnalytics(value);
         setSnapshot((current) =>
           current?.socket === true
@@ -925,8 +936,9 @@ export function ConversationPage({
     setLoadingOlder(true);
     void getConversation(chatId, { before: oldestSeq, limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
+        if (unavailableRef.current) return;
         setSnapshot((current) => {
-          if (current === null) return current;
+          if (current?.detail == null) return current;
           const keys = new Set(current.detail.items.map(conversationItemKey));
           const older = value.items.filter((item) => !keys.has(conversationItemKey(item)));
           // If reconnect moved the cursor beyond the requested page, leave
@@ -1055,8 +1067,8 @@ export function ConversationPage({
         }
       />
       <PageBody className="max-w-[80rem]">
-        {error !== null && detail === null && <ErrorState message={error} onRetry={refresh} />}
-        {error === null && detail === null && <InlineLoading label="Loading thread" />}
+        {loadError !== null && detail === null && <ErrorState message={loadError} onRetry={refresh} />}
+        {loadError === null && detail === null && <InlineLoading label="Loading thread" />}
         {detail !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">

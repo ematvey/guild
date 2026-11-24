@@ -396,6 +396,7 @@
   },
   {
     "type": "activity_conversation",
+    "chat_id": "018f0b7c-0000-7000-8000-000000000001",
     "detail": {
       "conversation": {
         "internal": true,
@@ -452,6 +453,7 @@
       "has_more": false
     }
   },
+  { "type": "activity_conversation", "chat_id": "018f0b7c-0000-7000-8000-000000000001", "detail": null },
   {
     "type": "agent_threads",
     "agent_id": "018f0b7c-0000-7000-8000-000000000041",

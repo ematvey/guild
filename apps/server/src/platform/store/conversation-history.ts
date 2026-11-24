@@ -302,6 +302,14 @@ export class ConversationHistoryStore {
     return row === undefined ? null : rowToConversation(row);
   }
 
+  async watchedChatsOwnedBy(orgId: string, ownerId: string, watchedIds: readonly string[]): Promise<string[]> {
+    const result = await this.pool.query<{ id: string }>(
+      "SELECT id FROM chats WHERE org_id=$1 AND user_id=$2 AND id=ANY($3::uuid[])",
+      [orgId, ownerId, watchedIds],
+    );
+    return result.rows.map(({ id }) => id);
+  }
+
   async runCounts(threadId: string): Promise<Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">> {
     const result = await this.pool.query<Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>(
       `${RUN_COUNTS} WHERE r.thread_id = $1`,
