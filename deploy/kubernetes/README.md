@@ -327,14 +327,16 @@ set `delegatesActingIdentity` and `delegatedConnectorSlug` on that internal
 target. Registry bundles are onboarded individually with their approved
 archive and settings.
 
-In gateway mode, Guild's integration settings show a read-only inventory of
-tools available to the signed-in admin. Legacy configuration and probe
-requests return `integration_managed_by_agentgateway`. The member inventory
-and tool execution APIs also use the gateway-backed configuration.
+A full gateway configuration shows the gateway inventory in Guild's
+integration settings. Selective cutover keeps the local inventory and
+credentials for unselected integrations editable. Changes to published
+connectors go through the inventory publisher.
 
 Run the server suite with `test-server.sh KUBECONFIG` after installing the
 server workspace dependencies and building the desktop web bundle. Set
 `GUILD_TEST_SUBSTRATE=1` to exercise the deployed Actor adapter in the
-sandbox integration suites. Test stacks create disposable Postgres
+sandbox integration suites. Set `GUILD_SANDBOX_IT_WORKSPACE_ROOT` to a host
+mount of the same JuiceFS root used by the cluster when running the
+host-side sandbox end-to-end test. Test stacks create disposable Postgres
 databases and S3 buckets. The script uses loopback forwards to the
 experiment cluster's services.
