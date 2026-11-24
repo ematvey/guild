@@ -39,12 +39,13 @@ try {
   if (result.rows.length !== 1) throw new Error("experiment admin not found");
   const [user] = result.rows;
   const [, token] = await new IdentityStore(pool).createSession(user.id);
-  process.stdout.write(JSON.stringify({ org: user.org_id, token }));
+  process.stdout.write(JSON.stringify({ org: user.org_id, member: user.id, token }));
 } finally {
   await pool.end();
 }
 JS
 org=$(jq -re .org "$work/session")
+member=$(jq -re .member "$work/session")
 jq -re .token "$work/session" > "$work/token"
 "${kube[@]}" exec -i deployment/guild -c server -- sh -c 'cat > "$1"' sh "$fixture" < fixtures/verify-mcp-turn.mjs
 "${kube[@]}" exec -i deployment/guild -c server -- env \
@@ -52,7 +53,7 @@ jq -re .token "$work/session" > "$work/token"
 ids="$(tail -n 1 "$work/turn")"
 chat=$(jq -re .chatId <<< "$ids")
 agent=$(jq -re .agentId <<< "$ids")
-actor=$(printf 'agent:%s:%s' "$org" "$agent" | sha256sum | cut -c1-32)
+actor=$(printf 'agent:%s:%s:member:%s' "$org" "$agent" "$member" | sha256sum | cut -c1-32)
 actor="guild-$actor"
 runtime_actor="guild-$(printf 'runtime:%s' "$chat" | sha256sum | cut -c1-32)"
 actor_state() {

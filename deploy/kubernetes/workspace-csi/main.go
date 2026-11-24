@@ -104,7 +104,8 @@ func workspaceDir(key string) (int, error) {
 			return -1, err
 		}
 		root = next
-		if i == len(parts)-1 {
+		// Guild also writes agent configuration through the shared JuiceFS mount.
+		if parts[0] == "agents" || i == len(parts)-1 {
 			if err := unix.Fchown(root, 1000, 1000); err != nil {
 				unix.Close(root)
 				return -1, err

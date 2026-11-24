@@ -4,7 +4,7 @@ const text = "guild-agentgateway-probe";
 const usage = { input_tokens: 7, output_tokens: 3 };
 const json = (value) => JSON.stringify(value);
 const postgresProbe = "const socket = require('node:net').connect(5432, 'postgres.guild-experiment.svc.cluster.local'); socket.on('connect', () => process.exit(1)); socket.on('error', blocked); socket.setTimeout(2000, blocked); function blocked() { socket.destroy(); console.log('gateway-postgres-blocked'); }";
-const workspaceShell = `cat gateway-probe.txt && printf ' gateway-shell-marker ' && node -e "${postgresProbe}"`;
+const workspaceShell = `printf gateway-workspace-marker > gateway-probe.txt && cat gateway-probe.txt && printf ' gateway-shell-marker ' && node -e "${postgresProbe}"`;
 const data = (value) => `data: ${json(value)}\n\n`;
 const event = (type, value) => `event: ${type}\ndata: ${json({ type, ...value })}\n\n`;
 
@@ -31,27 +31,36 @@ Bun.serve({
       const probe = typeof lastUser?.content === "string" && lastUser.content.includes("guild-experiment-mcp-turn");
       const workspaceProbe = probe && lastUser.content.includes("with-workspace");
       const googleProbe = probe && lastUser.content.includes("with-google");
-      const priorResult = body.messages.findLast((item) => item.role === "tool");
-      let responseChunks;
-      if (probe && !priorResult) {
-        const code = googleProbe
+      const results = body.messages.filter((item) => item.role === "tool");
+      const workspaceCalls = [
+        { name: "codemode", args: { code: 'return await tools.fixture_echo_allowed({text: "gateway-tool-result"});' } },
+        { name: "read", args: { path: "AGENTS.md" } },
+        { name: "bash", args: { command: workspaceShell } },
+        { name: "read", args: { path: "gateway-probe.txt" } },
+      ];
+      const fixtureCall = workspaceProbe ? workspaceCalls[results.length] : results.length === 0 ? {
+        name: "codemode",
+        args: { code: googleProbe
           ? 'const result = await tools.fixture_echo_allowed({text: "gateway-tool-result"}); await tools.google_workspace_drive_get_file({file_id:"fixture-file",path:"gateway-probe.bin"}); return result;'
-          : workspaceProbe
-          ? `const result = await tools.fixture_echo_allowed({text: "gateway-tool-result"}); await tools.write({path:"gateway-probe.txt",content:"gateway-workspace-marker"}); const file = await tools.read({path:"gateway-probe.txt"}); const shell = await tools.bash({command:${json(workspaceShell)}}); return {result,file,shell};`
-          : 'return await tools.fixture_echo_allowed({text: "gateway-tool-result"});';
-        if (!JSON.stringify(body.messages).includes("fixture")) {
+          : workspaceCalls[0].args.code },
+      } : undefined;
+      let responseChunks;
+      if (probe && fixtureCall) {
+        if (results.length === 0 && !JSON.stringify(body.messages).includes("fixture")) {
           return Response.json({ error: "MCP discovery missing from prompt" }, { status: 400 });
         }
         responseChunks = chunk({ role: "assistant", tool_calls: [{
-          index: 0, id: "call_fixture", type: "function", function: {
-            name: "codemode",
-            arguments: JSON.stringify({ code }),
+          index: 0, id: `call_fixture_${results.length}`, type: "function", function: {
+            name: fixtureCall.name,
+            arguments: json(fixtureCall.args),
           },
         }] }) + chunk({}, "tool_calls");
       } else {
-        const resultText = JSON.stringify(priorResult) ?? "";
+        const resultText = json(results[0]) ?? "";
+        const shellText = json(results[2]) ?? "";
+        const fileText = json(results[3]) ?? "";
         const content = probe && resultText.includes("gateway-tool-result") &&
-          (!workspaceProbe || (resultText.includes("gateway-workspace-marker") && resultText.includes("gateway-shell-marker") && resultText.includes("gateway-postgres-blocked")))
+          (!workspaceProbe || (fileText.includes("gateway-workspace-marker") && shellText.includes("gateway-shell-marker") && shellText.includes("gateway-postgres-blocked")))
           ? "verified-mcp-turn-finished"
           : text;
         responseChunks = chunk({ role: "assistant" }) + chunk({ content }) + chunk({}, "stop");
