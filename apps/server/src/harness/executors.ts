@@ -194,11 +194,6 @@ export class ConversationExecutors {
     this.materializedTurns.set(chatId, known);
     known.write = known.write
       .then(async () => {
-        if (known !== previous) {
-          await pruneTurnAttachments(env, BACKGROUND_CONTEXT, (ids, settledBefore) =>
-            agents.runs.removableAttachmentRunIds(ids, settledBefore),
-          ).catch((error) => log.warn({ err: error, chatId, runId: run.id }, "attachment cleanup failed"));
-        }
         if (known.ids.size > 0) {
           // Runner replacement can lose the directory while the Run is still active.
           const dir = await env.fileInfo(turnAttachmentDir(run.id), BACKGROUND_CONTEXT);
@@ -206,6 +201,11 @@ export class ConversationExecutors {
         }
         const ids = await this.deps.threads.turnAttachmentIds(chatId, run.started_at ?? run.created_at);
         const fresh = ids.filter((id) => !known.ids.has(id));
+        if (known !== previous || fresh.length > 0) {
+          await pruneTurnAttachments(env, BACKGROUND_CONTEXT, (ids, staleIds) =>
+            agents.runs.removableAttachmentRunIds(ids, staleIds),
+          ).catch((error) => log.warn({ err: error, chatId, runId: run.id }, "attachment cleanup failed"));
+        }
         if (fresh.length === 0) return;
         const rows = await this.deps.attachments.byIds(orgId, fresh);
         await materializeTurnAttachments({ env, objects, orgId, runId: run.id, rows, context: BACKGROUND_CONTEXT });
