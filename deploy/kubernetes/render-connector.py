@@ -1,6 +1,7 @@
 """Render one internal MCP service for a Guild connector implementation."""
 import argparse
 import hashlib
+import ipaddress
 import json
 import re
 import uuid
@@ -15,6 +16,7 @@ parser.add_argument("org", nargs="?", type=uuid.UUID)
 parser.add_argument("--tenant-isolated", action="store_true")
 parser.add_argument("--shared", action="store_true")
 parser.add_argument("--image", default="guild-k8s-server:experiment")
+parser.add_argument("--host-gateway-ip", type=ipaddress.ip_address)
 parser.add_argument("--issuer", default="https://guild-agent-experiment.invalid")
 parser.add_argument("--bundle-sha256")
 parser.add_argument("--bundle-version")
@@ -100,6 +102,8 @@ items = [
             "metadata": {"labels": labels},
             "spec": {
                 "automountServiceAccountToken": False,
+                **({"hostAliases": [{"ip": str(args.host_gateway_ip), "hostnames": ["host.docker.internal"]}]}
+                   if slug == "firecrawl" and args.host_gateway_ip else {}),
                 "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "fsGroup": 1000},
                 "containers": [{
                     "name": "mcp",

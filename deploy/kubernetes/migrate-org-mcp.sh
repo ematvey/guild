@@ -9,6 +9,9 @@ renderer_options=()
 if [[ "$context" == default ]]; then
   renderer_options+=(--image "${GUILD_MCP_CONNECTOR_IMAGE:?set the deployed Guild image reference}"
                     --issuer "${GUILD_AGENTGATEWAY_ISSUER:?set the Guild gateway token issuer}")
+  if [[ -n "${GUILD_MCP_HOST_GATEWAY_IP:-}" ]]; then
+    renderer_options+=(--host-gateway-ip "$GUILD_MCP_HOST_GATEWAY_IP")
+  fi
 fi
 kube=(kubectl --kubeconfig "$kubeconfig" --context "$context" -n guild-experiment)
 manifest_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

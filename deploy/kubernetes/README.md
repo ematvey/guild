@@ -281,7 +281,8 @@ Use it for custom API URLs, delegated connectors, and registry bundles.
 
 To publish on default dev, pass `--default-dev` to the importer with
 `GUILD_MCP_CONNECTOR_IMAGE` set to the installed Guild server image and
-`GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer.
+`GUILD_AGENTGATEWAY_ISSUER` set to the configured token issuer. Set `GUILD_MCP_HOST_GATEWAY_IP` when
+the Firecrawl connection uses the host-side Docker address.
 `verify-mcp-service-grants.sh` and `verify-shared-mcp-connector.sh` exercise the
 experiment gateway with temporary routes. Validate vendor and authorization
 parity for the actual org inventory before switching Guild's execution.
@@ -289,6 +290,7 @@ Feed `fixtures/verify-mcp-parity.mjs` to `bun -` inside Guild with
 `PROBE_MEMBER_ID` set to an intended caller. It compares the direct and
 published tools after Guild applies the member's scope, including input
 schemas, classes, traits, delegation, and approval settings. Set
+`PROBE_EXECUTE_READS=1` to run one read-only operation per target. Set
 `PROBE_BASELINE_ONLY=1` to measure the direct inventory before publishing.
 
 ### Registry code bundles
