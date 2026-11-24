@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guild-substrate
+  namespace: guild-experiment
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: guild-actor-router-probe
+  namespace: guild-experiment
+spec:
+  serviceAccountName: guild-substrate
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: guild-k8s-server:experiment
+      imagePullPolicy: Never
+      command: [sleep, "3600"]
+      volumeMounts:
+        - name: router-tls
+          mountPath: /run/ate-router
+          readOnly: true
+        - name: router-source
+          mountPath: /app/apps/server/actor-probe
+          readOnly: true
+  volumes:
+    - name: router-tls
+      projected:
+        sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential.pem
+          - clusterTrustBundle:
+              signerName: servicedns.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust.pem
+    - name: router-source
+      configMap:
+        name: guild-actor-router-probe

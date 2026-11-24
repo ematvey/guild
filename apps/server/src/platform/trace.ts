@@ -11,7 +11,7 @@
 // tables are TS-owned (idempotent DDL on first use).
 
 import { createHash } from "node:crypto";
-import { clickhouseDateTime64, type ClickhouseClient } from "./clickhouse.js";
+import { clickhouseDateTime, clickhouseDateTime64, type ClickhouseClient } from "./clickhouse.js";
 import { errorText } from "./usage.js";
 
 /** The zero uuid: "no parent" on a payload row and "no chain row yet". */
@@ -482,9 +482,10 @@ export class TraceStore {
   ): Promise<void> {
     try {
       await this.ensureOnce();
-      const ts = clickhouseDateTime64(new Date());
+      const now = new Date();
+      const ts = clickhouseDateTime64(now);
       const row: Record<string, unknown> = {
-        ts,
+        ts: clickhouseDateTime(now),
         request_id: requestId,
         org_id: orgId,
         kind,

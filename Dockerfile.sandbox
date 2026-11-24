@@ -41,7 +41,8 @@ RUN apt-get update \
        ripgrep jq python3-pip python3-venv python3-dev pkg-config libssl-dev \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=agent-deps /opt/guild /opt/guild
-COPY --from=build /app/apps/server/dist/sandbox/agent.js /app/apps/server/dist/sandbox/serve.js /app/apps/server/dist/sandbox/protocol.js /opt/guild/
+COPY --from=build /app/node_modules/ws /opt/guild/node_modules/ws
+COPY --from=build /app/apps/server/dist/sandbox/agent.js /app/apps/server/dist/sandbox/actor.js /app/apps/server/dist/sandbox/serve.js /app/apps/server/dist/sandbox/protocol.js /opt/guild/
 # protocol.js imports the text sanitizer by its server path; keep that path
 # under /opt so the agent resolves it.
 COPY --from=build /app/apps/server/dist/platform/domain/text.js /opt/platform/domain/text.js

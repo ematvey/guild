@@ -92,6 +92,10 @@ only what the repo cannot tell you.
   layout and spacing, not just text. `docs/type-scale.md` maps every role —
   prose, chrome, titles, metadata, dense data, micro labels — to a step and
   an icon size; a new element takes a role from that table.
+- **Integration icons use official brand assets.** Copy the icon from the
+  provider's brand kit, website, or official repository into the integration's
+  `logo.svg` and record the source URL in an SVG comment. When the provider
+  publishes no icon, use the existing generic fallback.
 - **No personal identifier in a document, a comment, a fixture or a test.**
   A person, a machine, a company or a host is a placeholder: `alice`/`bob`,
   `user@example.com`, `/home/user`, `C:\Users\alice`, `WORKSTATION-A`,

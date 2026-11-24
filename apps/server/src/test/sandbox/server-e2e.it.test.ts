@@ -15,8 +15,10 @@ import { waitFor } from "../support/wait.js";
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
 
-const toolCallSse = (name: string, args: string): string =>
-  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_sbx","type":"function","function":{"name":"' +
+const toolCallSse = (name: string, args: string, id = name): string =>
+  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_sbx_' +
+  id +
+  '","type":"function","function":{"name":"' +
   name +
   '","arguments":' +
   JSON.stringify(args) +
@@ -40,8 +42,10 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = (probe.address() as AddressInfo).port;
     await new Promise<void>((resolve) => probe.close(() => resolve()));
+    const workspace = process.env.GUILD_SANDBOX_IT_WORKSPACE_ROOT;
     stack = await setupGatewayStack(
       {
+        ...(workspace ? { GUILD_AGENT_WORKSPACE_ROOT: workspace, GUILD_AGENT_WORKSPACE_WRITE_ROOT: workspace } : {}),
         GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
         GUILD_DATA_DIR: mkdtempSync(path.join(tmpdir(), "guild-sbx-e2e-data-")),
         GUILD_SANDBOX_RUNNER_URL: URL_!,
@@ -71,7 +75,7 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
     await waitFor(
       async () => {
         const all = await events(chatId);
-        const result = all.find((e) => e.event["type"] === "tool_result");
+        const result = all.findLast((e) => e.event["type"] === "tool_result");
         const last = all[all.length - 1]?.event as { type?: string; blocks?: Array<{ type: string }> } | undefined;
         const settled = last?.type === "assistant_message" && (last.blocks?.some((b) => b.type === "text") ?? false);
         if (result !== undefined && settled) found = result.event as unknown as { content: string; is_error: boolean };
@@ -109,6 +113,7 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
           }),
         ),
       },
+      { body: toolCallSse("read", JSON.stringify({ path: "out.txt" }), "read-output") },
       { body: finalSse },
     ]);
     const submit = await stack.env.app.inject({
@@ -118,8 +123,13 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
       payload: { chat_id: chatId, model: "GLM-Test-Model", messages: [{ role: "user", content: "inspect" }] },
     });
     expect(submit.statusCode).toBe(200);
-    const result = await toolResult(chatId);
+    const file = await toolResult(chatId);
+    const results = (await events(chatId)).filter(({ event }) => event["type"] === "tool_result");
+    expect(results).toHaveLength(2);
+    const result = results[0]!.event as { content: string; is_error: boolean };
     expect(result.is_error, result.content).toBe(false);
+    expect(file.is_error, file.content).toBe(false);
+    expect(file.content).toContain("from-sandbox");
     expect(result.content).toMatch(/gvisor/);
     expect(result.content).toMatch(/^1000$/m);
     expect(result.content).toMatch(/^0$/m);

@@ -1,0 +1,187 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: guild-experiment
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: guild-experiment
+spec:
+  serviceName: postgres
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      initContainers:
+        - name: prepare-tls
+          image: postgres:17
+          command: [sh, -ec, 'install -o postgres -g postgres -m 0600 /tls-source/tls.key /tls/tls.key && install -m 0644 /tls-source/tls.crt /tls/tls.crt']
+          volumeMounts:
+            - {name: tls-source, mountPath: /tls-source, readOnly: true}
+            - {name: tls, mountPath: /tls}
+      containers:
+        - name: postgres
+          image: postgres:17
+          args: [postgres, -c, ssl=on, -c, ssl_cert_file=/tls/tls.crt, -c, ssl_key_file=/tls/tls.key]
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: guild
+            - name: POSTGRES_DB
+              value: guild
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: postgres-password
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, guild, -d, guild]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: tls-source
+          secret:
+            secretName: guild-postgres-tls
+        - name: tls
+          emptyDir: {medium: Memory}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: guild-experiment
+spec:
+  selector:
+    app: clickhouse
+  ports:
+    - port: 8123
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: guild-experiment
+spec:
+  serviceName: clickhouse
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.8
+          ports:
+            - containerPort: 8123
+          env:
+            - name: CLICKHOUSE_DB
+              value: guild
+            - name: CLICKHOUSE_USER
+              value: guild
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: clickhouse-password
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: guild-experiment
+spec:
+  selector:
+    app: rustfs
+  ports:
+    - port: 9000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+  namespace: guild-experiment
+spec:
+  serviceName: rustfs
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      containers:
+        - name: rustfs
+          image: rustfs/rustfs:1.0.3
+          args: [/data]
+          ports:
+            - containerPort: 9000
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: GUILDEXPERIMENT
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: rustfs-password
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "false"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 10Gi

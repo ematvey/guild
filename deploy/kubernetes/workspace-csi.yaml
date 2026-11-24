@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild-workspace-csi
+  namespace: guild-experiment
+spec:
+  selector:
+    app: guild-workspace-csi
+  ports:
+    - port: 50051
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guild-workspace-csi
+  namespace: guild-experiment
+spec:
+  podSelector:
+    matchLabels:
+      app: guild-workspace-csi
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ate-system
+          podSelector:
+            matchLabels:
+              app: ate-api-server
+      ports:
+        - port: 50051
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: guild-workspace-csi
+  namespace: guild-experiment
+spec:
+  selector:
+    matchLabels:
+      app: guild-workspace-csi
+  template:
+    metadata:
+      labels:
+        app: guild-workspace-csi
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: csi
+          image: guild-k8s-workspace-csi:experiment
+          imagePullPolicy: Never
+          securityContext:
+            privileged: true
+          ports:
+            - containerPort: 50051
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+          volumeMounts:
+            - name: workspaces
+              mountPath: /var/lib/guild-juicefs
+              mountPropagation: HostToContainer
+            - name: ate
+              mountPath: /var/lib/ate
+              mountPropagation: Bidirectional
+            - name: socket
+              mountPath: /var/lib/kubelet/plugins/workspace.csi.guild.dev
+      volumes:
+        - name: workspaces
+          hostPath:
+            path: /var/lib/guild-juicefs
+            type: DirectoryOrCreate
+        - name: ate
+          hostPath:
+            path: /var/lib/ate
+            type: Directory
+        - name: socket
+          hostPath:
+            path: /var/lib/kubelet/plugins/workspace.csi.guild.dev
+            type: DirectoryOrCreate
+---
+apiVersion: ate.dev/v1
+kind: CSIDriverConfig
+metadata:
+  name: workspace.csi.guild.dev
+spec:
+  driverName: workspace.csi.guild.dev
+  controllerEndpoint: tcp://guild-workspace-csi.guild-experiment.svc.cluster.local:50051

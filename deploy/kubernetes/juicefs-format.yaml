@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guild-juicefs-format
+  namespace: guild-experiment
+spec:
+  activeDeadlineSeconds: 180
+  backoffLimit: 3
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      initContainers:
+        - name: metadata
+          image: postgres:17
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: postgres-password
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              psql -v ON_ERROR_STOP=1 -h postgres -U guild -d postgres <<'SQL'
+              SELECT 'CREATE DATABASE guild_juicefs'
+              WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'guild_juicefs')\gexec
+              SQL
+      containers:
+        - name: format
+          image: juicedata/mount:ce-v1.3.1
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: postgres-password
+            - name: GUILD_JUICE_META_URL
+              value: postgres://guild:$(POSTGRES_PASSWORD)@postgres:5432/guild_juicefs?sslmode=disable
+            - name: GUILD_JUICE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: rustfs-password
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              if ! juicefs status "$GUILD_JUICE_META_URL" >/dev/null 2>&1; then
+                juicefs format --storage s3 --bucket http://rustfs:9000/guild-workspaces \
+                  --access-key GUILDEXPERIMENT --secret-key "$GUILD_JUICE_SECRET_KEY" \
+                  "$GUILD_JUICE_META_URL" guild-workspaces
+              fi
+              juicefs status "$GUILD_JUICE_META_URL" >/dev/null

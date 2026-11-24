@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guild-buckets
+  namespace: guild-experiment
+spec:
+  activeDeadlineSeconds: 180
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: create
+          image: amazon/aws-cli@sha256:d55d5b391f1cc0d428a05eb07408bb1a730d7df9f656008f1117ed5e13b0c083
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: GUILDEXPERIMENT
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: guild-data
+                  key: rustfs-password
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_ENDPOINT_URL
+              value: http://rustfs:9000
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              for bucket in guild guild-workspaces ate-snapshots; do
+                if ! aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+                  aws s3api create-bucket --bucket "$bucket"
+                fi
+                aws s3api head-bucket --bucket "$bucket"
+              done

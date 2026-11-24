@@ -139,7 +139,7 @@ export class PlatformContext implements PlatformStores {
   ) {
     this.secretsKey = masterKeyBytes(config.masterKeyHex);
     reportMalformedEventRows((error) => log.warn({ err: error }, "thread event row sent unnormalized"));
-    this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
+    this.pool = createPlatformPool(config.databaseUrl, config.poolMax, log);
     this.objects = new ObjectStore(config);
     const stores = createStores(this.pool);
     this.identity = stores.identity;

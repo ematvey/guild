@@ -1,0 +1,167 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guild-substrate
+  namespace: guild-experiment
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: guild-experiment-workspace-classes
+rules:
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: guild-experiment-workspace-classes
+subjects:
+  - kind: ServiceAccount
+    name: guild-substrate
+    namespace: guild-experiment
+roleRef:
+  kind: ClusterRole
+  name: guild-experiment-workspace-classes
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: guild-experiment-workspace-classes
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [storage.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [storageclasses]
+  matchConditions:
+    - name: guild-experiment-adapter
+      expression: request.userInfo.username == 'system:serviceaccount:guild-experiment:guild-substrate'
+  validations:
+    - expression: >-
+        object.metadata.name.matches('^guild-[0-9a-f]{32}$') &&
+        object.provisioner == 'workspace.csi.guild.dev' &&
+        has(object.reclaimPolicy) && object.reclaimPolicy == 'Retain' &&
+        has(object.parameters) && object.parameters.size() == 1 &&
+        'workspaceKey' in object.parameters
+      message: Guild may only create retained workspace StorageClasses for its CSI driver
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: guild-experiment-workspace-classes
+spec:
+  policyName: guild-experiment-workspace-classes
+  validationActions: [Deny]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild-substrate
+  namespace: guild-experiment
+spec:
+  selector:
+    app: guild-substrate
+  ports:
+    - {name: control, port: 8090}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guild-substrate
+  namespace: guild-experiment
+spec:
+  podSelector:
+    matchLabels:
+      app: guild-substrate
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: guild
+      ports:
+        - port: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guild-substrate
+  namespace: guild-experiment
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: guild-substrate
+  template:
+    metadata:
+      labels:
+        app: guild-substrate
+    spec:
+      serviceAccountName: guild-substrate
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: adapter
+          image: guild-k8s-substrate-adapter:experiment
+          imagePullPolicy: Never
+          env:
+            - name: GUILD_SANDBOX_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: guild-server
+                  key: GUILD_SANDBOX_RUNNER_TOKEN
+            - name: GUILD_ACTOR_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: guild-actor-image
+                  key: reference
+          ports:
+            - containerPort: 8090
+          readinessProbe:
+            tcpSocket:
+              port: 8090
+          volumeMounts:
+            - name: substrate
+              mountPath: /run/substrate
+              readOnly: true
+            - name: kube
+              mountPath: /run/kube
+              readOnly: true
+      volumes:
+        - name: substrate
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: api.ate-system.svc
+                  path: token
+              - podCertificate:
+                  signerName: podidentity.podcert.ate.dev/identity
+                  keyType: ECDSAP256
+                  credentialBundlePath: credential.pem
+              - clusterTrustBundle:
+                  signerName: servicedns.podcert.ate.dev/identity
+                  labelSelector:
+                    matchLabels:
+                      podcert.ate.dev/canarying: live
+                  path: trust.pem
+        - name: kube
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
