@@ -150,17 +150,29 @@ func (c controller) ensureStorage(ctx context.Context, name, path string) error 
 	}
 }
 
-func (c controller) ensure(ctx context.Context, name, path string) error {
-	legacyTemplate := resourceName(path + "\n" + c.image)
-	templateSpec := path + "\n" + c.image + "\npackage-home"
-	if c.snapshotLocation != "" {
-		templateSpec += "\n" + c.snapshotLocation
+func workspaceTemplateName(path, image, snapshotLocation string) string {
+	spec := path + "\n" + image + "\npackage-home"
+	if snapshotLocation != "" {
+		spec += "\n" + snapshotLocation
 	}
-	template := resourceName(templateSpec)
+	return resourceName(spec)
+}
+
+func (c controller) ensure(ctx context.Context, name, path string) error {
+	template := workspaceTemplateName(path, c.image, c.snapshotLocation)
 	existing, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
 	if err == nil {
-		if existing.GetActorTemplate().GetName() != template && existing.GetActorTemplate().GetName() != legacyTemplate {
-			return errors.New("existing Actor uses a different workspace template")
+		// Existing Actors keep their image and snapshot settings. Check the
+		// storage mapping before reusing an Actor from a previous rollout.
+		if existing.GetActorTemplate().GetName() != template &&
+			existing.GetActorTemplate().GetName() != resourceName(path+"\n"+c.image) {
+			previous, err := c.ate.GetActorTemplate(ctx, &ate.GetActorTemplateRequest{ActorTemplate: existing.GetActorTemplate()})
+			if err != nil {
+				return err
+			}
+			if !guildManagedActor(previous) || !usesWorkspace(previous, path) {
+				return errors.New("existing Actor uses a different workspace template")
+			}
 		}
 		if err := c.ensureEgress(ctx, name); err != nil {
 			return err
@@ -207,6 +219,24 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		return err
 	}
 	return c.ensureEgress(ctx, name)
+}
+
+func usesWorkspace(template *ate.ActorTemplate, path string) bool {
+	for _, volume := range template.GetVolumes() {
+		if volume.GetName() == "workspace" {
+			return volume.GetExternal().GetTemplate().GetStorageClassName() == resourceName(path)
+		}
+	}
+	return false
+}
+
+func (c controller) suspendIfNeeded(ctx context.Context, name string) error {
+	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	if err != nil || actor.GetStatus().GetState() == ate.ActorState_ACTOR_STATE_SUSPENDED {
+		return err
+	}
+	_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+	return err
 }
 
 func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {

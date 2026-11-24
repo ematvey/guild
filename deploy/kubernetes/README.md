@@ -108,7 +108,9 @@ and a short-lived workload certificate to open Actor tunnels. It assigns
 the Actor and workspace stable names derived from Guild's sandbox key
 and workspace path. The adapter suspends an Actor after its last sandbox
 connection closes and the idle interval elapses. An incoming connection
-wakes it through atenet.
+wakes it through atenet. An existing Actor keeps its image and snapshot
+settings so it can resume with its saved state. Newly created Actors use
+the adapter deployment’s image and snapshot settings.
 
 Install the workspace CSI bridge first, then publish the sandbox image and
 deploy the execution adapter. The atespace access policy grants the adapter
@@ -144,6 +146,9 @@ pool's worker pod. It checks both markers after resume.
 
 Run `verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN` to verify the
 default cluster's Guild, sandbox adapter and workspace mount.
-The probe writes to both workspace types, verifies that only the Guild
+The default deployment mounts plain-chat workspaces under `GUILD_DATA_DIR/chats`
+and Agent workspaces under `GUILD_AGENT_WORKSPACE_ROOT/agents`. The experiment
+manifests keep both sandbox workspace types in JuiceFS. The default probe
+writes to both workspace types, verifies that only the Guild
 pod gets a PostgreSQL protocol response, and exercises a GitHub integration read and
 persists an Assistant reply through the configured public origin. It uses a temporary session and chat.

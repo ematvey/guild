@@ -9,6 +9,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
 import { RunnerClient, type SandboxTarget } from "../../sandbox/client.js";
 import { SandboxExecutionEnv } from "../../sandbox/env.js";
+import { waitFor } from "../support/wait.js";
 
 const URL_ = process.env.GUILD_SANDBOX_IT_URL;
 const TOKEN = process.env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
@@ -250,8 +251,12 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       envs.push(e);
       expect((await sh(e, "echo persisted > stop-test.txt")).code).toBe(0);
       e.disconnect();
-      const stopped = await fetch(`${URL_}/v1/sandboxes/${a}/stop`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
-      expect(stopped.ok).toBe(true);
+      await waitFor(async () => {
+        const stopped = await fetch(`${URL_}/v1/sandboxes/${a}/stop`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } });
+        if (stopped.status === 409 && substrate) return false;
+        expect(stopped.ok).toBe(true);
+        return true;
+      }, 5_000, 100, "sandbox connection did not close before stop");
       expect((await sh(e, "cat stop-test.txt")).out.trim()).toBe("persisted");
       const { out } = await sh(e, "echo alive");
       expect(out.trim()).toBe("alive");
