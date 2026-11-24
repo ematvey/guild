@@ -57,6 +57,10 @@ async function check(key, subpath, path) {
     wire.close();
   }
 }
-await check(`agent:${org}:${id}`, `agents/${org}/${id}`, `${workspace}/agents/${org}/${id}`);
+const agentKey = `agent:${org}:${id}`;
+const agentSubpath = `agents/${org}/${id}`;
+for (const key of [agentKey, `${agentKey}:member:${crypto.randomUUID()}`, `${agentKey}:background`]) {
+  await check(key, agentSubpath, `${workspace}/${agentSubpath}`);
+}
 const plain = Date.now();
 await check(`chat:${org}:${plain}`, `chats/${org}/${plain}`, `${dataDir}/chats/${org}/${plain}`);
