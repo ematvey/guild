@@ -163,6 +163,13 @@ export function jsonErrors(api: string): JsonRequestErrors {
   };
 }
 
+/** A vendor HTTP rejection. The message may include the upstream body. */
+export class VendorHttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 /** One JSON request: the timeout and call signal, a bounded body read, and
  *  the vendor's wording for each failure. `emptyBody` is what an empty 2xx
  *  body parses as (absent: an empty body is bad json). */
@@ -185,7 +192,7 @@ export async function requestJson(
   } catch (error) {
     throw new Error(errors.unreadable(transportCause(error)));
   }
-  if (!res.ok) throw new Error(errors.status(res.status, body.text));
+  if (!res.ok) throw new VendorHttpError(res.status, errors.status(res.status, body.text));
   if (body.truncated) throw new Error(errors.unreadable(`body exceeds ${MAX_RESPONSE_BYTES} bytes`));
   if (body.text === "" && options.emptyBody !== undefined) return options.emptyBody;
   try {

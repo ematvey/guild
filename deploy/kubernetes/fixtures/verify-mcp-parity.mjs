@@ -85,7 +85,7 @@ try {
           }, AbortSignal.timeout(30000));
           return typeof outcome.content === "string" && outcome.content.length > 0 ? "success" : "empty result";
         } catch (error) {
-          const status = /(?:auth failed \(|returned )(\d{3})/.exec(String(error))?.[1];
+          const status = /(?:auth failed \(|returned |HTTP )(\d{3})/.exec(String(error))?.[1];
           return status ? `failed HTTP ${status}` : "failed";
         }
       }

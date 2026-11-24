@@ -107,8 +107,9 @@ describe("bounded vendor bodies", () => {
 
   it("requestJson keeps the vendor's wording for a status and parses a small body", async () => {
     await expect(requestJson(`${base}/ok`, {}, 5_000, jsonErrors("vendor"))).resolves.toEqual({ ok: true });
-    await expect(requestJson(`${base}/fail`, {}, 5_000, jsonErrors("vendor"))).rejects.toThrow(
-      "vendor returned 502: upstream exploded",
-    );
+    await expect(requestJson(`${base}/fail`, {}, 5_000, jsonErrors("vendor"))).rejects.toMatchObject({
+      status: 502,
+      message: "vendor returned 502: upstream exploded",
+    });
   });
 });

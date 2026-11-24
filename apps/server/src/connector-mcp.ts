@@ -6,7 +6,7 @@ import { loadCodePlugin } from "./integrations/code-plugins.js";
 import { delegatedIdentity } from "./integrations/connector-mcp-identity.js";
 import { builtinByName } from "./integrations/loader.js";
 import sharedVendors from "./integrations/shared-mcp-vendors.json" with { type: "json" };
-import { callSignals, type JsonObject } from "./integrations/shared.js";
+import { callSignals, VendorHttpError, type JsonObject } from "./integrations/shared.js";
 
 function object(value: unknown): JsonObject {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("expected an object");
@@ -123,8 +123,12 @@ app.post("/mcp", async (req, reply) => {
           content: [{ type: "text", text: outcome.content }],
           ...(Object.keys(structuredContent).length === 0 ? {} : { structuredContent }),
         });
-      } catch {
-        return result({ isError: true, content: [{ type: "text", text: "the integration request failed" }] });
+      } catch (error) {
+        const status = error instanceof VendorHttpError ? error.status : null;
+        const text = status === 401 ? "the integration credential was rejected (HTTP 401)"
+          : status === 403 ? "the integration credential lacks access (HTTP 403)"
+          : "the integration request failed";
+        return result({ isError: true, content: [{ type: "text", text }] });
       }
     }
     default:
