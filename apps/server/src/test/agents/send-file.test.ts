@@ -1,7 +1,7 @@
 // send_file snapshots a workspace file into object storage and turn end binds
 // the pending row to the assistant event. Turn attachment materialization
-// writes the bytes under /tmp/attachments/<runId>/, wipes the prior turn, and
-// adds the files of inputs placed later in the turn. A parent can fetch the
+// writes the bytes under /tmp/attachments/<runId>/, prunes finished Run
+// directories, and adds the files of inputs placed later in the turn. A parent can fetch the
 // files its child results carry.
 
 import { randomUUID } from "node:crypto";
@@ -20,7 +20,7 @@ import { AgentRunLifecycle } from "../../agents/lifecycle.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import { assistantMessageEvent } from "../../platform/domain/thread-events.js";
 import { sendFile } from "../../agents/send-file.js";
-import { addTurnAttachments, materializeTurnAttachments } from "../../chats/attachment-materialize.js";
+import { materializeTurnAttachments, pruneTurnAttachments } from "../../chats/attachment-materialize.js";
 import { createAgentsTestEnv } from "./harness.js";
 import type { HubTestEnv } from "../support/hub-env.js";
 
@@ -181,45 +181,61 @@ dbDescribe("agent send_file and turn attachments", () => {
     );
   });
 
-  it("materializes a turn's files and wipes the previous turn directory", async () => {
+  it("keeps parallel Run caches and reclaims a finished Run after executor restart", async () => {
     const base = path.join(root, "materialized");
-    const turnEnv = new NodeExecutionEnv({ cwd: path.join(root, "workspace") });
-    const id = randomUUID();
-    const key = attachmentObjectKey(orgId, id, "report.txt");
-    objects.gets.set(key, Buffer.from("turn one\n"));
-    const row = {
-      id,
-      org_id: orgId,
-      chat_id: randomUUID(),
-      filename: "report.txt",
-      content_type: "text/plain",
-      size_bytes: 9,
-      created_at: new Date().toISOString(),
+    const sandbox = new NodeExecutionEnv({ cwd: path.join(root, "workspace") });
+    const running = async (title: string) => {
+      const thread = await store.threads.createThread(agent.id, owner.id, title);
+      return store.runs.createRun({
+        agent_id: agent.id,
+        thread_id: thread.id,
+        trigger: "message",
+        status: "running",
+      });
     };
-    const first = await materializeTurnAttachments({
-      env: turnEnv,
-      objects,
-      orgId,
-      runId: "run-one",
-      rows: [row],
-      context: BACKGROUND_CONTEXT,
-      root: base,
-    });
-    expect(first).toBe(path.posix.join(base, "run-one"));
-    expect(await readFile(path.join(base, "run-one", "report.txt"), "utf8")).toBe("turn one\n");
+    const first = await running("First attachment Run");
+    const second = await running("Parallel attachment Run");
+    const row = (filename: string, content: string) => {
+      const id = randomUUID();
+      objects.gets.set(attachmentObjectKey(orgId, id, filename), Buffer.from(content));
+      return {
+        id,
+        org_id: orgId,
+        chat_id: randomUUID(),
+        filename,
+        content_type: "text/plain",
+        size_bytes: content.length,
+        created_at: new Date().toISOString(),
+      };
+    };
+    const write = (runId: string, rows: ReturnType<typeof row>[]) =>
+      materializeTurnAttachments({
+        env: sandbox,
+        objects,
+        orgId,
+        runId,
+        rows,
+        context: BACKGROUND_CONTEXT,
+        root: base,
+      });
+    await write(first.id, [row("report.txt", "first Run")]);
+    expect(await write(second.id, [])).toBeNull();
+    await write(second.id, [row("report.txt", "second Run")]);
 
-    const second = await materializeTurnAttachments({
-      env: turnEnv,
-      objects,
-      orgId,
-      runId: "run-two",
-      rows: [],
-      context: BACKGROUND_CONTEXT,
-      root: base,
-    });
-    expect(second).toBeNull();
-    expect(await stat(path.join(base, "run-one")).catch(() => null)).toBeNull();
-    expect(await stat(path.join(root, "workspace", "report.txt")).catch(() => null)).toBeNull();
+    const firstFile = path.join(base, first.id, "report.txt");
+    const secondFile = path.join(base, second.id, "report.txt");
+    const restartedSandbox = new NodeExecutionEnv({ cwd: sandbox.cwd });
+    const prune = () =>
+      pruneTurnAttachments(restartedSandbox, BACKGROUND_CONTEXT, (ids) => store.runs.finishedRunIds(ids), base);
+    await prune();
+    expect(await readFile(firstFile, "utf8")).toBe("first Run");
+    expect(await readFile(secondFile, "utf8")).toBe("second Run");
+
+    await store.runs.updateRun(first.id, { status: "succeeded", finished_at: new Date().toISOString() });
+    await prune();
+    await expect(stat(firstFile)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(secondFile, "utf8")).toBe("second Run");
+    await expect(stat(path.join(sandbox.cwd, "report.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("lists the files of every input a run took, including ones placed mid-run", async () => {
@@ -294,7 +310,7 @@ dbDescribe("agent send_file and turn attachments", () => {
     };
     const args = { env: turnEnv, objects, orgId, runId: "run-a", context: BACKGROUND_CONTEXT, root: base };
     await materializeTurnAttachments({ ...args, rows: [row("first.txt", "one")] });
-    await addTurnAttachments({ ...args, rows: [row("later.txt", "two")] });
+    await materializeTurnAttachments({ ...args, rows: [row("later.txt", "two")] });
     expect(await readFile(path.join(base, "run-a", "first.txt"), "utf8")).toBe("one");
     expect(await readFile(path.join(base, "run-a", "later.txt"), "utf8")).toBe("two");
   });
