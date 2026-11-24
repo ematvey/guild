@@ -218,7 +218,7 @@ suite("persistent coordination", () => {
   });
 
   it("counts placed inputs until an applied compaction covers them", async () => {
-    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     const conversationId = 10_000;
     await env!.db.query("INSERT INTO chat_conversations(chat_id,conversation_id) VALUES($1,$2)", [
       coordinator.chat_id,
