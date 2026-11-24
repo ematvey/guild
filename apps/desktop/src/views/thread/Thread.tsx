@@ -758,6 +758,7 @@ function ThreadView(props: ThreadProps) {
           viewer={{ email, displayName, role }}
           pushRoute={pushRoute}
           onOpenChat={openChat}
+          onRefreshConversation={() => socketRef.current?.resync()}
         />
       </RoutePage>
     ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (

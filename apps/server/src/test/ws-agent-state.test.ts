@@ -289,8 +289,43 @@ describe("agent and skill state frames", () => {
         (frame) => selected(frame) && JSON.stringify(frame.detail).includes("A saved background message"),
       );
       expect(changed.detail).toMatchObject({
-        items: expect.arrayContaining([expect.objectContaining({ kind: "message", text: "A saved background message" })]),
+        items: expect.arrayContaining([
+          expect.objectContaining({ kind: "message", text: "A saved background message" }),
+        ]),
       });
+      await owner.pingBarrier();
+      await idleAdmin.pingBarrier();
+      expect(textFrames(owner).some(selected)).toBe(false);
+      expect(textFrames(idleAdmin).some(selected)).toBe(false);
+
+      const child = await stack.env.app.platform.agents.threads.createChildThread(
+        thread.id,
+        agentId,
+        stack.memberId,
+        "A related task",
+      );
+      const relation = await waitFrame(
+        admin,
+        (frame) =>
+          selected(frame) &&
+          (frame.detail as { related_threads: { id: string }[] }).related_threads.some(
+            ({ id }) => id === child.chat_id,
+          ),
+      );
+      expect(relation.detail).toMatchObject({ related_threads: [{ id: child.chat_id, title: "A related task" }] });
+
+      await stack.env.db.query("UPDATE chats SET title=$2, archived_at=now() WHERE id=$1", [
+        thread.chat_id,
+        "Renamed background conversation",
+      ]);
+      const metadata = await waitFrame(
+        admin,
+        (frame) =>
+          selected(frame) &&
+          (frame.detail as { conversation: { title: string } }).conversation.title ===
+            "Renamed background conversation",
+      );
+      expect(metadata.detail).toMatchObject({ conversation: { archived: true } });
       await owner.pingBarrier();
       await idleAdmin.pingBarrier();
       expect(textFrames(owner).some(selected)).toBe(false);

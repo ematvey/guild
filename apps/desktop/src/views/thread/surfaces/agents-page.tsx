@@ -11,11 +11,13 @@ export function AgentsPage({
   viewer,
   pushRoute,
   onOpenChat,
+  onRefreshConversation,
 }: {
   route: AgentsRoute;
   viewer: { email: string; displayName?: string | null; role: string };
   pushRoute: PushRoute;
   onOpenChat: (chatId: string) => void;
+  onRefreshConversation: () => void;
 }) {
   const navigate = useCallback(
     (next: AgentsRoute, options?: { replace?: boolean }) =>
@@ -24,7 +26,13 @@ export function AgentsPage({
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
-      <AgentsPanel route={route} viewer={viewer} onNavigate={navigate} onOpenChat={onOpenChat} />
+      <AgentsPanel
+        route={route}
+        viewer={viewer}
+        onNavigate={navigate}
+        onOpenChat={onOpenChat}
+        onRefreshConversation={onRefreshConversation}
+      />
     </div>
   );
 }
