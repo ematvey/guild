@@ -215,6 +215,7 @@ export function coordinatorTools(deps: {
           prompt: String(args["prompt"]),
         });
       },
+      "unsafe",
     ),
     tool("list_routines", "List this Agent's scheduled worker work.", {}, [], async () => listRoutines(pool, agent.id)),
     tool(
