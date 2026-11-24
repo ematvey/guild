@@ -195,7 +195,7 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       expect(out).toContain("left-pad");
       // The home is a tmpfs: a user-level install does not outlive the container.
       expect(out).not.toContain("cowsay");
-      expect(out).toMatch(/No module named six/);
+      expect(out).toContain("No module named 'six'");
       env = fresh;
     }, 300_000);
   });
