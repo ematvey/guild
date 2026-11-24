@@ -261,6 +261,11 @@ The response contains the MCP URL and a bearer authorization valid for
 90 seconds. Use confidential transport for both requests.
 
 The import plan describes the org's complete published MCP inventory.
+Run `fixtures/plan-current-mcp-inventory.mjs` inside Guild with
+`PROBE_ORG_ID` to derive a draft from direct discovery, audiences, tool
+classes, and curation. It reads no credential values into the plan and
+grants no access to consuming services. The `memberTools` map records
+each member's precise tool subset.
 A target can name `services` with entries containing `id`, `tools`,
 and optional `delegatedMembers`. Service tools must be a subset of the
 target tools. Omit `delegatedMembers` for headless access. Personal,

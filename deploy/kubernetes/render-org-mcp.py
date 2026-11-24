@@ -137,7 +137,21 @@ for entry in entries:
     if not tools or not all(tool_name.fullmatch(tool) for tool in tools):
         raise SystemExit(f"an explicit MCP tool allowlist is required for {name!r}")
 
-    grants = [(member_check + chat_check, sorted(set(tools)))]
+    member_tools = entry.get("memberTools")
+    if member_tools is None:
+        grants = [(member_check + chat_check, sorted(set(tools)))]
+    else:
+        if members is None or not isinstance(member_tools, dict) or set(member_tools) != set(members):
+            raise SystemExit(f"memberTools must match the explicit member allowlist for {name!r}")
+        by_tools = {}
+        for member, allowed in member_tools.items():
+            if not isinstance(allowed, list) or not allowed or not all(isinstance(tool, str) and tool in tools for tool in allowed):
+                raise SystemExit(f"member tools must be a nonempty subset of target tools for {name!r}")
+            by_tools.setdefault(tuple(sorted(set(allowed))), []).append(member)
+        grants = [
+            (f'jwt.sub in {json.dumps(sorted(group))}{chat_check}', list(allowed))
+            for allowed, group in by_tools.items()
+        ]
     service_ids = set()
     for grant in entry.get("services", []):
         service = grant["id"]
@@ -154,6 +168,8 @@ for entry in entries:
             delegated = sorted({str(uuid.UUID(member)) for member in grant["delegatedMembers"]})
             if not delegated or (members is not None and not set(delegated).issubset(members)):
                 raise SystemExit(f"invalid delegated member grant for {name!r}")
+            if member_tools is not None and any(not set(service_tools).issubset(member_tools[member]) for member in delegated):
+                raise SystemExit(f"delegated service tools exceed member access for {name!r}")
             service_check += " && has(jwt.delegated_member) && jwt.delegated_member in " + json.dumps(delegated)
         else:
             if entry.get("delegatesActingIdentity") or entry.get("legacyEnvelopeProxy") or entry.get("personal"):

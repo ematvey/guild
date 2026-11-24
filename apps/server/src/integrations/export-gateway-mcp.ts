@@ -23,6 +23,7 @@ interface Selection {
   id: string;
   owner?: string;
   members?: string[];
+  memberTools?: Record<string, string[]>;
   chats?: string[];
   tools: string[];
   identityEnvelope?: boolean;
@@ -84,6 +85,7 @@ async function run() {
       }
       const targetPolicy = {
         ...(selection.chats === undefined ? {} : { chats: selection.chats }),
+        ...(selection.memberTools === undefined ? {} : { memberTools: selection.memberTools }),
         ...(selection.services === undefined ? {} : { services: selection.services }),
         ...(selection.source === "personal" ? { personal: true } : {}),
       };
