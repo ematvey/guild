@@ -13,8 +13,6 @@ import {
   expireReflectedInputContent,
   startReflection,
   resetReflection,
-  uncompactedInputs,
-  markCompacted,
 } from "./store/coordination.js";
 // One Agent's persistent coordination: durable attributed inputs, passive
 // observations, timed wakes and background memory/context maintenance.
@@ -28,6 +26,8 @@ import type { AgentStore } from "./store.js";
 import type { Agent, AgentThread } from "./types.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import type { Logger } from "pino";
+import { compactionInFlight } from "../chats/compaction.js";
+import { coordinatorCompactionActivity } from "../storage/postgres/queries.js";
 import { startThreadRun } from "./thread-run.js";
 
 export interface CoordinationSettings {
@@ -243,6 +243,9 @@ export class AgentCoordination {
     await initializeCoordinationState(pool, []);
     const agents = await listCoordinators<{ agent_id: string; chat_id: string }>(pool, []);
     for (const row of agents.rows) {
+      const agent = await store.fetchAgent(row.agent_id);
+      const settings = coordinationSettings(agent);
+      if (!settings.enabled || agent.status !== "active") continue;
       const lock = await pool.connect();
       const key = `coordination-maintenance:${row.agent_id}`;
       const held = (await lock.query<{ held: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)) AS held", [key]))
@@ -252,15 +255,11 @@ export class AgentCoordination {
         continue;
       }
       try {
-        const agent = await store.fetchAgent(row.agent_id);
-        const settings = coordinationSettings(agent);
-        if (!settings.enabled || agent.status !== "active") continue;
         const state = (
           await readCoordinationState<{
             reflection_thread_id: string | null;
             reflection_inputs: string[];
             reflection_age: number;
-            compaction_age: number;
           }>(lock, [agent.id])
         ).rows[0]!;
         let active = false;
@@ -316,13 +315,13 @@ export class AgentCoordination {
             this.deps.log.warn({ err: error, agentId: agent.id }, "reflection deferred");
           }
         }
-        const fresh = Number((await uncompactedInputs<{ n: string }>(lock, [agent.id])).rows[0]?.n ?? 0);
+        const { remaining, age, retryReady } = await coordinatorCompactionActivity(lock, row.chat_id);
         if (
-          fresh >= settings.compaction_events ||
-          (fresh >= 10 && state.compaction_age >= settings.compaction_seconds)
+          retryReady &&
+          (remaining >= settings.compaction_events || (remaining >= 10 && age >= settings.compaction_seconds)) &&
+          !(await compactionInFlight(lock, row.chat_id))
         ) {
           await runtime.compactChat(row.chat_id);
-          await markCompacted(lock, [agent.id]);
         }
       } finally {
         await lock.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);

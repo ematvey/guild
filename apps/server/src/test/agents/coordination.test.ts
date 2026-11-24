@@ -17,6 +17,7 @@ import { ChatStore } from "../../platform/store/chats.js";
 import { ThreadStore } from "../../platform/store/thread.js";
 import type { UserRow } from "../../platform/store/identity.js";
 import type { Agent, AgentThread } from "../../agents/types.js";
+import { coordinatorCompactionActivity } from "../../storage/postgres/queries.js";
 import { createAgentsTestEnv } from "./harness.js";
 
 const env = await createAgentsTestEnv();
@@ -214,6 +215,65 @@ suite("persistent coordination", () => {
       summary: "Internal coordination output",
     });
     expect(await runTraceRow(env!.db, run.id)).toBeNull();
+  });
+
+  it("counts placed inputs until an applied compaction covers them", async () => {
+    const coordinator = await ensureCoordinationThread(env!.db, store, agent, alice.id, "coordinator");
+    const conversationId = 10_000;
+    await env!.db.query("INSERT INTO chat_conversations(chat_id,conversation_id) VALUES($1,$2)", [
+      coordinator.chat_id,
+      conversationId,
+    ]);
+    try {
+      // Include a worker result, whose durable submission is keyed by its run ID.
+      for (const [status, entry, kind] of [
+        ["done", 10_001, "request"],
+        ["placed", 10_003, "worker_result"],
+        ["queued", null, "observation"],
+      ] as const) {
+        const inputId = randomUUID();
+        const eventId = randomUUID();
+        await env!.db.query(
+          `INSERT INTO agent_coordination_inputs(id,agent_id,user_id,source_event_id,kind,delivered_at)
+           VALUES($1,$2,$3,$4,$5,now())`,
+          [inputId, agent.id, alice.id, eventId, kind],
+        );
+        await env!.db.query(
+          "INSERT INTO submissions(id,conversation_id,request_id,status,record) VALUES($1,$2,$3,$4,$5)",
+          [
+            entry ?? 10_005,
+            conversationId,
+            JSON.stringify(kind === "worker_result" ? eventId : inputId),
+            status,
+            JSON.stringify({ entry }),
+          ],
+        );
+      }
+      const read = () => coordinatorCompactionActivity(env!.db, coordinator.chat_id);
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: true });
+
+      // A terminal attempt with no applied summary preserves eligibility.
+      await env!.db.query(
+        `INSERT INTO tasks(id,conversation_id,kind,status,abort_requested,background,record)
+         VALUES(10006,$1,'"pi.compaction"','terminal',false,false,$2)`,
+        [conversationId, JSON.stringify({ endedAt: Date.now() })],
+      );
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: false });
+      await env!.db.query("UPDATE tasks SET record=$1 WHERE id=10006", [
+        JSON.stringify({ endedAt: Date.now() - 61_000 }),
+      ]);
+      expect(await read()).toMatchObject({ remaining: 2, retryReady: true });
+
+      await env!.db.query(
+        `INSERT INTO entries(id,conversation_id,head,commit_seq,kind,record)
+         VALUES(10007,$1,10003,1,'pi.compaction',$2)`,
+        [conversationId, JSON.stringify({ model: [{ timestamp: Date.now(), content: "summary\u0000" }] })],
+      );
+      expect(await read()).toMatchObject({ remaining: 1 });
+      expect((await read()).age).toBeLessThan(10);
+    } finally {
+      await env!.db.query("DELETE FROM chat_conversations WHERE chat_id=$1", [coordinator.chat_id]);
+    }
   });
 
   it("preserves newer memory across equivalent paths and workspace shell calls", async () => {

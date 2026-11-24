@@ -91,8 +91,7 @@ export function listCoordinators<T extends QueryResultRow = QueryResultRow>(db: 
 export function readCoordinationState<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
     `SELECT reflection_thread_id,reflection_inputs,
-           extract(epoch FROM now()-reflection_started_at)::float AS reflection_age,
-           extract(epoch FROM now()-compacted_at)::float AS compaction_age
+           extract(epoch FROM now()-reflection_started_at)::float AS reflection_age
            FROM agent_coordination_state WHERE agent_id=$1`,
     values,
   );
@@ -144,18 +143,6 @@ export function resetReflection<T extends QueryResultRow = QueryResultRow>(db: D
     `UPDATE agent_coordination_state SET reflection_thread_id=NULL,reflection_inputs='{}' WHERE agent_id=$1`,
     values,
   );
-}
-
-export function uncompactedInputs<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
-  return db.query<T>(
-    `SELECT count(*)::text AS n FROM agent_coordination_inputs i
-          JOIN agent_coordination_state s ON s.agent_id=i.agent_id WHERE i.agent_id=$1 AND i.delivered_at>s.compacted_at`,
-    values,
-  );
-}
-
-export function markCompacted<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
-  return db.query<T>(`UPDATE agent_coordination_state SET compacted_at=now() WHERE agent_id=$1`, values);
 }
 
 export function readCoordinationSource<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
