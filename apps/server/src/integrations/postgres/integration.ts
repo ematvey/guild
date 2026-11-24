@@ -4,7 +4,7 @@ export default mcpIntegration({
   name: "postgres",
   title: "PostgreSQL",
   version: "1.0.0",
-  publisher: "Bytebase",
+  publisher: "Guild",
   summary: "Explore PostgreSQL schemas and run read-only SQL with DBHub.",
   description: "Connect to a DBHub MCP server configured for read-only PostgreSQL access. Use search_objects to inspect schemas and execute_sql to retrieve data.",
   docs_url: "https://github.com/bytebase/dbhub",
@@ -27,6 +27,6 @@ export default mcpIntegration({
   },
   tool_classes: {
     search_objects: "read",
-    execute_sql: "read",
+    execute_sql: "write",
   },
 });
