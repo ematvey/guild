@@ -25,10 +25,10 @@ import type {
   AgentRoutine as StoreRoutine,
   AgentRun as StoreRun,
 } from "../agents/types.js";
-import type { Agent, AgentRoutine, AgentRun } from "@guild/wire/rest";
+import { ACTIVITY_CONVERSATION_PAGE, type Agent, type AgentRoutine, type AgentRun } from "@guild/wire/rest";
 import type { OrgPayload } from "../platform/notify.js";
 import { canReadOwned, readsWholeOrg } from "../platform/domain/access.js";
-import type { ConversationHistoryStore } from "../platform/store/conversation-history.js";
+import { groupConversation, type ConversationHistoryStore } from "../platform/store/conversation-history.js";
 import type { IdentityStore } from "../platform/store/identity.js";
 import type { SkillStore } from "../platform/store/skills.js";
 import type { AppStore } from "../platform/store/apps.js";
@@ -58,7 +58,7 @@ export interface AgentStateDeps {
     readonly threads: Pick<AgentThreadStore, "displayThreads">;
   };
   readonly identity: Pick<IdentityStore, "getUsers">;
-  readonly conversationHistory: Pick<ConversationHistoryStore, "runCounts" | "threadOfRun">;
+  readonly conversationHistory: Pick<ConversationHistoryStore, "detail" | "runCounts" | "threadOfRun">;
   readonly skills: Pick<SkillStore, "catalog" | "installsForUsers">;
   /** The Apps each member sees. */
   readonly apps: Pick<AppStore, "listVisible">;
@@ -323,18 +323,73 @@ export class AgentStateFeed {
     });
   }
 
-  async committedRunSteps(chatId: string): Promise<void> {
-    const readers = this.ctx.hub.memberUsers().flatMap(({ userId, orgId }) =>
-      this.ctx.hub.memberSinksOfUser(userId).flatMap((sink) =>
-        sink.runViewChat === chatId && sink.runView !== null ? [{ userId, orgId, sink, runId: sink.runView }] : [],
-      ),
+  syncConversation(user: UserRow, sink: SocketSink, chatId: string, seed = true): Promise<void> {
+    return this.chains.run(`activity-conversation:${chatId}`, "sync_activity_conversation", async () => {
+      if (sink.activityConversation !== chatId) return;
+      const page = await this.ctx.conversationHistory.detail(user, chatId, { limit: ACTIVITY_CONVERSATION_PAGE });
+      if (page === null || sink.activityConversation !== chatId) return;
+      const frame = {
+        type: "activity_conversation",
+        detail: {
+          conversation: page.header,
+          related_threads: page.relatedThreads,
+          items: groupConversation(page.messages, page.runs, () => ({ call_count: 0, tool_count: 0 })),
+          has_more: page.hasMore,
+        },
+      } as const;
+      if (seed) sink.send(frame);
+      else sendChanged(sink, "activity_conversation", frame);
+    });
+  }
+
+  private conversationChanged(chatId: string): void {
+    this.coalesce(`activity-conversation:${chatId}`, () =>
+      this.chains.run(`activity-conversation-watchers:${chatId}`, "activity_conversation_changed", async () => {
+        const readers = this.ctx.hub.memberUsers().flatMap(({ userId, orgId }) =>
+          this.ctx.hub
+            .memberSinksOfUser(userId)
+            .filter((sink) => sink.activityConversation === chatId)
+            .map((sink) => ({ userId, orgId, sink })),
+        );
+        if (readers.length === 0) return;
+        const users = await this.ctx.identity.getUsers([...new Set(readers.map((reader) => reader.userId))]);
+        await Promise.all(
+          readers.map(({ userId, orgId, sink }) => {
+            const user = users.find((candidate) => candidate.id === userId && candidate.org_id === orgId);
+            return user === undefined ? undefined : this.syncConversation(user, sink, chatId, false);
+          }),
+        );
+      }),
     );
+  }
+
+  async committedActivity(chatId: string): Promise<void> {
+    const readers = this.ctx.hub
+      .memberUsers()
+      .flatMap(({ userId, orgId }) =>
+        this.ctx.hub
+          .memberSinksOfUser(userId)
+          .flatMap((sink) =>
+            sink.runViewChat === chatId && sink.runView !== null ? [{ userId, orgId, sink, runId: sink.runView }] : [],
+          ),
+      );
+    if (
+      this.ctx.hub
+        .memberUsers()
+        .some(({ userId }) =>
+          this.ctx.hub.memberSinksOfUser(userId).some((sink) => sink.activityConversation === chatId),
+        )
+    ) {
+      this.conversationChanged(chatId);
+    }
     if (readers.length === 0) return;
     const users = await this.ctx.identity.getUsers([...new Set(readers.map((reader) => reader.userId))]);
-    await Promise.all(readers.map(({ userId, orgId, sink, runId }) => {
-      const user = users.find((candidate) => candidate.id === userId && candidate.org_id === orgId);
-      return user === undefined ? undefined : this.syncRun(user, sink, runId, false);
-    }));
+    await Promise.all(
+      readers.map(({ userId, orgId, sink, runId }) => {
+        const user = users.find((candidate) => candidate.id === userId && candidate.org_id === orgId);
+        return user === undefined ? undefined : this.syncRun(user, sink, runId, false);
+      }),
+    );
   }
 
   private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {
@@ -368,6 +423,20 @@ export class AgentStateFeed {
       for (const sink of sinks) sink.send(frame);
       return sinks.filter((sink) => sink.runView === run.id);
     });
+    if (
+      run.thread_id !== null &&
+      members.some(({ id }) => this.ctx.hub.memberSinksOfUser(id).some((sink) => sink.activityConversation !== null))
+    ) {
+      const thread = await this.ctx.conversationHistory.threadOfRun(orgId, run.thread_id, true);
+      if (
+        thread !== null &&
+        members.some(({ id }) =>
+          this.ctx.hub.memberSinksOfUser(id).some((sink) => sink.activityConversation === thread.chat_id),
+        )
+      ) {
+        this.conversationChanged(thread.chat_id);
+      }
+    }
     if (detailSinks.length === 0) return;
     const steps = runStepsWire(await this.store.runs.runSteps(run));
     for (const sink of detailSinks) {

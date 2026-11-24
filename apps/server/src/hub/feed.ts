@@ -195,12 +195,13 @@ export class FeedForwarder implements GenerationStreamSink {
       void this.agentState.connect(orgId, userId);
       for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
         if (typeof sink.runViewChat === "string") runChats.add(sink.runViewChat);
+        if (typeof sink.activityConversation === "string") runChats.add(sink.activityConversation);
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
         this.subagentTree(sink.view);
       }
     }
-    for (const chatId of runChats) this.track("resync_activity_run", chatId, this.agentState.committedRunSteps(chatId));
+    for (const chatId of runChats) this.track("resync_activity", chatId, this.agentState.committedActivity(chatId));
   };
 
   // -- notify fan-in ------------------------------------------------------------
@@ -211,7 +212,7 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_thread_committed: (chatId) => {
       if (this.stopped) return;
       this.track("guild_thread_committed", chatId, this.committed(chatId));
-      this.track("guild_thread_committed", chatId, this.agentState.committedRunSteps(chatId));
+      this.track("guild_thread_committed", chatId, this.agentState.committedActivity(chatId));
     },
     guild_chat_status: (status) => {
       if (this.stopped) return;
@@ -316,8 +317,10 @@ export class FeedForwarder implements GenerationStreamSink {
     return this.agentState.connect(orgId, userId);
   }
 
-  syncRun(user: UserRow, sink: SocketSink, runId: string): Promise<void> {
-    return this.agentState.syncRun(user, sink, runId);
+  async syncActivity(user: UserRow, sink: SocketSink): Promise<void> {
+    if (sink.runView !== null) await this.agentState.syncRun(user, sink, sink.runView);
+    if (sink.activityConversation !== null)
+      await this.agentState.syncConversation(user, sink, sink.activityConversation);
   }
 
   /** One chat's thread subtree and header facts, pushed to its owner's

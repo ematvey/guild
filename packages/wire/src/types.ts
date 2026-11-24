@@ -13,6 +13,7 @@ import type {
   AttachableIntegration,
   AgentRoutine,
   AgentRun,
+  ConversationSnapshot,
   AgentRunStep,
   AgentThread,
   Chat,
@@ -196,6 +197,7 @@ export type ServerFrame =
       steps?: AgentRunStep[];
       counts: { runs: number; open_runs: number; failed_runs: number } | null;
     }
+  | { type: "activity_conversation"; detail: ConversationSnapshot }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
@@ -228,7 +230,7 @@ export interface ModelOption {
 /** Client → server. */
 export type ClientFrame =
   | { type: "ping" }
-  | { type: "sync"; chat_id?: string | null; run_id?: Uuid }
+  | { type: "sync"; chat_id?: string | null; run_id?: Uuid; activity_chat_id?: Uuid }
   | { type: "read"; chat_id: Uuid }
   | {
       type: "machine_response";

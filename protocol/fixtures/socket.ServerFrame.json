@@ -395,6 +395,64 @@
     }
   },
   {
+    "type": "activity_conversation",
+    "detail": {
+      "conversation": {
+        "internal": true,
+        "id": "018f0b7c-0000-7000-8000-000000000001",
+        "title": "Coordinator",
+        "owner": {
+          "id": "018f0b7c-0000-7000-8000-000000000002",
+          "email": "alice@example.com",
+          "display_name": "Alice"
+        },
+        "agent": { "id": "018f0b7c-0000-7000-8000-000000000041", "name": "Assistant" },
+        "thread": {
+          "id": "018f0b7c-0000-7000-8000-000000000051",
+          "chat_id": "018f0b7c-0000-7000-8000-000000000001",
+          "type": "user",
+          "parent_thread_id": null,
+          "parent_chat_id": null,
+          "parent_title": null
+        },
+        "created_at": "2026-11-02T09:00:00Z",
+        "last_activity_at": "2026-11-02T09:00:19Z",
+        "messages": 1,
+        "runs": 1,
+        "open_runs": 0,
+        "failed_runs": 0,
+        "archived": false,
+        "deleted": false
+      },
+      "related_threads": [],
+      "items": [
+        { "kind": "message", "ts": "2026-11-02T09:00:19Z", "seq": 1, "role": "assistant", "text": "Posted the morning digest." },
+        {
+          "kind": "run",
+          "ts": "2026-11-02T09:00:19Z",
+          "run": {
+            "id": "018f0b7c-0000-7000-8000-000000000061",
+            "agent_id": "018f0b7c-0000-7000-8000-000000000041",
+            "agent_name": "Assistant",
+            "trigger": "message",
+            "status": "succeeded",
+            "summary": "Posted the morning digest.",
+            "error_message": "",
+            "tokens": 200,
+            "started_at": "2026-11-02T09:00:00Z",
+            "finished_at": "2026-11-02T09:00:19Z"
+          },
+          "trigger": null,
+          "steps": 0,
+          "call_count": 0,
+          "tool_count": 0,
+          "reply": true
+        }
+      ],
+      "has_more": false
+    }
+  },
+  {
     "type": "agent_threads",
     "agent_id": "018f0b7c-0000-7000-8000-000000000041",
     "threads": [

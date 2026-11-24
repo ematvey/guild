@@ -5,6 +5,15 @@
 // that overlap the page and groups them into the items the reader renders:
 // a trigger message, the run it started, and the agent's reply.
 
+import type {
+  ConversationItem,
+  ConversationMessageRow,
+  ConversationRow,
+  ConversationRunRow,
+  ConversationThread,
+} from "@guild/wire/rest";
+import { canReadOwned, ownerScope, readsWholeOrg } from "../domain/access.js";
+import type { UserRow } from "./identity.js";
 import { threadEventText } from "../domain/thread-events.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
@@ -14,43 +23,7 @@ import { pgTimestampToRfc3339, utcText } from "../time.js";
 const MESSAGE_TYPES =
   "('user_message','assistant_message','system_message','turn_error','compaction','child_spawned','child_result','child_closed')";
 
-export interface ConversationOwner {
-  id: string;
-  email: string;
-  display_name: string | null;
-}
-
-export interface ConversationAgent {
-  id: string;
-  name: string;
-}
-
-export interface ConversationThread {
-  id: string;
-  /** The chat journal that holds the thread's transcript. */
-  chat_id: string;
-  type: string;
-  parent_thread_id: string | null;
-  parent_chat_id: string | null;
-  parent_title: string | null;
-}
-
-export interface ConversationRow {
-  internal: boolean;
-  id: string;
-  title: string | null;
-  owner: ConversationOwner;
-  agent: ConversationAgent | null;
-  thread: ConversationThread | null;
-  created_at: string;
-  last_activity_at: string;
-  messages: number;
-  runs: number;
-  open_runs: number;
-  failed_runs: number;
-  archived: boolean;
-  deleted: boolean;
-}
+export type { ConversationRow } from "@guild/wire/rest";
 
 const RUN_COUNTS = `SELECT count(*)::int AS runs,
   count(*) FILTER (WHERE r.status IN ('queued','running'))::int AS open_runs,
@@ -68,50 +41,6 @@ export interface ConversationFilters {
   query?: string;
   limit: number;
   offset: number;
-}
-
-export interface ConversationRunRow {
-  id: string;
-  agent_id: string;
-  agent_name: string;
-  trigger: string;
-  status: string;
-  summary: string;
-  error_message: string;
-  tokens: number;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface ConversationMessageRow {
-  seq: number;
-  role: "user" | "assistant" | "system" | "error" | "compaction";
-  text: string;
-  ts: string;
-}
-
-export interface ConversationRunItem {
-  kind: "run";
-  ts: string;
-  run: ConversationRunRow;
-  /** The user message that started the run, when the page holds it. */
-  trigger: string | null;
-  /** Model and tool calls in the run, from the trace store. */
-  steps: number;
-  call_count: number;
-  tool_count: number;
-  /** True when an assistant message inside the run window follows the row:
-   *  the reply renders there, so the row does not repeat it. */
-  reply: boolean;
-}
-
-export type ConversationItem = ({ kind: "message"; ts: string } & ConversationMessageRow) | ConversationRunItem;
-
-export interface ConversationDetail {
-  conversation: ConversationRow;
-  items: ConversationItem[];
-  /** True when an older page of messages exists. */
-  has_more: boolean;
 }
 
 const CLIP = 8_000;
@@ -383,13 +312,9 @@ export class ConversationHistoryStore {
 
   /** One page of a conversation's message events, oldest first, plus the
    *  runs that overlap the page. */
-  async detail(
-    orgId: string,
-    chatId: string,
-    opts: { beforeSeq?: number; limit: number; includeBackground?: boolean },
-  ): Promise<{ messages: ConversationMessageRow[]; runs: ConversationRunRow[]; hasMore: boolean } | null> {
-    const header = await this.header(orgId, chatId, opts.includeBackground);
-    if (header === null) return null;
+  async detail(user: UserRow, chatId: string, opts: { beforeSeq?: number; limit: number }) {
+    const header = await this.header(user.org_id, chatId, readsWholeOrg(user));
+    if (header === null || !canReadOwned(user, header.owner.id)) return null;
     const res = await this.pool.query<{
       seq: string;
       type: string;
@@ -420,7 +345,9 @@ export class ConversationHistoryStore {
        ORDER BY COALESCE(r.started_at, r.created_at) ASC, r.id ASC`,
       [chatId, oldest],
     );
-    return { messages, runs: runsRes.rows.map(rowToRun), hasMore };
+    const relatedThreads =
+      opts.beforeSeq === undefined ? await this.relatedThreads(user.org_id, chatId, ownerScope(user)) : [];
+    return { header, messages, runs: runsRes.rows.map(rowToRun), hasMore, relatedThreads };
   }
 
   async relatedThreads(orgId: string, chatId: string, owner: string | undefined) {

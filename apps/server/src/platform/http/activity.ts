@@ -240,18 +240,11 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
       throw ApiError.badRequest("before must be a nonnegative integer");
     }
-    const includeBackground = user.role === "admin";
-    const header = await infra.conversationHistory.header(user.org_id, id, includeBackground);
-    if (header === null || !canReadOwned(user, header.owner.id)) throw ApiError.notFound("no such conversation");
-    const detail = await infra.conversationHistory.detail(user.org_id, id, {
+    const detail = await infra.conversationHistory.detail(user, id, {
       ...(before === undefined ? {} : { beforeSeq: before }),
-      includeBackground,
       limit: limitOf(req),
     });
     if (detail === null) throw ApiError.notFound("no such conversation");
-    const relatedThreads = before === undefined
-      ? await infra.conversationHistory.relatedThreads(user.org_id, id, ownerScope(user))
-      : [];
     let counts = new Map<string, { call_count: number; tool_count: number }>();
     try {
       counts = await infra.trace.runCallCounts(
@@ -263,8 +256,8 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: IdentityCtx, i
     }
     const totals = await chatTotals(user.org_id, [id]);
     return JSON.stringify({
-      conversation: renderConversation(header, totals.get(id)),
-      related_threads: relatedThreads,
+      conversation: renderConversation(detail.header, totals.get(id)),
+      related_threads: detail.relatedThreads,
       items: groupConversation(
         detail.messages,
         detail.runs,

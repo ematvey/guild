@@ -76,6 +76,7 @@ export interface SocketHandlers {
   onIntegrationAccess?: (integrations: AttachableIntegration[]) => void;
   /** One run, created or changed. */
   onAgentRun?: (run: AgentRun) => void;
+  onActivityConversation?: (message: Extract<ServerFrame, { type: "activity_conversation" }>) => void;
   onActivityRun?: (message: Extract<ServerFrame, { type: "activity_run" }>) => void;
   /** The member's open threads with one agent. */
   onAgentThreads?: (agent_id: string, threads: AgentThread[]) => void;
@@ -200,6 +201,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     case "agent_run":
       handlers.onAgentRun?.(message.run);
       return;
+    case "activity_conversation":
+      handlers.onActivityConversation?.(message);
+      return;
     case "activity_run":
       handlers.onActivityRun?.(message);
       return;
@@ -253,6 +257,7 @@ export function startSocket(
   opts: SocketHandlers & {
     getOpenChatId: () => string | null;
     getOpenRunId?: () => string | null;
+    getOpenActivityChatId?: () => string | null;
     socketFactory?: SocketFactory;
   },
 ): { stop: () => void; resync: () => void; markRead: (chatId: string) => boolean } {
@@ -331,7 +336,15 @@ export function startSocket(
     const chatId = opts.getOpenChatId();
     traceEvent("socket.sync_sent", { attempt, chat: chatId ?? "-" });
     const runId = opts.getOpenRunId?.();
-    socket.send(serializeClientFrame({ type: "sync", chat_id: chatId, ...(runId == null ? {} : { run_id: runId }) }));
+    const activityChatId = opts.getOpenActivityChatId?.();
+    socket.send(
+      serializeClientFrame({
+        type: "sync",
+        chat_id: chatId,
+        ...(runId == null ? {} : { run_id: runId }),
+        ...(activityChatId == null ? {} : { activity_chat_id: activityChatId }),
+      }),
+    );
   };
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null || connecting) return;
