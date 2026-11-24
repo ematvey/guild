@@ -33,7 +33,7 @@ export interface ExecutorDeps {
   readonly chats: Pick<ChatStore, "identityOf" | "ownerOf">;
   readonly threads: Pick<ThreadStore, "turnAttachmentIds">;
   readonly attachments: Pick<AttachmentStore, "byIds">;
-  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat" | "finishedRunIds"> };
+  readonly agents: { readonly runs: Pick<AgentRunStore, "runningRunForChat" | "removableAttachmentRunIds"> };
   readonly objects?: ObjectStore;
   /** The conversation's chat id (null for unmapped conversations). */
   chatOfConversation(conversationId: number): Promise<string | null>;
@@ -195,9 +195,9 @@ export class ConversationExecutors {
     known.write = known.write
       .then(async () => {
         if (known !== previous) {
-          await pruneTurnAttachments(env, BACKGROUND_CONTEXT, (ids) => agents.runs.finishedRunIds(ids)).catch((error) =>
-            log.warn({ err: error, chatId, runId: run.id }, "attachment cleanup failed"),
-          );
+          await pruneTurnAttachments(env, BACKGROUND_CONTEXT, (ids, settledBefore) =>
+            agents.runs.removableAttachmentRunIds(ids, settledBefore),
+          ).catch((error) => log.warn({ err: error, chatId, runId: run.id }, "attachment cleanup failed"));
         }
         if (known.ids.size > 0) {
           // Runner replacement can lose the directory while the Run is still active.
