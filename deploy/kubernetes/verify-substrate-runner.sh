@@ -15,11 +15,13 @@ probe() {
     PROBE_PHASE="$1" PROBE_VALUE="$marker" bun - < "$manifest_dir/probe-substrate-runner.mjs"
 }
 
-name=""
 cleanup() {
-  if [[ -n "$name" ]]; then
-    "${ate[@]}" delete actor "$name" -a guild-experiment >/dev/null
+  local result=$?
+  if ! probe cleanup; then
+    printf 'Could not clean up the runner probe Actor or workspace marker\n' >&2
+    (( result != 0 )) || result=1
   fi
+  exit "$result"
 }
 trap cleanup EXIT
 name="$(probe write)"
