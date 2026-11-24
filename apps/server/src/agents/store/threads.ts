@@ -329,7 +329,7 @@ export class AgentThreadStore {
   }
 
   /** One of the caller's threads with this agent; 404 otherwise. */
-  async getThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {
+  async getThread(agentId: string, userId: string, threadId: string): Promise<ListedThread> {
     const thread = await this.findThread(agentId, userId, threadId);
     if (thread === null) throw ApiError.notFound("no such thread");
     return thread;
@@ -337,15 +337,17 @@ export class AgentThreadStore {
 
   /** One of the caller's threads with this agent; null for another agent's
    *  or another user's thread as for a missing one. */
-  async findThread(agentId: string, userId: string, threadId: string): Promise<AgentThread | null> {
+  async findThread(agentId: string, userId: string, threadId: string): Promise<ListedThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3
-         AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id=t.chat_id AND c.internal)`,
+      `SELECT ${THREAD_COLUMNS}, c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
+       FROM agent_threads t JOIN chats c ON c.id = t.chat_id
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3 AND NOT c.internal`,
       [agentId, userId, threadId],
     );
     const row = res.rows[0];
-    return row === undefined ? null : toThread(row);
+    return row === undefined
+      ? null
+      : { ...toThread(row), archived: Boolean(row.archived), deleted: Boolean(row.deleted) };
   }
 
   /** The newest thread of this agent and user with this title and origin
@@ -466,11 +468,13 @@ export class AgentThreadStore {
   }
 
   /** Renames a thread and locks the title against regeneration. */
-  async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
+  async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<ListedThread> {
     await withTransaction(this.pool, async (client) => {
       const res = await client.query<{ chat_id: string }>(
         `UPDATE agent_threads SET title = $4, title_locked = true
-         WHERE agent_id = $1 AND user_id = $2 AND id = $3 RETURNING chat_id`,
+         WHERE agent_id = $1 AND user_id = $2 AND id = $3
+           AND EXISTS (SELECT 1 FROM chats c WHERE c.id = agent_threads.chat_id AND NOT c.internal)
+         RETURNING chat_id`,
         [agentId, userId, threadId, title],
       );
       const row = res.rows[0];
