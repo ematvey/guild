@@ -21,12 +21,12 @@ import (
 )
 
 const (
-	atespace        = "guild-experiment"
 	workspaceDriver = "workspace.csi.guild.dev"
 	uuid            = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )
 
 var (
+	atespace    = "guild-experiment"
 	agentPath   = regexp.MustCompile("^agents/(" + uuid + ")/(" + uuid + ")$")
 	chatPath    = regexp.MustCompile("^chats/(" + uuid + ")/([0-9]+)$")
 	sessionPath = regexp.MustCompile("^workspaces/(" + uuid + ")/([A-Za-z0-9_-]{1,64})$")

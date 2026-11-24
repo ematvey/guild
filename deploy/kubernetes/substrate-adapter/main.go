@@ -405,6 +405,9 @@ func dialActor(ctx context.Context, name string) (*websocket.Conn, error) {
 }
 
 func main() {
+	if configured := os.Getenv("GUILD_ATESPACE"); configured != "" {
+		atespace = configured
+	}
 	token := os.Getenv("GUILD_SANDBOX_RUNNER_TOKEN")
 	image := os.Getenv("GUILD_ACTOR_IMAGE")
 	if len(token) < 16 || !imageRef.MatchString(image) {

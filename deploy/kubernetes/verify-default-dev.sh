@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-config="${1:?usage: verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN}"
+config="${1:?usage: verify-default-dev.sh KUBECONFIG GUILD_HTTPS_ORIGIN [NAMESPACE] [CONTEXT]}"
 origin="${2:?provide the Guild HTTPS origin}"
-[[ "$(kubectl --kubeconfig "$config" config current-context)" == default ]]
-kube=(kubectl --kubeconfig "$config" --context default -n guild-experiment)
+namespace="${3:-guild-dev}"
+context="${4:-$(kubectl --kubeconfig "$config" config current-context)}"
+kube=(kubectl --kubeconfig "$config" --context "$context" -n "$namespace")
 fixtures="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/fixtures" && pwd)"
 "${kube[@]}" rollout status deployment/guild deployment/guild-substrate --timeout=60s
 "${kube[@]}" rollout status daemonset/guild-juicefs daemonset/guild-workspace-csi --timeout=60s
