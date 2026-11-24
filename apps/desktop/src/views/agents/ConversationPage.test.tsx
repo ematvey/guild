@@ -19,7 +19,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
 
 import { ActivityPage, ConversationPage } from "./ActivityPage";
 import { AGENTS_ACTIVITY } from "./agents-route";
-import { applyActivityRun, resetAgentSlices, traceFromRun } from "./agents-store";
+import { applyActivityConversation, applyActivityRun, resetAgentSlices, traceFromRun } from "./agents-store";
 import { makeRun } from "./test-fixtures";
 
 const detail: ConversationDetail = {
@@ -114,22 +114,70 @@ describe("conversation page", () => {
     expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c0" });
   });
 
-  it("overlays a pushed Run status even when the conversation seed arrives later", async () => {
+  it("keeps committed socket messages and Run status over a late HTTP seed", async () => {
     let showSnapshot!: (value: ConversationDetail) => void;
-    api.getConversation.mockReturnValueOnce(new Promise((resolve) => { showSnapshot = resolve; }));
+    api.getConversation.mockReturnValueOnce(
+      new Promise((resolve) => {
+        showSnapshot = resolve;
+      }),
+    );
     render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} />);
     const run = detail.items.find((item) => item.kind === "run")!;
-    act(() => applyActivityRun({
-      type: "activity_run",
-      run: makeRun({ id: "r1", thread_id: detail.conversation.thread!.id, status: "failed" }),
-      counts: { runs: 1, open_runs: 0, failed_runs: 1 },
-    }));
-    await act(async () => showSnapshot({
-      ...detail,
-      items: [{ ...run, run: { ...run.run, status: "running" } }],
-    }));
+    const message = { kind: "message", seq: 4, role: "assistant", text: "A live reply", ts: run.ts } as const;
+    act(() =>
+      applyActivityConversation({
+        type: "activity_conversation",
+        detail: {
+          ...detail,
+          items: [{ ...run, run: { ...run.run, status: "failed" } }, message],
+        },
+      }),
+    );
+    await act(async () =>
+      showSnapshot({
+        ...detail,
+        items: [{ ...run, run: { ...run.run, status: "running" } }],
+      }),
+    );
     expect(await screen.findByText("Failed")).toBeTruthy();
+    expect(screen.getByText("A live reply")).toBeTruthy();
+    expect(screen.queryByText("Running")).toBeNull();
     expect(api.getConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps earlier pages and avoids duplicate messages when a new socket snapshot arrives", async () => {
+    const older = {
+      kind: "message",
+      seq: 0,
+      role: "user",
+      text: "An earlier message",
+      ts: "2026-11-01T09:00:00Z",
+    } as const;
+    const newer = {
+      kind: "message",
+      seq: 3,
+      role: "assistant",
+      text: "A later message",
+      ts: "2026-11-01T10:03:00Z",
+    } as const;
+    api.getConversation.mockResolvedValueOnce({ ...detail, has_more: true });
+    api.getConversation.mockResolvedValueOnce({ ...detail, items: [older], has_more: false });
+    render(<ConversationPage chatId="c1" role="admin" onNavigate={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load earlier messages" }));
+    expect(await screen.findByText(older.text)).toBeTruthy();
+    expect(api.getConversation).toHaveBeenLastCalledWith("c1", { limit: 200, before: 1 });
+
+    act(() =>
+      applyActivityConversation({
+        type: "activity_conversation",
+        detail: { ...detail, items: [...detail.items, newer], has_more: true },
+      }),
+    );
+    expect(screen.getByText(older.text)).toBeTruthy();
+    expect(screen.getByText(newer.text)).toBeTruthy();
+    expect(screen.getAllByText("The quarter closed above plan.")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Load earlier messages" })).toBeNull();
+    expect(api.getConversation).toHaveBeenCalledTimes(2);
   });
 
   it("hides the owner line for a member", async () => {

@@ -26,6 +26,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
+import { ACTIVITY_CONVERSATION_PAGE, type ConversationSnapshot } from "@guild/wire/rest";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import {
   AGENTS_ACTIVITY,
@@ -58,6 +59,7 @@ import {
   traceFromRun,
   traceWithRun,
   useActivityRunUpdates,
+  useActivityConversationUpdates,
   useAgentConnectionEpoch,
 } from "./agents-store";
 import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
@@ -814,7 +816,33 @@ function ownerInitials(row: ConversationRow): string {
   return parts.length === 1 ? name.slice(0, 2) : `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`;
 }
 
-const CONVERSATION_PAGE = 200;
+function conversationItemKey(item: ConversationItem): string {
+  return item.kind === "message" ? `message:${item.seq}` : `run:${item.run.id}`;
+}
+
+function mergeConversationPage(
+  current: ConversationSnapshot | null,
+  newest: ConversationSnapshot,
+): ConversationSnapshot {
+  if (current === null || !newest.has_more || newest.items.length === 0) return newest;
+  const newestKeys = new Set(newest.items.map(conversationItemKey));
+  // A reconnect can miss a whole page. Without an overlap between the two
+  // pages, use the new cursor so paging can fill the gap.
+  if (!current.items.some((item) => item.kind === "message" && newestKeys.has(conversationItemKey(item)))) {
+    return newest;
+  }
+  const first = Date.parse(newest.items[0]!.ts);
+  const older = current.items.filter(
+    (item) => Date.parse(item.ts) <= first && !newestKeys.has(conversationItemKey(item)),
+  );
+  return older.length === 0
+    ? newest
+    : {
+        ...newest,
+        items: [...older, ...newest.items],
+        has_more: current.has_more,
+      };
+}
 
 export function ConversationPage({
   chatId,
@@ -828,122 +856,121 @@ export function ConversationPage({
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
 }) {
-  const [detail, setDetail] = useState<ConversationDetail | null>(null);
-  const [seedItems, setItems] = useState<ConversationItem[]>([]);
-  const [liveRuns, setLiveRuns] = useState<
-    Map<string, { run: AgentRun; counts: Pick<ConversationRow, "runs" | "open_runs" | "failed_runs"> | null }>
-  >(new Map());
-  useActivityRunUpdates(({ run, counts }) => {
-    if (run.thread_id === null || (detail !== null && run.thread_id !== detail.conversation.thread?.id)) return;
-    setLiveRuns((previous) => {
-      const next = new Map(previous);
-      next.delete(run.id);
-      return next.set(run.id, { run, counts: counts ?? previous.get(run.id)?.counts ?? null });
-    });
-  });
-  const [hasMore, setHasMore] = useState(false);
+  const [snapshot, setSnapshot] = useState<{ detail: ConversationSnapshot; socket: boolean } | null>(null);
+  const [analytics, setAnalytics] = useState<ConversationDetail | null>(null);
+  const [liveCallCounts, setLiveCallCounts] = useState<Record<string, { call_count?: number; tool_count?: number }>>(
+    {},
+  );
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const detail = snapshot?.detail ?? null;
+
+  useActivityRunUpdates(({ run }) => {
+    if (run.thread_id === null || run.thread_id !== detail?.conversation.thread?.id) return;
+    if (run.call_count === undefined && run.tool_count === undefined) return;
+    setLiveCallCounts((current) => ({
+      ...current,
+      [run.id]: {
+        ...current[run.id],
+        ...(run.call_count === undefined ? {} : { call_count: run.call_count }),
+        ...(run.tool_count === undefined ? {} : { tool_count: run.tool_count }),
+      },
+    }));
+  });
+
+  useActivityConversationUpdates((page) => {
+    if (page.conversation.id !== chatId) return;
+    setSnapshot((current) => ({ detail: mergeConversationPage(current?.detail ?? null, page), socket: true }));
+    setError(null);
+  });
 
   useEffect(() => {
     let live = true;
     setError(null);
-    setDetail(null);
-    setItems([]);
-    setLiveRuns(new Map());
-    void getConversation(chatId, { limit: CONVERSATION_PAGE })
+    void getConversation(chatId, { limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
         if (!live) return;
-        setDetail(value);
-        setItems(value.items);
-        setHasMore(value.has_more);
+        setAnalytics(value);
+        setSnapshot((current) =>
+          current?.socket === true
+            ? current
+            : {
+                detail: mergeConversationPage(current?.detail ?? null, value),
+                socket: false,
+              },
+        );
       })
       .catch((err: unknown) => {
         if (!live) return;
         setError(err instanceof Error ? err.message : "The conversation did not load.");
-        setDetail(null);
       });
     return () => {
       live = false;
     };
   }, [chatId, tick]);
 
-  // An older page prepends; a run the newer page already showed is skipped.
   const loadOlder = () => {
-    const oldestSeq = seedItems.reduce<number | null>((min, item) => {
+    const oldestSeq = detail?.items.reduce<number | null>((min, item) => {
       if (item.kind !== "message") return min;
       return min === null ? item.seq : Math.min(min, item.seq);
     }, null);
-    if (oldestSeq === null || loadingOlder) return;
+    if (oldestSeq == null || loadingOlder) return;
     setLoadingOlder(true);
-    void getConversation(chatId, { before: oldestSeq, limit: CONVERSATION_PAGE })
+    void getConversation(chatId, { before: oldestSeq, limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
-        setItems((current) => {
-          const knownRuns = new Set(current.filter((item) => item.kind === "run").map((item) => item.run.id));
-          const knownSeqs = new Set(current.filter((item) => item.kind === "message").map((item) => item.seq));
-          const fresh = value.items.filter((item) =>
-            item.kind === "run" ? !knownRuns.has(item.run.id) : !knownSeqs.has(item.seq),
-          );
-          return [...fresh, ...current];
+        setSnapshot((current) => {
+          if (current === null) return current;
+          const keys = new Set(current.detail.items.map(conversationItemKey));
+          const older = value.items.filter((item) => !keys.has(conversationItemKey(item)));
+          // If reconnect moved the cursor beyond the requested page, leave
+          // the new page contiguous and allow an older-page read from it.
+          if (!current.detail.items.some((item) => item.kind === "message" && item.seq === oldestSeq)) return current;
+          return {
+            ...current,
+            detail: {
+              ...current.detail,
+              items: [...older, ...current.detail.items],
+              has_more: value.has_more,
+            },
+          };
         });
-        setHasMore(value.has_more);
+        setAnalytics((current) =>
+          current === null ? value : { ...current, items: [...value.items, ...current.items] },
+        );
       })
       .catch(() => {
-        // The page stays as it is; the reader can retry.
+        // The page stays as it is, and the reader can retry.
       })
       .finally(() => setLoadingOlder(false));
   };
 
   const admin = role === "admin";
-  const conversationSeed = detail?.conversation ?? null;
-  const threadId = conversationSeed?.thread?.id;
-  const { items, counts } = useMemo(() => {
-    const runIds = new Set<string>();
-    const patchRun = (item: ConversationRunItem, run: AgentRun): ConversationRunItem => ({
-      ...item,
-      run: {
-        ...item.run,
-        status: run.status,
-        summary: run.summary ?? "",
-        tokens: run.tokens,
-        error_message: run.error_message ?? "",
-        started_at: run.started_at ?? run.created_at,
-        finished_at: run.finished_at,
-      },
-      call_count: run.call_count ?? item.call_count,
-      tool_count: run.tool_count ?? item.tool_count,
-      steps: (run.call_count ?? item.call_count) + (run.tool_count ?? item.tool_count),
-    });
-    const items = seedItems.map((item) => {
+  const conversation =
+    detail === null
+      ? null
+      : {
+          ...detail.conversation,
+          tokens_in: analytics?.conversation.tokens_in ?? 0,
+          tokens_out: analytics?.conversation.tokens_out ?? 0,
+          cost_usd: analytics?.conversation.cost_usd ?? 0,
+          errors: analytics?.conversation.errors ?? 0,
+        };
+  const items = useMemo(() => {
+    const measured = new Map(
+      analytics?.items
+        .filter((item): item is ConversationRunItem => item.kind === "run")
+        .map((item) => [item.run.id, item]) ?? [],
+    );
+    return (detail?.items ?? []).map((item) => {
       if (item.kind !== "run") return item;
-      runIds.add(item.run.id);
-      const pushed = liveRuns.get(item.run.id)?.run;
-      return pushed === undefined ? item : patchRun(item, pushed);
+      const measuredCounts = measured.get(item.run.id);
+      const live = liveCallCounts[item.run.id];
+      const call_count = live?.call_count ?? measuredCounts?.call_count ?? item.call_count;
+      const tool_count = live?.tool_count ?? measuredCounts?.tool_count ?? item.tool_count;
+      return { ...item, steps: call_count + tool_count, call_count, tool_count };
     });
-    let counts: Pick<ConversationRow, "runs" | "open_runs" | "failed_runs"> | null = null;
-    if (threadId !== undefined) {
-      for (const update of liveRuns.values()) {
-        const { run } = update;
-        if (run.thread_id !== threadId) continue;
-        counts = update.counts ?? counts;
-        if (runIds.has(run.id)) continue;
-        const ts = run.started_at ?? run.created_at;
-        items.push(patchRun({
-          kind: "run",
-          ts,
-          run: { ...run, agent_name: run.agent_name ?? "", summary: "", error_message: "", started_at: ts },
-          trigger: null,
-          steps: 0,
-          call_count: 0,
-          tool_count: 0,
-          reply: false,
-        }, run));
-      }
-    }
-    return { items, counts };
-  }, [seedItems, liveRuns, threadId]);
-  const conversation = conversationSeed === null ? null : { ...conversationSeed, ...counts };
+  }, [detail, analytics, liveCallCounts]);
   const totals = useMemo(() => {
     const runItems = items.filter((item): item is ConversationRunItem => item.kind === "run");
     return {
@@ -969,9 +996,17 @@ export function ConversationPage({
         }
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate(conversation?.internal
-              ? { ...AGENTS_ACTIVITY, filters: { ...AGENTS_ACTIVITY.filters, background: true } }
-              : AGENTS_ACTIVITY)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                onNavigate(
+                  conversation?.internal
+                    ? { ...AGENTS_ACTIVITY, filters: { ...AGENTS_ACTIVITY.filters, background: true } }
+                    : AGENTS_ACTIVITY,
+                )
+              }
+            >
               <ArrowLeft />
               Activity
             </Button>
@@ -997,7 +1032,8 @@ export function ConversationPage({
                 <SelectContent>
                   {detail?.related_threads?.map((thread) => (
                     <SelectItem key={thread.id} value={thread.id}>
-                      {thread.title?.trim() || "Untitled thread"}{thread.internal ? " · Background" : ""}
+                      {thread.title?.trim() || "Untitled thread"}
+                      {thread.internal ? " · Background" : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1013,7 +1049,7 @@ export function ConversationPage({
         }
       />
       <PageBody className="max-w-[80rem]">
-        {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
+        {error !== null && detail === null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
         {error === null && detail === null && <InlineLoading label="Loading thread" />}
         {detail !== null && (
           <>
@@ -1053,7 +1089,7 @@ export function ConversationPage({
             </div>
 
             <div className="mt-4 space-y-3">
-              {hasMore && (
+              {detail.has_more && (
                 <div className="flex justify-center">
                   <Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlder}>
                     {loadingOlder ? "Loading earlier…" : "Load earlier messages"}
@@ -1067,7 +1103,7 @@ export function ConversationPage({
                   hint="A chat with no turns has nothing to read yet."
                 />
               )}
-              {items.map((item, index) =>
+              {items.map((item) =>
                 item.kind === "run" ? (
                   <RunItem
                     key={`run-${item.run.id}`}
@@ -1076,7 +1112,7 @@ export function ConversationPage({
                     onOpen={() => onNavigate({ view: "run", runId: item.run.id })}
                   />
                 ) : (
-                  <MessageItem key={`${item.role}-${item.seq}-${index}`} item={item} />
+                  <MessageItem key={conversationItemKey(item)} item={item} />
                 ),
               )}
             </div>

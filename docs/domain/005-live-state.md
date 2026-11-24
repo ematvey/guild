@@ -32,6 +32,7 @@ Two kinds of data stay as reads, because they are not live state:
 | Every socket of the Thread's Member | `chat_status`, `chat_row`, `thread_list`, `archived_thread_list`, `subagent_tree`, `chat_tree`, `project_list`, `machine_list` |
 | The Member's member sockets | `machine_status`, `member_profile`, `integration_access` (the Integrations they may add to an Agent, re-sent when an audience, a grant or a team membership moves) |
 | Members who may see the Agent or Skill | `agent_list`, `agent_routines`, `skill_catalog`; `agent_threads` contains only that Member's visible Threads, and `agent_run` reaches only the requesting Member |
+| Sockets showing a Conversation in Activity | `activity_conversation` carries the newest durable page to the Thread owner or an Org admin. Background Conversations reach only Org admins |
 | Members who may read the Run in Activity | `activity_run` carries the Run and its Thread's Run counts to the requesting Member or an Org admin. Background Run updates reach only Org admins |
 | Every socket of the Org | `org_event`, `workspace_identity`, `model_list` |
 | One socket | `hello`, `pong`, `error`, `sync_begin`, `sync_done`, `auth_required`, `displaced` |
@@ -105,7 +106,7 @@ The chat header and transcript do not show a generic Working label. Actual Run d
 
 The transcript keeps the server's Turn identity on committed assistant blocks. A settled Turn keeps its final message visible and folds its intermediate messages into the work row. A steer does not split a Turn, and a child result waking an idle parent does not fold the preceding Turn's final message. Posted messages remain visible outside that grouping.
 
-The Activity Run address adds its Run ID to the member socket's `sync` frame. Authorized sockets watching that Run receive its durable transcript steps on `activity_run`, on sync and when its Run or committed Thread events change. Other Activity views receive Run rows and Thread counts without the transcript steps.
+The Activity Run address adds its Run ID to the member socket's `sync` frame. Authorized sockets watching that Run receive its durable transcript steps on `activity_run`, on sync and when its Run or committed Thread events change. Other Activity views receive Run rows and Thread counts without the transcript steps. The Activity Conversation address adds its Chat ID to `sync`. Authorized sockets receive the newest Conversation page on sync and when Runs or committed messages change. An HTTP read supplies analytics and earlier pages. Socket pages keep their newer messages and Run state if the initial HTTP read finishes after sync.
 
 On every reconnect the client clears its watermarks and syncs again. When it wakes or becomes visible, it checks the socket and syncs; it never calls HTTP.
 

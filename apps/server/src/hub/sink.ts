@@ -44,6 +44,7 @@ export class SocketSink {
   /** The Activity Run whose durable steps this socket displays. */
   runView: string | null = null;
   runViewChat: string | null = null;
+  activityConversation: string | null = null;
   private queue: SocketOutput[] = [];
   private pending = 0;
   private overloaded = false;

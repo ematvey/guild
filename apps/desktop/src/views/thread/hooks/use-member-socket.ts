@@ -29,6 +29,7 @@ import type { ThreadStoreHandle } from "./use-thread-store";
 import { applyWindowTitle } from "../../../lib/window-title";
 import { applyTelemetrySetting, traceEvent } from "../../../lib/telemetry";
 import {
+  applyActivityConversation,
   applyActivityRun,
   applyAgentList,
   applyIntegrationAccess,
@@ -55,6 +56,7 @@ export interface MemberSocketDeps {
   outgoing: OutgoingSettle;
   /** The Activity Run selected by the URL. */
   runId: string | null;
+  activityChatId: string | null;
   /** The open chat no longer exists server-side. */
   recoverMissingChatRef: RefObject<() => void>;
 }
@@ -65,8 +67,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const { signOut, thread, outgoing, recoverMissingChatRef } = deps;
   const { store, retireSendPending, openChatIdRef, onThreadStateApplied, applyChatTree, cancelPending } = thread;
   const { outgoingRef, observedUserIdsRef, settleOutgoing } = outgoing;
-  const runIdRef = useRef(deps.runId);
-  runIdRef.current = deps.runId;
+  const activityRef = useRef({ runId: deps.runId, chatId: deps.activityChatId });
+  activityRef.current = { runId: deps.runId, chatId: deps.activityChatId };
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
   // The newest event id whose read-marker POST already fired per chat:
@@ -232,6 +234,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
       onActivityRun: applyActivityRun,
+      onActivityConversation: applyActivityConversation,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
@@ -337,7 +340,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onDisplaced: () => toast.error("This chat connection was replaced"),
       onAuthRequired: () => live().signOut(),
       getOpenChatId: () => openChatIdRef.current,
-      getOpenRunId: () => runIdRef.current,
+      getOpenRunId: () => activityRef.current.runId,
+      getOpenActivityChatId: () => activityRef.current.chatId,
     });
     socketRef.current = connection;
     return () => {

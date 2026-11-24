@@ -22,13 +22,13 @@ pub enum WsClientMsg {
         chat_id: Option<Uuid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         run_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity_chat_id: Option<Uuid>,
     },
     /// The member socket's duplex read-mark: moves the caller's marker to
     /// the chat's newest event (the REST POST /chats/:id/read, on the wire
     /// the turn already rides).
-    Read {
-        chat_id: Uuid,
-    },
+    Read { chat_id: Uuid },
     MachineResponse {
         request_id: String,
         ok: bool,
@@ -281,6 +281,10 @@ pub enum WsServerMsg {
         steps: Option<Vec<serde_json::Value>>,
         counts: Option<serde_json::Value>,
     },
+    /// The newest Activity Conversation page visible to the selected viewer.
+    ActivityConversation {
+        detail: serde_json::Value,
+    },
     /// The member's open user threads with one agent, newest activity first.
     /// Daemons tag-peek and ignore it.
     AgentThreads {
@@ -349,6 +353,7 @@ mod tests {
         let sync = WsClientMsg::Sync {
             chat_id: Some(Uuid::nil()),
             run_id: None,
+            activity_chat_id: None,
         };
         let json = serde_json::to_string(&sync).unwrap();
         assert!(json.contains(r#""type":"sync""#));

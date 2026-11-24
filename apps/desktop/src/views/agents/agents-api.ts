@@ -8,6 +8,8 @@ import type {
   AgentThread,
   AgentRun as WireAgentRun,
   AgentRunStep,
+  ConversationRow as WireConversationRow,
+  ConversationSnapshot,
 } from "@guild/wire/rest";
 import { request, requestResponse } from "../../lib/api/request";
 
@@ -471,95 +473,18 @@ export interface SpanRow {
 }
 
 /** One owner of a conversation (the chat's user). */
-export interface ConversationOwner {
-  id: string;
-  email: string;
-  display_name: string | null;
-}
+export type { ConversationItem, ConversationRunItem } from "@guild/wire/rest";
 
-/** The agent a conversation belongs to; absent on a chat with no agent thread. */
-export interface ConversationAgent {
-  id: string;
-  name: string;
-}
-
-/** The thread row behind a conversation, with its parent thread's chat. */
-export interface ConversationThread {
-  id: string;
-  /** The chat journal that holds the thread's transcript. */
-  chat_id: string;
-  type: string;
-  parent_thread_id: string | null;
-  parent_chat_id: string | null;
-  parent_title: string | null;
-}
-
-/** One conversation row in the Activity list. */
-export interface ConversationRow {
-  internal?: boolean;
-  id: string;
-  title: string | null;
-  owner: ConversationOwner;
-  agent: ConversationAgent | null;
-  thread: ConversationThread | null;
-  created_at: string;
-  last_activity_at: string;
-  messages: number;
-  runs: number;
-  open_runs: number;
-  failed_runs: number;
-  archived: boolean;
-  deleted: boolean;
+/** A conversation read over HTTP includes optional analytics, defaulted to zero. */
+export interface ConversationRow extends WireConversationRow {
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
   errors: number;
 }
 
-/** One run inside a conversation. */
-export interface ConversationRun {
-  id: string;
-  agent_id: string;
-  agent_name: string;
-  trigger: string;
-  status: string;
-  summary: string;
-  error_message: string;
-  tokens: number;
-  started_at: string;
-  finished_at: string | null;
-}
-
-/** A run as a conversation item: the trigger it answered and its step count. */
-export interface ConversationRunItem {
-  kind: "run";
-  ts: string;
-  run: ConversationRun;
-  trigger: string | null;
-  steps: number;
-  call_count: number;
-  tool_count: number;
-  /** True when the agent's reply renders below the row. */
-  reply: boolean;
-}
-
-/** One message in a conversation, at the reading level. */
-export interface ConversationMessageItem {
-  kind: "message";
-  ts: string;
-  seq: number;
-  role: "user" | "assistant" | "system" | "error" | "compaction";
-  text: string;
-}
-
-export type ConversationItem = ConversationMessageItem | ConversationRunItem;
-
-/** One conversation as the reader sees it: header, page items, paging flag. */
-export interface ConversationDetail {
+export interface ConversationDetail extends ConversationSnapshot {
   conversation: ConversationRow;
-  related_threads?: { id: string; title: string | null; internal: boolean }[];
-  items: ConversationItem[];
-  has_more: boolean;
 }
 
 /** The thread behind a run, with its parent thread's chat. */

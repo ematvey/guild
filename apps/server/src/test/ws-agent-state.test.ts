@@ -223,9 +223,14 @@ describe("agent and skill state frames", () => {
         content: "Durable background request",
         attachments: [],
       });
-      await waitFrame(admin, (frame) => isRun(frame, internalRun) &&
-        (frame.steps as unknown[] | undefined)?.some((step) =>
-          (step as { detail: string }).detail === "Durable background request") === true);
+      await waitFrame(
+        admin,
+        (frame) =>
+          isRun(frame, internalRun) &&
+          (frame.steps as unknown[] | undefined)?.some(
+            (step) => (step as { detail: string }).detail === "Durable background request",
+          ) === true,
+      );
       await idleAdmin.pingBarrier();
       expect(textFrames(idleAdmin).some((frame) => isRun(frame, internalRun) && frame.steps !== undefined)).toBe(false);
 
@@ -247,6 +252,68 @@ describe("agent and skill state frames", () => {
       admin.end();
       idleAdmin.end();
       owner.end();
+    }
+  });
+
+  it("watches authorized background Conversations and seeds missed changes on a new socket", async () => {
+    const admin = await memberSocket(stack.adminToken);
+    const owner = await memberSocket(stack.memberToken);
+    const idleAdmin = await memberSocket(stack.adminToken);
+    let reconnected: ScriptedClient | undefined;
+    try {
+      const agentId = await createAgent(stack.memberToken, `dialogue-${crypto.randomUUID().slice(0, 8)}`, "private");
+      const { thread } = await api<{ thread: { id: string; chat_id: string } }>(
+        stack.memberToken,
+        "POST",
+        `/api/v1/agents/${agentId}/threads`,
+        {},
+      );
+      await stack.env.db.query("UPDATE chats SET internal = true WHERE id = $1", [thread.chat_id]);
+      const runId = await insertRun(agentId, stack.memberId, "running", thread.id);
+      const watch = JSON.stringify({ type: "sync", activity_chat_id: thread.chat_id });
+      admin.send(watch);
+      owner.send(watch);
+      const selected = (frame: Frame) =>
+        frame.type === "activity_conversation" &&
+        (frame.detail as { conversation: { id: string } }).conversation.id === thread.chat_id;
+      const seeded = await waitFrame(admin, selected);
+      expect(seeded.detail).toMatchObject({ conversation: { internal: true, open_runs: 1 } });
+
+      await stack.env.app.platform.threads.appendEvent(thread.chat_id, {
+        type: "user_message",
+        content: "A saved background message",
+        attachments: [],
+      });
+      const changed = await waitFrame(
+        admin,
+        (frame) => selected(frame) && JSON.stringify(frame.detail).includes("A saved background message"),
+      );
+      expect(changed.detail).toMatchObject({
+        items: expect.arrayContaining([expect.objectContaining({ kind: "message", text: "A saved background message" })]),
+      });
+      await owner.pingBarrier();
+      await idleAdmin.pingBarrier();
+      expect(textFrames(owner).some(selected)).toBe(false);
+      expect(textFrames(idleAdmin).some(selected)).toBe(false);
+
+      admin.end();
+      await stack.env.db.query("UPDATE agent_runs SET status='failed', finished_at=now() WHERE id=$1", [runId]);
+      await stack.env.app.platform.threads.appendEvent(thread.chat_id, {
+        type: "user_message",
+        content: "A message committed while disconnected",
+        attachments: [],
+      });
+      reconnected = await memberSocket(stack.adminToken);
+      reconnected.send(watch);
+      const afterReconnect = await waitFrame(reconnected, selected);
+      expect(afterReconnect.detail).toMatchObject({ conversation: { open_runs: 0, failed_runs: 1 } });
+      expect(JSON.stringify(afterReconnect.detail)).toContain("A message committed while disconnected");
+      expect(JSON.stringify(afterReconnect.detail)).toContain('"status":"failed"');
+    } finally {
+      admin.end();
+      owner.end();
+      idleAdmin.end();
+      reconnected?.end();
     }
   });
 

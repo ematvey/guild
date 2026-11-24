@@ -71,6 +71,7 @@ function useHarness() {
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const { socketRef } = useMemberSocket({
     runId: null,
+    activityChatId: null,
     signOut: () => {},
     thread,
     outgoing: { outgoingRef, observedUserIdsRef, settleOutgoing: () => {} },

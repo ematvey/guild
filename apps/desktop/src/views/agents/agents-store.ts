@@ -69,6 +69,22 @@ export function useActivityRunUpdates(listener: (frame: ActivityRunFrame, epoch:
   });
 }
 
+type ActivityConversationFrame = Extract<ServerFrame, { type: "activity_conversation" }>;
+const conversationListeners = new Set<(detail: ActivityConversationFrame["detail"]) => void>();
+
+export function applyActivityConversation({ detail }: ActivityConversationFrame): void {
+  for (const listener of conversationListeners) listener(detail);
+}
+
+export function useActivityConversationUpdates(listener: (detail: ActivityConversationFrame["detail"]) => void): void {
+  useEffect(() => {
+    conversationListeners.add(listener);
+    return () => {
+      conversationListeners.delete(listener);
+    };
+  });
+}
+
 const sliceKey = (slice: Slice, agentId: string) => `${slice}:${agentId}`;
 
 /** Newest first: the order every run list shows. */
