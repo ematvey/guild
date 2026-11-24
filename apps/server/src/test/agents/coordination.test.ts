@@ -204,7 +204,7 @@ suite("persistent coordination", () => {
     expect((await readInput()).rows).toEqual([]);
   });
 
-  it("keeps the coordinator run summary out of the Activity trace mirror", async () => {
+  it("keeps the coordinator chat identity in the Activity trace mirror", async () => {
     const coordinator = await ensureCoordinationThread(store, agent, alice.id, "coordinator");
     expect(coordinator.type).toBe("user");
     const run = await store.runs.createRun({
@@ -215,7 +215,11 @@ suite("persistent coordination", () => {
       status: "succeeded",
       summary: "Internal coordination output",
     });
-    expect(await runTraceRow(env!.db, run.id)).toBeNull();
+    expect(await runTraceRow(env!.db, run.id)).toMatchObject({
+      id: run.id,
+      chat_id: coordinator.chat_id,
+      summary: "Internal coordination output",
+    });
   });
 
   it("runs reflection once across two maintenance passes using a one-slot pool", async () => {

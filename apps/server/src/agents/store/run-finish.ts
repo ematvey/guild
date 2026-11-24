@@ -123,8 +123,7 @@ export async function runTraceRow(pool: PlatformPool, runId: string): Promise<Re
      FROM agent_runs r
      JOIN agents a ON a.id = r.agent_id
      LEFT JOIN agent_threads t ON t.id = r.thread_id
-     LEFT JOIN chats c ON c.id = t.chat_id
-     WHERE r.id = $1 AND c.internal IS DISTINCT FROM true`,
+     WHERE r.id = $1`,
     [runId],
   );
   return res.rows[0] ?? null;
