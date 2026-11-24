@@ -85,6 +85,40 @@ describe.skipIf(URL_ === undefined)("sandbox runner (integration)", () => {
       expect(outside.ok).toBe(false);
     });
 
+    it("shares an Agent Workspace while keeping Member and background scratch separate", async () => {
+      const agentId = randomUUID();
+      const key = `agent:${ORG}:${agentId}`;
+      const subpath = `agents/${ORG}/${agentId}`;
+      const targets = [
+        { key: `${key}:member:${randomUUID()}`, subpath },
+        { key: `${key}:member:${randomUUID()}`, subpath },
+        { key: `${key}:background`, subpath },
+      ];
+      const [first, second, background] = targets.map((target) => envFor(target));
+      try {
+        expect((await first!.writeFile("/workspace/shared.txt", "shared", ctx)).ok).toBe(true);
+        expect((await first!.writeFile("/tmp/run.txt", "first", ctx)).ok).toBe(true);
+        expect((await second!.writeFile("/tmp/run.txt", "second", ctx)).ok).toBe(true);
+        expect((await background!.writeFile("/tmp/run.txt", "background", ctx)).ok).toBe(true);
+        for (const [environment, expected] of [
+          [first!, "first"],
+          [second!, "second"],
+          [background!, "background"],
+        ] as const) {
+          expect(await environment.readTextFile("/workspace/shared.txt", ctx)).toMatchObject({
+            ok: true,
+            value: "shared",
+          });
+          expect(await environment.readTextFile("/tmp/run.txt", ctx)).toMatchObject({ ok: true, value: expected });
+        }
+      } finally {
+        first!.disconnect();
+        second!.disconnect();
+        background!.disconnect();
+        await Promise.all(targets.map((target) => runner.remove(target.key)));
+      }
+    }, 120_000);
+
     it("has a read-only root filesystem and a writable workspace", async () => {
       const { out } = await sh(
         env,

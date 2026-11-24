@@ -337,7 +337,7 @@
     },
     {
       "id": "sandbox",
-      "definition": "The gVisor container that runs server-side tools for unbound chats.",
+      "definition": "The gVisor container that runs server-side tools with sandbox-local scratch and a mounted Workspace.",
       "canonical": "apps/server/src/sandbox/client.ts",
       "types": [],
       "aliases": [

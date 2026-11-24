@@ -25,7 +25,7 @@ export class SandboxRunnerError extends Error {
 }
 
 export interface SandboxTarget {
-  /** Stable sandbox identity: `ws:<org>:<name>` or `chat:<org>:<conversationId>`. */
+  /** Stable identity for a Workspace session, plain chat, or Agent sandbox scope. */
   key: string;
   /** The workspace dir on the data volume, relative to its root. */
   subpath: string;

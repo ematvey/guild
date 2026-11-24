@@ -1,5 +1,5 @@
-// Workspace resolution: an agent thread maps every turn to the agent's
-// shared workspace/sandbox; a plain chat keeps its per-conversation target.
+// Workspace resolution: Agent threads mount the Agent Workspace and use
+// their sandbox scope; plain chats keep a per-conversation target.
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -45,14 +45,17 @@ dbDescribe("agent workspace resolution", () => {
     await env?.cleanup();
   });
 
-  it("routes an agent thread to the shared agent workspace", async () => {
+  it("keeps the personal Agent on its unpartitioned sandbox", async () => {
     const agent = await store.create(owner, { name: "Workspace", model: "GLM-Test" });
-    const thread = (await store.threads.listThreads(agent.id, owner.id)).threads[0]!;
+    await env!.db.query("UPDATE agents SET is_personal = true WHERE id = $1", [agent.id]);
+    const thread = await store.threads.createThread(agent.id, owner.id, "Personal");
     expect(await agentThreadForChat(env!.db, thread.chat_id)).toEqual({
       thread_id: thread.id,
       agent_id: agent.id,
       org_id: orgId,
       user_id: owner.id,
+      is_personal: true,
+      internal: false,
     });
     const target = await resolveConversationWorkspace(env!.db, {
       conversationId: 41,
@@ -67,6 +70,52 @@ dbDescribe("agent workspace resolution", () => {
       hostDir: path.resolve("/srv/agents", `agents/${orgId}/${agent.id}`),
       agentId: agent.id,
     });
+  });
+
+  it("shares one Workspace while separating each Member and the internal Threads", async () => {
+    const agent = await store.create(owner, { name: "Shared Workspace", model: "GLM-Test", visibility: "org" });
+    const memberId = randomUUID();
+    await env!.db.query(
+      `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
+       VALUES ($1, $2, 'member@example.test', '', 'member', 'managed')`,
+      [memberId, orgId],
+    );
+    const threads = await Promise.all([
+      store.threads.createThread(agent.id, owner.id, "Owner"),
+      store.threads.createThread(agent.id, owner.id, "Another owner Thread"),
+      store.threads.createThread(agent.id, memberId, "Member"),
+      store.threads.createThread(agent.id, owner.id, "Coordinator", "user", {
+        executionRole: "coordinator",
+        internal: true,
+      }),
+      store.threads.createThread(agent.id, owner.id, "Reflection", "user", {
+        executionRole: "reflection",
+        internal: true,
+      }),
+    ]);
+    const targets = await Promise.all(
+      threads.map((thread, index) =>
+        resolveConversationWorkspace(env!.db, {
+          conversationId: 100 + index,
+          orgId,
+          chatId: thread.chat_id,
+          agentWorkspaceRoot: "/srv/agents",
+          plainHostRoot: "/tmp/plain",
+        }),
+      ),
+    );
+    const prefix = `agent:${orgId}:${agent.id}`;
+    expect(targets.map((target) => target.key)).toEqual([
+      `${prefix}:member:${owner.id}`,
+      `${prefix}:member:${owner.id}`,
+      `${prefix}:member:${memberId}`,
+      `${prefix}:background`,
+      `${prefix}:background`,
+    ]);
+    expect(new Set(targets.map((target) => target.subpath))).toEqual(new Set([`agents/${orgId}/${agent.id}`]));
+    expect(new Set(targets.map((target) => target.hostDir))).toEqual(
+      new Set([path.resolve("/srv/agents", `agents/${orgId}/${agent.id}`)]),
+    );
   });
 
   it("keeps a plain chat on its per-conversation target", async () => {
