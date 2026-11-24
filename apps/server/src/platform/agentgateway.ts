@@ -60,6 +60,10 @@ export class AgentGateway {
     }
   }
 
+  get enforcesGuildMcpPolicy(): boolean {
+    return this.config.mcpOnly === true;
+  }
+
   get routesModels(): boolean {
     return !this.config.serviceTokensOnly && !this.config.mcpOnly;
   }

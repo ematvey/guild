@@ -181,6 +181,20 @@ describe("turn scope", () => {
   const offered = (s: IntegrationScope, info: IntegrationToolInfo, role = "member") =>
     toolOffered(turn, info, scopeCeiling(s, turn.slug, info), role);
 
+  it("applies Guild scope and curation to published gateway tools", () => {
+    const gateway: IntegrationTurn = { ...turn, executor: "gateway-mcp", gatewayUsesGuildPolicy: true };
+    const read = tool("hubspot_search_deals", "read");
+    const write = tool("hubspot_update_deal", "write");
+    expect(toolOffered(gateway, read, null, "member")).toBe(false);
+    expect(toolOffered(gateway, read, "read", "member")).toBe(true);
+    expect(toolOffered(gateway, write, "read", "member")).toBe(false);
+    expect(toolOffered({
+      ...gateway,
+      rowConfig: { tools: { search_deals: { enabled: false } } },
+    }, read, "admin", "admin")).toBe(false);
+    expect(toolOffered({ ...gateway, impersonated: true }, read, "admin", "admin", true)).toBe(false);
+  });
+
   it("rejects account impersonation for every shared Agent even with admin read grants", () => {
     const impersonated = { ...turn, impersonated: true };
     const read = tool("hubspot_search_deals", "read");

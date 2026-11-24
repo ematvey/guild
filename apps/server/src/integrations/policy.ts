@@ -122,7 +122,7 @@ export function toolOffered(
   sharedAgent = false,
 ): boolean {
   if (sharedAgent && turn.impersonated) return false;
-  if (turn.executor === "gateway-mcp") return true;
+  if (turn.executor === "gateway-mcp" && !turn.gatewayUsesGuildPolicy) return true;
   if (!toolCurate(turn.rowConfig, info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin") return false;
   return ceiling !== null && classRank(info.class) <= classRank(ceiling);

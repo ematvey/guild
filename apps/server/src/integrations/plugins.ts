@@ -19,7 +19,7 @@ import type { AgentGateway } from "../platform/agentgateway.js";
 /** The narrow store surface the dispatcher re-resolves secrets through
  *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
 export interface PluginSecretSource {
-  agentGateway?: Pick<AgentGateway, "mcp"> | null;
+  agentGateway?: (Pick<AgentGateway, "mcp"> & Partial<Pick<AgentGateway, "enforcesGuildMcpPolicy">>) | null;
   integrationSecrets: {
     names(orgId: string, integration: string): Promise<string[]>;
     resolve(orgId: string, integration: string, names: string[], masterKey: Buffer): Promise<[string, string][]>;
@@ -78,6 +78,7 @@ export interface IntegrationTurn {
   secretNames: string[];
   identityKey: string;
   impersonated?: boolean;
+  gatewayUsesGuildPolicy?: boolean;
 }
 
 /** The first skill slug a manifest names, or null. One resolver for a
@@ -204,13 +205,27 @@ function toMcpToolInfo(slug: string, manifest: JsonObject, rowConfig: JsonObject
   };
 }
 
+function manifestIdentity(manifest: JsonObject): { identityKey: string; impersonated: boolean } {
+  const auth = manifest["auth"];
+  const fields = auth !== null && typeof auth === "object" && !Array.isArray(auth) ? auth as JsonObject : {};
+  return {
+    identityKey: typeof fields["identity_key"] === "string" ? fields["identity_key"] : "email",
+    impersonated: ["org_secret_impersonated", "impersonated"].includes(String(fields["kind"])),
+  };
+}
+
 async function resolveGatewayIntegrations(
-  gateway: Pick<AgentGateway, "mcp">,
+  gateway: IntegrationGateway,
   orgId: string,
   memberId: string,
   chatId?: string,
 ): Promise<IntegrationTurn[]> {
-  const { url, headers } = gateway.mcp(orgId, memberId, undefined, chatId);
+  const client = gateway.agentGateway!;
+  const { url, headers } = client.mcp(orgId, memberId, undefined, chatId);
+  const rows = client.enforcesGuildMcpPolicy
+    ? new Map((await gateway.integrations.listEnabled(orgId)).map((row) => [row.name, (row.config ?? {}) as JsonObject]))
+    : null;
+  const metadata = new Map<string, { config: JsonObject; connector?: Connector; manifest: JsonObject } | null>();
   const peer = await mcpConnect(url, headers);
   const turns = new Map<string, IntegrationTurn>();
   for (const tool of await peer.listTools()) {
@@ -222,24 +237,57 @@ async function resolveGatewayIntegrations(
     if (!/^[a-z0-9][a-z0-9-]*$/.test(target) || !/^[A-Za-z0-9_-]+$/.test(raw)) continue;
     if (raw === "list_tools" || raw === "guide") continue;
     const slug = target.replaceAll("-", "_");
+    let local = metadata.get(slug);
+    if (rows && local === undefined) {
+      const config = rows.get(slug);
+      local = null;
+      if (config) {
+        const remote = config["mcp"];
+        if (remote && typeof remote === "object" && !Array.isArray(remote) && typeof (remote as JsonObject)["url"] === "string") {
+          try {
+            local = { config, manifest: await requireApprovedManifest(gateway, orgId, slug) };
+          } catch { /* An unapproved target is ineligible. */ }
+        } else {
+          try {
+            const connector = await connectorFor(gateway, orgId, slug);
+            if (connector) local = { config, connector, manifest: {} };
+          } catch { /* A broken connector is ineligible. */ }
+        }
+      }
+      metadata.set(slug, local);
+    }
+    if (rows && !local) continue;
+    const connector = local?.connector;
+    if (connector && !Object.hasOwn(connector.classes, raw)) continue;
     let turn = turns.get(slug);
     if (turn === undefined) {
       turn = {
         executor: "gateway-mcp",
         slug,
-        description: `MCP tools provided by ${target}.`,
+        description: connector?.summary ?? (local ? indexDescription(local.manifest) : `MCP tools provided by ${target}.`),
         tools: [],
-        guide: null,
-        rowConfig: {},
+        guide: local ? firstSkill(connector ?? local.manifest) : null,
+        rowConfig: local?.config ?? {},
         secretNames: [],
-        identityKey: "id",
+        ...(connector ? {
+          identityKey: connector.identity_key,
+          impersonated: connector.auth_kind === "org_secret_impersonated",
+        } : local ? manifestIdentity(local.manifest) : { identityKey: "id" }),
+        gatewayUsesGuildPolicy: rows !== null,
       };
       turns.set(slug, turn);
     }
-    const info = toMcpToolInfo(slug, {}, {}, { ...tool, name: raw });
-    turn.tools.push({ ...info, gatewayName: tool.name });
+    const info = toMcpToolInfo(slug, local?.manifest ?? {}, local?.config ?? {}, { ...tool, name: raw });
+    const trait = connector ? traitOfTool(connector, raw) : undefined;
+    turn.tools.push({
+      ...info, gatewayName: tool.name,
+      ...(connector && local ? { class: connectorToolClass(local.config, connector, raw) } : {}),
+      ...(trait !== undefined ? { trait } : {}),
+    });
   }
-  return [...turns.values()];
+  const result = [...turns.values()];
+  if (rows) assignTraits(result, await readTraitBindings(gateway.orgKv, orgId));
+  return result;
 }
 
 /** Turn-start resolution for the enabled plugins of one org: connectors
@@ -257,7 +305,7 @@ export async function resolveIntegrations(
   if (gateway.agentGateway) {
     if (!memberId) return [];
     try {
-      return await resolveGatewayIntegrations(gateway.agentGateway, orgId, memberId, chatId);
+      return await resolveGatewayIntegrations(gateway, orgId, memberId, chatId);
     } catch (error) {
       warn(`agentgateway MCP discovery failed: ${(error as Error).message}`);
       return [];
@@ -358,23 +406,15 @@ export async function resolveIntegrations(
       warn(`integration ${row.name}: list_tools failed, skipping`);
       continue;
     }
-    const auth = manifest["auth"];
     out.push({
       executor: "mcp",
-      impersonated:
-        auth !== null &&
-        typeof auth === "object" &&
-        ["org_secret_impersonated", "impersonated"].includes(String((auth as JsonObject)["kind"])),
+      ...manifestIdentity(manifest),
       slug: row.name,
       description: indexDescription(manifest),
       guide: firstSkill(manifest as { skills?: unknown }),
       tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),
       rowConfig: config,
       secretNames,
-      identityKey:
-        auth !== null && typeof auth === "object" && typeof (auth as JsonObject)["identity_key"] === "string"
-          ? ((auth as JsonObject)["identity_key"] as string)
-          : "email",
     });
   }
   assignTraits(out, await readTraitBindings(gateway.orgKv, orgId));
