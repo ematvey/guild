@@ -230,6 +230,15 @@ func usesWorkspace(template *ate.ActorTemplate, path string) bool {
 	return false
 }
 
+func (c controller) suspendIfNeeded(ctx context.Context, name string) error {
+	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	if err != nil || actor.GetStatus().GetState() == ate.ActorState_ACTOR_STATE_SUSPENDED {
+		return err
+	}
+	_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+	return err
+}
+
 func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {
 	switch actor.GetStatus().GetState() {
 	case ate.ActorState_ACTOR_STATE_CRASHED, ate.ActorState_ACTOR_STATE_REVERTING:

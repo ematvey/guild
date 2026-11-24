@@ -79,7 +79,7 @@ func (s *server) scheduleSuspend(use *actorUse, name string) {
 		defer cancel()
 		ctx, err := actorContext(ctx)
 		if err == nil {
-			_, err = s.control.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+			err = s.control.suspendIfNeeded(ctx, name)
 		}
 		if err != nil && status.Code(err) != codes.NotFound {
 			log.Printf("suspend %s: %v", name, err)
@@ -239,11 +239,7 @@ func (s *server) stop(w http.ResponseWriter, r *http.Request, name string) {
 	defer cancel()
 	ctx, err := actorContext(ctx)
 	if err == nil {
-		actor, getErr := s.control.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
-		err = getErr
-		if err == nil && actor.GetStatus().GetState() != ate.ActorState_ACTOR_STATE_SUSPENDED {
-			_, err = s.control.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
-		}
+		err = s.control.suspendIfNeeded(ctx, name)
 	}
 	switch status.Code(err) {
 	case codes.OK:
