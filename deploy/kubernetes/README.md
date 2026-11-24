@@ -280,6 +280,11 @@ To publish on default dev, pass `--default-dev` to the importer with
 `verify-mcp-service-grants.sh` and `verify-shared-mcp-connector.sh` exercise the
 experiment gateway with temporary routes. Validate vendor and authorization
 parity for the actual org inventory before switching Guild's execution.
+Feed `fixtures/verify-mcp-parity.mjs` to `bun -` inside Guild with
+`PROBE_MEMBER_ID` set to an intended caller. It compares the direct and
+published tools after Guild applies the member's scope, including input
+schemas, classes, traits, delegation, and approval settings. Set
+`PROBE_BASELINE_ONLY=1` to measure the direct inventory before publishing.
 
 ### Registry code bundles
 
