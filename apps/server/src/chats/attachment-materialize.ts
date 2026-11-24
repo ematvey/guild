@@ -6,12 +6,17 @@
 
 import path from "node:path";
 import type { Context } from "@earendil-works/chord";
-import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { DirReader, ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { attachmentObjectKey, safeFilename, type AttachmentRow } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { isUuid } from "../platform/time.js";
 
 export const ATTACHMENTS_ROOT = "/tmp/attachments";
+const SWEEP_GRACE_MS = 5 * 60_000;
+
+// A reader belongs to one sandbox connection. Closing the connection also
+// closes its remote reader. A new executor starts an independent scan.
+const sweeps = new WeakMap<ExecutionEnv, { root: string; reader: DirReader | null; busy: boolean }>();
 
 export interface MaterializeAttachmentsArgs {
   env: ExecutionEnv;
@@ -42,34 +47,60 @@ export async function materializeTurnAttachments(args: MaterializeAttachmentsArg
   return dir;
 }
 
-/** Reclaim a bounded batch of caches. Directory names are only candidates;
- *  a Run's durable state determines whether it can be removed. */
+/** Examine one directory page per Turn. Keep the cursor so live or recent
+ *  entries on the first page do not hide reclaimable later pages. */
 export async function pruneTurnAttachments(
   env: ExecutionEnv,
   context: Context,
-  finishedRunIds: (ids: string[]) => Promise<string[]>,
+  removableRunIds: (ids: string[], settledBefore: Date) => Promise<string[]>,
   root = ATTACHMENTS_ROOT,
 ): Promise<void> {
-  if (!(await directoryExists(env, root, context))) return;
-  const opened = await env.openDirReader(root, context);
-  if (!opened.ok) {
-    if (opened.error.code === "not_found") return;
-    throw opened.error;
-  }
-  const reader = opened.value;
+  const sweep = sweeps.get(env) ?? { root, reader: null, busy: false };
+  if (sweep.busy) return;
+  sweeps.set(env, sweep);
+  sweep.busy = true;
   try {
+    if (sweep.root !== root || !(await directoryExists(env, root, context))) {
+      const reader = sweep.reader;
+      sweep.root = root;
+      sweep.reader = null;
+      await reader?.close(context);
+      return;
+    }
+    if (sweep.reader === null) {
+      const opened = await env.openDirReader(root, context);
+      if (!opened.ok) {
+        if (opened.error.code === "not_found") return;
+        throw opened.error;
+      }
+      sweep.reader = opened.value;
+    }
+    const reader = sweep.reader;
     const page = await reader.next(64, context);
+    if (!page.ok || page.value.done) {
+      sweep.reader = null;
+      await reader.close(context);
+    }
     if (!page.ok) throw page.error;
-    const runIds = page.value.entries
-      .filter((entry) => entry.kind === "directory" && isUuid(entry.name))
-      .map((entry) => entry.name);
-    if (runIds.length === 0) return;
-    for (const runId of await finishedRunIds(runIds)) {
-      const removed = await env.remove(turnAttachmentDir(runId, root), { recursive: true, force: true }, context);
+
+    const settledBefore = new Date(Date.now() - SWEEP_GRACE_MS);
+    const candidates = new Map(
+      page.value.entries
+        .filter((entry) => entry.kind === "directory" && isUuid(entry.name) && entry.mtimeMs < settledBefore.getTime())
+        .map((entry) => [entry.name, entry.mtimeMs]),
+    );
+    if (candidates.size === 0) return;
+    for (const runId of await removableRunIds([...candidates.keys()], settledBefore)) {
+      const dir = turnAttachmentDir(runId, root);
+      const current = await env.fileInfo(dir, context);
+      // A directory changed since the scan can belong to a fresh writer.
+      if (!current.ok || current.value.kind !== "directory" || current.value.mtimeMs !== candidates.get(runId))
+        continue;
+      const removed = await env.remove(dir, { recursive: true, force: true }, context);
       if (!removed.ok) throw removed.error;
     }
   } finally {
-    await reader.close(context);
+    sweep.busy = false;
   }
 }
 

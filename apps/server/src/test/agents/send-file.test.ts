@@ -5,7 +5,7 @@
 // files its child results carry.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -226,16 +226,79 @@ dbDescribe("agent send_file and turn attachments", () => {
     const secondFile = path.join(base, second.id, "report.txt");
     const restartedSandbox = new NodeExecutionEnv({ cwd: sandbox.cwd });
     const prune = () =>
-      pruneTurnAttachments(restartedSandbox, BACKGROUND_CONTEXT, (ids) => store.runs.finishedRunIds(ids), base);
+      pruneTurnAttachments(
+        restartedSandbox,
+        BACKGROUND_CONTEXT,
+        (ids, settledBefore) => store.runs.removableAttachmentRunIds(ids, settledBefore),
+        base,
+      );
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(path.dirname(firstFile), old, old);
+    await utimes(path.dirname(secondFile), old, old);
     await prune();
     expect(await readFile(firstFile, "utf8")).toBe("first Run");
     expect(await readFile(secondFile, "utf8")).toBe("second Run");
 
     await store.runs.updateRun(first.id, { status: "succeeded", finished_at: new Date().toISOString() });
     await prune();
+    expect(await readFile(firstFile, "utf8")).toBe("first Run");
+
+    await store.runs.updateRun(first.id, { status: "succeeded", finished_at: old.toISOString() });
+    await prune();
     await expect(stat(firstFile)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(secondFile, "utf8")).toBe("second Run");
     await expect(stat(path.join(sandbox.cwd, "report.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("resumes a bounded sweep after a full page with no removable directories", async () => {
+    const base = path.join(root, "prune-pages");
+    const sandbox = new NodeExecutionEnv({ cwd: root });
+    await mkdir(base);
+    for (let index = 0; index < 67; index++) {
+      await mkdir(path.join(base, randomUUID()));
+    }
+
+    // Choose candidates from the second filesystem page without assuming
+    // the filesystem orders its entries by name or creation time.
+    const opened = await sandbox.openDirReader(base, BACKGROUND_CONTEXT);
+    if (!opened.ok) throw opened.error;
+    const reader = opened.value;
+    const first = await reader.next(64, BACKGROUND_CONTEXT);
+    const tail = await reader.next(64, BACKGROUND_CONTEXT);
+    await reader.close(BACKGROUND_CONTEXT);
+    if (!first.ok) throw first.error;
+    if (!tail.ok) throw tail.error;
+    expect(first.value.entries).toHaveLength(64);
+    expect(tail.value.entries).toHaveLength(3);
+    const [orphan, changed, fresh] = tail.value.entries;
+    const old = new Date(Date.now() - 10 * 60_000);
+    const orphanDir = path.join(base, orphan!.name);
+    const changedDir = path.join(base, changed!.name);
+    await utimes(orphanDir, old, old);
+    await utimes(changedDir, old, old);
+
+    const checked: string[][] = [];
+    const prune = () =>
+      pruneTurnAttachments(
+        sandbox,
+        BACKGROUND_CONTEXT,
+        async (ids, settledBefore) => {
+          checked.push(ids);
+          const removable = await store.runs.removableAttachmentRunIds(ids, settledBefore);
+          // A cache changed after the durable lookup must survive.
+          await utimes(changedDir, new Date(), new Date());
+          return removable;
+        },
+        base,
+      );
+    await prune();
+    expect(checked).toEqual([]);
+    expect((await stat(orphanDir)).isDirectory()).toBe(true);
+    await prune();
+    expect(checked).toEqual([[orphan!.name, changed!.name]]);
+    await expect(stat(orphanDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await stat(changedDir)).isDirectory()).toBe(true);
+    expect((await stat(path.join(base, fresh!.name))).isDirectory()).toBe(true);
   });
 
   it("lists the files of every input a run took, including ones placed mid-run", async () => {

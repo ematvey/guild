@@ -103,8 +103,7 @@ export class AgentRunStore {
 
   async listRuns(agentId: string, filters: RunFilters = {}): Promise<AgentRun[]> {
     const params: unknown[] = [agentId];
-    let where =
-      "r.agent_id = $1 AND NOT r.internal";
+    let where = "r.agent_id = $1 AND NOT r.internal";
     if ("userId" in filters && filters.userId !== undefined) {
       params.push(filters.userId);
       where += ` AND r.user_id=$${params.length}`;
@@ -239,11 +238,15 @@ export class AgentRunStore {
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }
 
-  /** Terminal Run IDs among the sandbox attachment directories being swept. */
-  async finishedRunIds(ids: readonly string[]): Promise<string[]> {
+  /** An old attachment directory is reclaimable after the Run settles or
+   *  is purged. Materialization only begins after the Run row has committed. */
+  async removableAttachmentRunIds(ids: readonly string[], settledBefore: Date): Promise<string[]> {
     const { rows } = await this.pool.query<{ id: string }>(
-      "SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND status NOT IN ('queued', 'running')",
-      [ids],
+      `SELECT candidate.id
+       FROM unnest($1::uuid[]) AS candidate(id) LEFT JOIN agent_runs r ON r.id=candidate.id
+       WHERE r.id IS NULL
+          OR (r.status NOT IN ('queued', 'running') AND COALESCE(r.finished_at, r.created_at) < $2)`,
+      [ids, settledBefore],
     );
     return rows.map((row) => row.id);
   }
@@ -375,8 +378,7 @@ export class AgentRunStore {
    *  same visibility predicate as the agent list applies. */
   async listActivity(orgId: string, filters: ActivityFilters = {}, viewer?: UserRow): Promise<AgentActivityEntry[]> {
     const params: unknown[] = [orgId];
-    let where =
-      "a.org_id = $1 AND NOT r.internal";
+    let where = "a.org_id = $1 AND NOT r.internal";
     if (viewer !== undefined) {
       params.push(viewer.role === "admin", viewer.id);
       where += ` AND ${visiblePredicate("a")} AND ($2 OR r.user_id=$3)`;
