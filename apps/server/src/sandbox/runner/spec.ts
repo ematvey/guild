@@ -55,7 +55,7 @@ export function validSubpath(subpath: string): boolean {
   return SUBPATH.test(subpath) || AGENT_SUBPATH.test(subpath);
 }
 
-/** Agents get an always-on sandbox on the agent workspace volume. */
+/** Agent Workspace mounts use the dedicated agent volume. */
 export function isAgentSubpath(subpath: string): boolean {
   return subpath.startsWith("agents/");
 }

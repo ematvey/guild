@@ -1,3 +1,4 @@
+import { guardMemoryTool } from "../agents/conflict.js";
 // Per-turn tool provisioning: the org's enabled integrations, the chat
 // owner's MCP servers, the agent's conversation tools, and the machine and
 // workspace tool sets resolve into the conversation's extensions, tools and
@@ -5,6 +6,8 @@
 // resume runs it before a re-driven run — a resumed run must see the same
 // tool surface a submitted one gets.
 
+import { coordinationRole } from "../agents/coordination.js";
+import { coordinatorTools, coordinatorInstructions } from "../agents/coordinator-tools.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, Extension, Registry, ToolRegistration } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
@@ -67,7 +70,7 @@ export interface TurnToolDeps {
   readonly objects?: ObjectStore;
   readonly conversations: Pick<ConversationMapStore, "projectInstructions">;
   readonly binding: Pick<ThreadBinding, "threadContext" | "spawnedBy">;
-  readonly integrations: Pick<IntegrationsRuntime, "prepareTurn">;
+  readonly integrations: Pick<IntegrationsRuntime, "prepareTurn"> & Partial<Pick<IntegrationsRuntime, "authorizeTool">>;
   readonly userMcp: Pick<UserMcpRuntime, "prepareTurn">;
   readonly executors: Pick<ConversationExecutors, "envFor">;
   /** The member's paired machines: the per-call environment a coding tool
@@ -113,16 +116,30 @@ export class TurnTools {
     // outside them are neither declared nor callable.
     const agentRef = await agentThreadForChat(deps.pool, chatId);
     const agent = agentRef === null ? null : await deps.agents.fetchAgent(agentRef.agent_id);
-    const prepared = await deps.integrations.prepareTurn(conversationId, chatId, orgId);
-    const userPrepared = await deps.userMcp.prepareTurn(conversationId, chatId, orgId, signal);
+    const role = await coordinationRole(deps.pool, chatId);
+    const coordinationOnly = role?.execution_role === "coordinator" || role?.execution_role === "reflection";
+    const prepared = coordinationOnly
+      ? { extensions: [], tools: [] }
+      : await deps.integrations.prepareTurn(conversationId, chatId, orgId);
+    const userPrepared =
+      coordinationOnly || (agent !== null && !agent.is_personal)
+        ? { extensions: [], tools: [] }
+        : await deps.userMcp.prepareTurn(conversationId, chatId, orgId, signal);
     const base = deps.base();
     // The agent's allowlist narrows the direct coding and skill tools the
     // same way it narrows integrations. Codemode itself is always present:
     // it is the only path to the script-only tools.
-    const allowed = directBaseTools(base.tools, agent);
+    const allowed = coordinationOnly
+      ? base.tools.filter((t) =>
+          (role?.execution_role === "reflection"
+            ? ["codemode", "read", "write", "edit"]
+            : ["codemode", "read", "write", "edit", "bash"]
+          ).includes(t.name),
+        )
+      : directBaseTools(base.tools, agent);
     const coding = (tool: ToolRegistration): boolean => (CODING_TOOL_NAMES as readonly string[]).includes(tool.name);
     const baseTools = allowed.filter((tool) => !coding(tool));
-    const agentTools = await this.agentTools(chatId);
+    const agentTools = role?.execution_role === "reflection" ? [] : await this.agentTools(chatId, conversationId);
     // The file tools carry a per-call `machine` target; without it they act
     // on the conversation's own environment, the agent's workspace.
     const owner = await deps.chats.ownerOf(chatId);
@@ -130,10 +147,25 @@ export class TurnTools {
       chatId,
       orgId,
       userId: owner?.user_id ?? "",
-      envFor: (request) => deps.machines.envFor(request),
+      envFor: (request) => {
+        if (coordinationOnly) throw new Error("This role can execute only in its Agent Workspace");
+        return deps.machines.envFor(request);
+      },
     });
     const codingAllowed = new Set(allowed.filter(coding).map((tool) => tool.name));
-    const machineTools = routedTools.filter((tool) => codingAllowed.has(tool.name));
+    const machineTools = routedTools
+      .filter((tool) => codingAllowed.has(tool.name))
+      .map((tool) =>
+        agent === null || agentRef === null
+          ? tool
+          : guardMemoryTool(
+              tool,
+              deps.pool,
+              agentWorkspaceDir(deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id),
+              agentRef.thread_id,
+              async () => (await deps.agents.runs.runningRunForChat(chatId))?.id ?? null,
+            ),
+      );
     // Tools resolve through installed extensions; configure stores names.
     // The agent tools are per conversation, so their extension is installed
     // under a chat-scoped name and listed with the other extensions.
@@ -150,12 +182,14 @@ export class TurnTools {
         ...(agent === null
           ? {}
           : {
-              instructions: await this.agentInstructions(
-                agent,
-                await deps.conversations.projectInstructions(chatId),
-                await this.machineContext(chatId),
-                chatId,
-              ),
+              instructions:
+                (role?.execution_role === "coordinator" ? `${coordinatorInstructions(agent)}\n\n` : "") +
+                (await this.agentInstructions(
+                  agent,
+                  await deps.conversations.projectInstructions(chatId),
+                  await this.machineContext(chatId),
+                  chatId,
+                )),
             }),
       },
       BACKGROUND_CONTEXT,
@@ -209,7 +243,7 @@ export class TurnTools {
   /** The conversation tools that exist only for agent threads: send_message,
    *  conversations_search and conversation_read, filtered by the agent's
    *  tool allowlist. Plain chats get none. */
-  private async agentTools(chatId: string): Promise<ToolRegistration[]> {
+  private async agentTools(chatId: string, conversationId: number): Promise<ToolRegistration[]> {
     const deps = this.deps;
     const ref = await agentThreadForChat(deps.pool, chatId);
     deps.log.debug({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
@@ -240,6 +274,11 @@ export class TurnTools {
         canStopChat: (childChatId) => deps.turns.canStopChat(childChatId),
       },
     });
+    const role = await coordinationRole(deps.pool, chatId);
+    if (role?.execution_role === "coordinator") {
+      if (subagents === null) return [];
+      return coordinatorTools({ pool: deps.pool, store: deps.agents, agent, identity: deps.identity, subagents });
+    }
     const sendFile =
       subagents === null || deps.objects === undefined
         ? undefined
@@ -264,6 +303,8 @@ export class TurnTools {
       threads: deps.threads,
       agent,
       userId: ref.user_id,
+      identity: deps.identity,
+      coordinatorManaged: role?.coordinator_managed === true,
       chatId,
       deliverMessage: (targetChatId, orgId, text, model) =>
         deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),
@@ -284,8 +325,21 @@ export class TurnTools {
             appTools: {
               apps: deps.apps.apps,
               access: deps.apps.access,
-              functionGate: deps.apps.functionGate,
-              callFunction: deps.apps.callFunction,
+              functionGate: async (orgId, userId, fn) => {
+                const denied = await deps.integrations.authorizeTool?.(conversationId, fn.integration, fn.tool);
+                return denied
+                  ? { ok: false, reason: denied, class: null, alwaysAsk: false }
+                  : deps.apps!.functionGate(orgId, userId, fn);
+              },
+              callFunction: async (input) => {
+                const denied = await deps.integrations.authorizeTool?.(
+                  conversationId,
+                  input.fn.integration,
+                  input.fn.tool,
+                );
+                if (denied) throw new Error(denied);
+                return deps.apps!.callFunction(input);
+              },
               agent,
               chatId,
               userId: ref.user_id,

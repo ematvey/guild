@@ -84,9 +84,7 @@ export function mcpToolClass(
   manifest: JsonObject | null,
   tool: Pick<McpTool, "name" | "annotations">,
 ): ToolClass {
-  return (
-    toolCurate(rowConfig, tool.name).cls ?? declaredMcpClass(manifest, tool.name) ?? suggestedToolClass(tool)
-  );
+  return toolCurate(rowConfig, tool.name).cls ?? declaredMcpClass(manifest, tool.name) ?? suggestedToolClass(tool);
 }
 
 /** What one Turn may reach: the Trait tools its Agent's built-in allowlist
@@ -106,7 +104,7 @@ export const TRAITS_ONLY: IntegrationScope = { traits: "all", integrations: new 
  *  Agent's list. */
 export function scopeCeiling(scope: IntegrationScope, slug: string, info: IntegrationToolInfo): ToolClass | null {
   if (info.trait !== undefined) {
-    const named = scope.traits === "all" || scope.traits.has(info.spec.name);
+    const named = scope.traits === "all" || scope.traits.has(info.trait);
     return named ? (isToolClass(info.class) ? info.class : "read") : null;
   }
   return scope.integrations.get(slug) ?? null;
@@ -121,7 +119,9 @@ export function toolOffered(
   info: IntegrationToolInfo,
   ceiling: ToolClass | null,
   role: string,
+  sharedAgent = false,
 ): boolean {
+  if (sharedAgent && turn.impersonated) return false;
   if (!toolCurate(turn.rowConfig, info.raw).enabled) return false;
   if (info.class === "admin" && role !== "admin") return false;
   return ceiling !== null && classRank(info.class) <= classRank(ceiling);

@@ -136,11 +136,8 @@ export function prettyStamp(iso: string): string {
   return text;
 }
 
-/// Hover-revealed message footer — a copy button left of the timestamp:
-/// always mounted (hidden via opacity) so showing it never reflows the
-/// thread. It is the last row of the message box, in the page flow, so the
-/// transcript's own gap separates it from the next message.
-export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" | "right"; copyText?: string }) {
+/// The message footer: an always-visible timestamp and copy button.
+export function MessageStamp({ ts, copyText }: { ts?: string; copyText?: string }) {
   const text = ts ? prettyStamp(ts) : "";
   const canCopy = copyText !== undefined && copyText !== "";
   const [copied, setCopied] = useState(false);
@@ -150,13 +147,9 @@ export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" |
     return () => clearTimeout(t);
   }, [copied]);
   if (!text && !canCopy) return null;
-  // The row is in the flow, so its `pt-2` is both the gap under the text and
-  // part of the hover target: the pointer can travel from the message to the
-  // copy button without the row fading out. Pointer events switch on only
-  // while the message is hovered: hidden, the row never eats clicks.
   return (
     <div
-      className={`pointer-events-none flex items-center gap-2 pt-2 ${side === "right" ? "justify-end" : "justify-start"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100`}
+      className="flex items-center gap-2 pt-3 text-base leading-none text-muted-foreground"
     >
       {canCopy && (
         <button
@@ -171,7 +164,7 @@ export function HoverStamp({ ts, side, copyText }: { ts?: string; side: "left" |
           {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
         </button>
       )}
-      {text && <span aria-hidden>{text}</span>}
+      {text && <span>{text}</span>}
     </div>
   );
 }

@@ -35,6 +35,7 @@ import {
 import type { GenerationStreamSink } from "../chats/bridge.js";
 import { contextUsageMsg, type ContextUsageReads } from "../chats/context-usage.js";
 import type { StreamWireEvent, WsServerMsg } from "./protocol.js";
+import type { UserRow } from "../platform/store/identity.js";
 import type { SocketSink } from "./sink.js";
 import type { LiveHub } from "./live.js";
 import { sendChanged, sendChatList } from "./sent-frames.js";
@@ -188,15 +189,21 @@ export class FeedForwarder implements GenerationStreamSink {
    *  subtree; the captures compare against the last value sent. */
   private resync = (): void => {
     if (this.stopped) return;
+    const activityChats = new Set<string>();
     for (const { userId, orgId } of this.ctx.hub.memberUsers()) {
       void this.pushWorkspace(orgId, userId, ALL_PARTS);
       void this.agentState.connect(orgId, userId);
       for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
+        if (sink.runView !== null) {
+          this.track("resync_activity_run", sink.runView, this.agentState.syncRun(orgId, userId, sink, sink.runView, false));
+        }
+        if (sink.activityConversation !== null) activityChats.add(sink.activityConversation);
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
         this.subagentTree(sink.view);
       }
     }
+    for (const chatId of activityChats) this.agentState.conversationChanged(chatId);
   };
 
   // -- notify fan-in ------------------------------------------------------------
@@ -207,11 +214,19 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_thread_committed: (chatId) => {
       if (this.stopped) return;
       this.track("guild_thread_committed", chatId, this.committed(chatId));
+      this.track("guild_thread_committed", chatId, this.agentState.committedActivity(chatId));
     },
     guild_chat_status: (status) => {
       if (this.stopped) return;
       // Owner-scoped: only the owner's sockets get the frame.
-      this.sendToUser(status.user_id, { type: "chat_status", chat_id: status.chat_id, generating: status.generating });
+      void this.ensureChat(status.chat_id, false).then((identity) => {
+        if (identity !== null)
+          this.sendToUser(status.user_id, {
+            type: "chat_status",
+            chat_id: status.chat_id,
+            generating: status.generating,
+          });
+      });
       // The flip moves the chat's list row (its spinner, its unread dot):
       // each socket gets that row alone.
       void this.pushWorkspace(status.org_id, status.user_id, ["chats"]);
@@ -230,6 +245,13 @@ export class FeedForwarder implements GenerationStreamSink {
           ? ALL_PARTS
           : change.parts.filter((part): part is WorkspacePart => ALL_PARTS.includes(part as WorkspacePart));
       void this.pushWorkspace(change.org_id, change.user_id, parts.length > 0 ? parts : ALL_PARTS);
+      if (change.parts?.includes("member")) {
+        this.track(
+          "guild_workspace",
+          change.user_id,
+          this.agentState.memberProfileChanged(change.org_id, change.user_id),
+        );
+      }
     },
     guild_workspace_identity: ({ org_id: orgId }) => {
       if (this.stopped) return;
@@ -246,6 +268,9 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_compaction: (conversationId) => {
       if (this.stopped) return;
       this.track("guild_compaction", conversationId, this.compaction(conversationId));
+    },
+    guild_activity_conversation: (chatId) => {
+      if (!this.stopped) this.agentState.conversationChanged(chatId);
     },
     guild_subagent_tree: (chatId) => {
       if (this.stopped) return;
@@ -302,6 +327,12 @@ export class FeedForwarder implements GenerationStreamSink {
   connectMember(orgId: string, userId: string): Promise<void> {
     if (this.stopped) return Promise.resolve();
     return this.agentState.connect(orgId, userId);
+  }
+
+  async syncActivity(user: UserRow, sink: SocketSink): Promise<void> {
+    if (sink.runView !== null) await this.agentState.syncRun(user.org_id, user.id, sink, sink.runView);
+    if (sink.activityConversation !== null)
+      await this.agentState.syncConversation(user, sink, sink.activityConversation);
   }
 
   /** One chat's thread subtree and header facts, pushed to its owner's
@@ -622,7 +653,7 @@ export class FeedForwarder implements GenerationStreamSink {
     }
     const lookup = (async (): Promise<ChatIdentity | null> => {
       const row = await this.ctx.chats.identityOf(chatId);
-      if (row === null) return null;
+      if (row === null || row.internal) return null;
       const identity: ChatIdentity = { orgId: row.org_id, userId: row.user_id, machineId: row.machine_id };
       this.remember(chatId, identity);
       return identity;

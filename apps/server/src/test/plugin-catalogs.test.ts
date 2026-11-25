@@ -420,6 +420,28 @@ describe("trait bindings", () => {
     // searxng is not enabled in this org, so the enabled plugin still answers.
     expect(bound.active).toBe("acme-upload");
   });
+
+  it("lists one provider per instance of a kind, and binds the instance", async () => {
+    const second = await api("POST", "/api/v1/admin/integrations", {
+      kind: "acme-upload",
+      name: "acme-upload-eu",
+      label: "Acme EU",
+    });
+    expect(second.status).toBe(200);
+    const listed = await api("GET", "/api/v1/admin/integrations/traits");
+    const search = listed.body.traits.find((t: { name: string }) => t.name === "web_search");
+    const mine = search.providers.filter((p: { slug: string }) => p.slug.startsWith("acme-upload"));
+    expect(mine.map((p: { slug: string }) => p.slug).sort()).toEqual(["acme-upload", "acme-upload-eu"]);
+    expect(mine.find((p: { slug: string }) => p.slug === "acme-upload-eu")).toMatchObject({
+      title: "Acme EU",
+      enabled: false,
+    });
+    // A binding names the instance the Turn resolves under.
+    const bound = await api("PUT", "/api/v1/admin/integrations/traits/web_search", { provider: "acme-upload-eu" });
+    expect(bound.status).toBe(200);
+    const after = await api("GET", "/api/v1/admin/integrations/traits");
+    expect(after.body.traits.find((t: { name: string }) => t.name === "web_search").provider).toBe("acme-upload-eu");
+  });
 });
 
 describe("compareVersions", () => {

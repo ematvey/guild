@@ -20,13 +20,15 @@ pub enum WsClientMsg {
     Ping {},
     Sync {
         chat_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity_chat_id: Option<Uuid>,
     },
     /// The member socket's duplex read-mark: moves the caller's marker to
     /// the chat's newest event (the REST POST /chats/:id/read, on the wire
     /// the turn already rides).
-    Read {
-        chat_id: Uuid,
-    },
+    Read { chat_id: Uuid },
     MachineResponse {
         request_id: String,
         ok: bool,
@@ -266,11 +268,27 @@ pub enum WsServerMsg {
     IntegrationAccess {
         integrations: Vec<serde_json::Value>,
     },
-    /// One run, created or changed, for every member who may see its agent.
+    /// One non-internal run, created or changed, for the requesting member.
     /// A finished run carries its `call_count` and `tool_count`. Daemons
     /// tag-peek and ignore it.
     AgentRun {
         run: serde_json::Value,
+    },
+    /// Run and thread counts visible to the activity viewer.
+    ActivityRun {
+        run: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<Vec<serde_json::Value>>,
+        counts: Option<serde_json::Value>,
+    },
+    /// The selected Activity Run is unavailable to the viewer.
+    ActivityRunUnavailable {
+        run_id: Uuid,
+    },
+    /// The newest Activity Conversation page visible to the selected viewer.
+    ActivityConversation {
+        chat_id: Uuid,
+        detail: Option<serde_json::Value>,
     },
     /// The member's open user threads with one agent, newest activity first.
     /// Daemons tag-peek and ignore it.
@@ -292,7 +310,9 @@ pub enum WsServerMsg {
     },
     /// The Apps the member sees, newest change first. Daemons tag-peek and
     /// ignore it.
-    AppList { apps: Vec<serde_json::Value> },
+    AppList {
+        apps: Vec<serde_json::Value>,
+    },
     /// One chat's tree facts for its header: sent inside the chat's sync
     /// bracket and whenever its title, run status, parent or flags change.
     /// Daemons tag-peek and ignore it.
@@ -337,6 +357,8 @@ mod tests {
     fn client_msgs_round_trip() {
         let sync = WsClientMsg::Sync {
             chat_id: Some(Uuid::nil()),
+            run_id: None,
+            activity_chat_id: None,
         };
         let json = serde_json::to_string(&sync).unwrap();
         assert!(json.contains(r#""type":"sync""#));

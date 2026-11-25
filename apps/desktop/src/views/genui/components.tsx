@@ -73,8 +73,8 @@ const Card: R<"Card"> = ({ props, renderNode }) => (
   <section className="flex min-w-0 flex-1 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
     {(props.title || props.description) && (
       <header className="space-y-0.5">
-        {props.title && <h3 className="text-sm font-semibold text-foreground">{props.title}</h3>}
-        {props.description && <p className="text-xs text-muted-foreground">{props.description}</p>}
+        {props.title && <h3 className="text-lg font-semibold text-foreground">{props.title}</h3>}
+        {props.description && <p className="text-base text-muted-foreground">{props.description}</p>}
       </header>
     )}
     {renderNode(props.children)}
@@ -107,7 +107,7 @@ const Tabs: R<"Tabs"> = ({ props, renderNode }) => {
             role="tab"
             aria-selected={i === current}
             onClick={() => setActive(i)}
-            className={`-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors ${
+            className={`-mb-px border-b-2 px-3 py-1.5 text-base transition-colors ${
               i === current
                 ? "border-foreground font-medium text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -131,9 +131,9 @@ const Separator: R<"Separator"> = () => <hr className="border-border" />;
 
 const TEXT_CLASS = {
   body: "text-base",
-  muted: "text-sm text-muted-foreground",
-  title: "text-lg font-semibold text-foreground",
-  subtitle: "text-sm font-medium text-foreground",
+  muted: "text-base text-muted-foreground",
+  title: "text-base font-semibold text-foreground",
+  subtitle: "text-base font-medium text-foreground",
 } as const;
 
 const Text: R<"Text"> = ({ props }) => (
@@ -150,10 +150,10 @@ const Metric: R<"Metric"> = ({ props }) => {
   const Icon = props.trend ? TREND_ICON[props.trend] : null;
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl border border-border bg-card px-4 py-3">
-      <span className="truncate text-xs text-muted-foreground">{props.label}</span>
-      <span className="truncate text-xl font-semibold tabular-nums text-foreground">{String(props.value)}</span>
+      <span className="truncate text-base text-muted-foreground">{props.label}</span>
+      <span className="truncate text-base font-semibold tabular-nums text-foreground">{String(props.value)}</span>
       {(props.delta || Icon) && (
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1 text-base text-muted-foreground">
           {Icon && <Icon className="size-3.5 shrink-0" aria-hidden />}
           {props.delta}
         </span>
@@ -164,8 +164,8 @@ const Metric: R<"Metric"> = ({ props }) => {
 
 const Callout: R<"Callout"> = ({ props }) => (
   <div className={`rounded-lg border px-3 py-2 ${TONE[props.tone ?? "info"]}`}>
-    {props.title && <p className="text-sm font-semibold">{props.title}</p>}
-    <div className={`${MD_CLASS} text-sm [&_p]:m-0`}>
+    {props.title && <p className="text-base font-semibold">{props.title}</p>}
+    <div className={`${MD_CLASS} text-base [&_p]:m-0`}>
       <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
         {props.text}
       </Markdown>
@@ -187,7 +187,7 @@ const Progress: R<"Progress"> = ({ props }) => {
   const pct = Math.min(Math.max((props.value / max) * 100, 0), 100);
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex justify-between gap-2 text-xs text-muted-foreground">
+      <div className="flex justify-between gap-2 text-base text-muted-foreground">
         <span className="truncate">{props.label}</span>
         <span className="tabular-nums">{max === 100 ? `${Math.round(pct)}%` : `${props.value} / ${max}`}</span>
       </div>
@@ -205,15 +205,15 @@ const Progress: R<"Progress"> = ({ props }) => {
 
 const Fact: R<"Fact"> = ({ props }) => (
   <div className="flex justify-between gap-4 border-b border-border py-1.5 last:border-b-0">
-    <dt className="text-sm text-muted-foreground">{props.label}</dt>
-    <dd className="text-right text-sm text-foreground">{String(props.value)}</dd>
+    <dt className="text-base text-muted-foreground">{props.label}</dt>
+    <dd className="text-right text-base text-foreground">{String(props.value)}</dd>
   </div>
 );
 
 const Facts: R<"Facts"> = ({ props, renderNode }) => <dl className="flex flex-col">{renderNode(props.items)}</dl>;
 
 const Tag: R<"Tag"> = ({ props }) => (
-  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${TONE[props.tone ?? "neutral"]}`}>
+  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-base ${TONE[props.tone ?? "neutral"]}`}>
     {props.text}
   </span>
 );
@@ -224,12 +224,12 @@ const Tags: R<"Tags"> = ({ props, renderNode }) => (
 
 const Table: R<"Table"> = ({ props }) => (
   <div className="max-w-full overflow-x-auto rounded-lg border border-border">
-    <table className="w-full text-xs [overflow-wrap:break-word]">
+    <table className="w-full text-base [overflow-wrap:break-word]">
       {props.caption && <caption className="px-3 py-1.5 text-left text-muted-foreground">{props.caption}</caption>}
       <thead>
         <tr>
           {props.columns.map((c, i) => (
-            <th key={i} className="border-b-2 border-border px-3 py-1.5 text-left font-semibold">
+            <th key={i} className="border-b-2 border-border px-3 py-1.5 text-left text-base font-semibold">
               {c}
             </th>
           ))}
@@ -282,14 +282,14 @@ function seriesData(
   return { rows, config, keys };
 }
 
-const CHART_CLASS = "aspect-auto h-56 w-full";
+const CHART_CLASS = "aspect-auto h-56 w-full text-base";
 
 const BarChartView: R<"BarChart"> = ({ props }) => {
   const { rows, config, keys } = useMemo(() => seriesData(props.labels, props.series), [props.labels, props.series]);
   return (
     <ChartContainer
       config={config}
-      className={props.horizontal ? "aspect-auto w-full" : CHART_CLASS}
+      className={props.horizontal ? "aspect-auto w-full text-base" : CHART_CLASS}
       style={props.horizontal ? { height: Math.max(160, rows.length * 32 + 48) } : undefined}
     >
       <BarChart
@@ -309,7 +309,7 @@ const BarChartView: R<"BarChart"> = ({ props }) => {
             <YAxis tickLine={false} axisLine={false} width={40} />
           </>
         )}
-        <ChartTooltip content={<ChartTooltipContent />} />
+        <ChartTooltip content={<ChartTooltipContent className="text-base" />} />
         {keys.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
         {keys.map((k) => (
           <Bar key={k} dataKey={k} fill={`var(--color-${k})`} radius={3} stackId={props.stacked ? "a" : undefined} />
@@ -326,7 +326,7 @@ const LineChartView: R<"LineChart"> = ({ props }) => {
       <CartesianGrid vertical={false} />
       <XAxis dataKey="label" tickLine={false} axisLine={false} />
       <YAxis tickLine={false} axisLine={false} width={40} />
-      <ChartTooltip content={<ChartTooltipContent />} />
+      <ChartTooltip content={<ChartTooltipContent className="text-base" />} />
       {keys.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
     </>
   );
@@ -370,7 +370,7 @@ const PieChartView: R<"PieChart"> = ({ props }) => {
   return (
     <ChartContainer config={config} className={CHART_CLASS}>
       <PieChart>
-        <ChartTooltip content={<ChartTooltipContent nameKey="key" hideLabel />} />
+        <ChartTooltip content={<ChartTooltipContent nameKey="key" hideLabel className="text-base" />} />
         <Pie data={rows} dataKey="value" nameKey="key" innerRadius="45%" strokeWidth={2}>
           {rows.map((r) => (
             <Cell key={r.key} fill={`var(--color-${r.key})`} />
@@ -427,7 +427,7 @@ const GenButton: R<"Button"> = ({ props }) => {
       variant={VARIANT[variant]}
       disabled={disabled}
       aria-pressed={chosen || undefined}
-      className={chosen ? "ring-2 ring-ring ring-offset-1 ring-offset-background disabled:opacity-100" : undefined}
+      className={`text-base ${chosen ? "ring-2 ring-ring ring-offset-1 ring-offset-background disabled:opacity-100" : ""}`}
       onClick={() => {
         if (validation && variant === "primary" && !validation.validateForm()) return;
         void triggerAction(props.label, formName, props.action as Parameters<typeof triggerAction>[2]);
@@ -472,16 +472,16 @@ const Field: R<"Field"> = ({ props, renderNode }) => {
   return (
     <div className="flex flex-col gap-1.5">
       {!isCheckbox && (
-        <label htmlFor={name} className="text-sm font-medium text-foreground">
+        <label htmlFor={name} className="text-base font-medium text-foreground">
           {props.label}
           {input?.props?.rules?.required && <span className="text-destructive"> *</span>}
         </label>
       )}
       {renderNode(props.input)}
       {error ? (
-        <span className="text-xs text-destructive">{error}</span>
+        <span className="text-base text-destructive">{error}</span>
       ) : props.hint ? (
-        <span className="text-xs text-muted-foreground">{props.hint}</span>
+        <span className="text-base text-muted-foreground">{props.hint}</span>
       ) : null}
     </div>
   );
@@ -513,6 +513,7 @@ const GenInput: R<"Input"> = ({ props }) => {
   const rules = useFieldRules(field.name, props.rules, field.value);
   return (
     <Input
+      className="text-base"
       id={field.name}
       name={field.name}
       type={props.type ?? "text"}
@@ -557,14 +558,14 @@ const GenSelect: R<"Select"> = ({ props }) => {
         rules.onFocus();
       }}
     >
-      <SelectTrigger id={field.name}>
+      <SelectTrigger id={field.name} className="text-base">
         <SelectValue placeholder={props.placeholder ?? "Choose…"} />
       </SelectTrigger>
       <SelectContent>
         {props.options
           .filter((o) => o !== "")
           .map((o) => (
-            <SelectItem key={o} value={o}>
+            <SelectItem key={o} value={o} className="text-base">
               {o}
             </SelectItem>
           ))}
@@ -577,7 +578,7 @@ const GenCheckbox: R<"Checkbox"> = ({ props }) => {
   const field = useStateField<boolean>(props.name, props.value);
   const inert = useInert();
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-sm">
+    <label className="flex cursor-pointer items-center gap-2 text-base">
       <input
         type="checkbox"
         className="size-4 accent-foreground"

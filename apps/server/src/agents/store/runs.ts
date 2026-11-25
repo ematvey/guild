@@ -1,3 +1,4 @@
+import type { AgentRunStep as WireAgentRunStep } from "@guild/wire/rest";
 // Agent runs: create and update (mirrored into the trace store, with the
 // subagent-tree NOTIFY on a status move), the run lookups a turn resolves
 // itself by, the run's derived steps, the org activity log, and the
@@ -22,6 +23,7 @@ import { visiblePredicate } from "./access.js";
 import { RUN_COLUMNS, toRun } from "./rows.js";
 
 export interface RunFilters {
+  userId?: string;
   status?: AgentRunStatus;
   trigger?: AgentTrigger;
   limit?: number;
@@ -38,6 +40,8 @@ export interface ActivityFilters {
 }
 
 export interface CreateRunInput {
+  /** Stable identity for a replay-safe coordination action. */
+  id?: string;
   agent_id: string;
   user_id?: string | null;
   thread_id?: string | null;
@@ -99,7 +103,11 @@ export class AgentRunStore {
 
   async listRuns(agentId: string, filters: RunFilters = {}): Promise<AgentRun[]> {
     const params: unknown[] = [agentId];
-    let where = "r.agent_id = $1";
+    let where = "r.agent_id = $1 AND NOT r.internal";
+    if ("userId" in filters && filters.userId !== undefined) {
+      params.push(filters.userId);
+      where += ` AND r.user_id=$${params.length}`;
+    }
     if (filters.status !== undefined) {
       params.push(filters.status);
       where += ` AND r.status = $${params.length}`;
@@ -230,6 +238,19 @@ export class AgentRunStore {
     return res.rows[0] === undefined ? null : toRun(res.rows[0]);
   }
 
+  /** Settled Runs no longer need their caches. A missing Run is reclaimable
+   *  only if its directory is stale. */
+  async removableAttachmentRunIds(ids: readonly string[], staleIds: readonly string[]): Promise<string[]> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT candidate.id
+       FROM unnest($1::uuid[]) AS candidate(id) LEFT JOIN agent_runs r ON r.id=candidate.id
+       WHERE r.status NOT IN ('queued', 'running')
+          OR (r.id IS NULL AND candidate.id=ANY($2::uuid[]))`,
+      [ids, staleIds],
+    );
+    return rows.map((row) => row.id);
+  }
+
   /** Direct children of one run, oldest first. */
   async childRuns(parentRunId: string): Promise<AgentRun[]> {
     const res = await this.pool.query<Record<string, unknown>>(
@@ -246,10 +267,11 @@ export class AgentRunStore {
          INSERT INTO agent_runs
            (id, agent_id, user_id, thread_id, routine_id, parent_run_id, delegate_agent_id, depth, trigger, status, summary, started_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO UPDATE SET id=EXCLUDED.id
          RETURNING *)
        SELECT ${RUN_COLUMNS} FROM r`,
       [
-        uuidv7(),
+        input.id ?? uuidv7(),
         input.agent_id,
         input.user_id ?? null,
         input.thread_id ?? null,
@@ -305,7 +327,7 @@ export class AgentRunStore {
         return trace.recordTrace({
           trace_id: run.id,
           org_id: ctx.org_id,
-          user_id: run.user_id,
+          user_id: run.internal ? null : run.user_id,
           agent_id: run.agent_id,
           agent_name: ctx.agent_name,
           session_id: ctx.chat_id,
@@ -340,7 +362,8 @@ export class AgentRunStore {
   /** The chat's running run with the trace context the tool hook needs. */
   async runningRunTraceForChat(chatId: string): Promise<RunTraceContext | null> {
     const res = await this.pool.query<RunTraceContext>(
-      `SELECT r.id AS run_id, a.org_id, r.user_id, t.chat_id AS session_id, r.agent_id, a.name AS agent_name
+      `SELECT r.id AS run_id, a.org_id, CASE WHEN r.internal THEN NULL ELSE r.user_id END AS user_id,
+              t.chat_id AS session_id, r.agent_id, a.name AS agent_name
        FROM agent_runs r
        JOIN agent_threads t ON t.id = r.thread_id
        JOIN agents a ON a.id = r.agent_id
@@ -355,10 +378,10 @@ export class AgentRunStore {
    *  same visibility predicate as the agent list applies. */
   async listActivity(orgId: string, filters: ActivityFilters = {}, viewer?: UserRow): Promise<AgentActivityEntry[]> {
     const params: unknown[] = [orgId];
-    let where = "a.org_id = $1";
+    let where = "a.org_id = $1 AND NOT r.internal";
     if (viewer !== undefined) {
       params.push(viewer.role === "admin", viewer.id);
-      where += ` AND ${visiblePredicate("a")}`;
+      where += ` AND ${visiblePredicate("a")} AND ($2 OR r.user_id=$3)`;
     }
     if (filters.agent_id !== undefined) {
       params.push(filters.agent_id);
@@ -422,4 +445,24 @@ export class AgentRunStore {
     const lastByRoutine = new Map(res.rows.map((row) => [row.routine_id as string, toRun(row)]));
     return routines.map((routine) => ({ ...routine, last_run: lastByRoutine.get(routine.id) ?? null }));
   }
+}
+
+/** Durable steps as read in Activity over HTTP or the member socket. */
+export function runStepsWire(steps: AgentRunStep[]): WireAgentRunStep[] {
+  return steps.map((step) => ({
+    kind:
+      step.type === "user_message"
+        ? "user"
+        : step.type === "assistant_text"
+          ? "assistant"
+          : step.type === "tool_call"
+            ? "tool"
+            : "file",
+    name: step.name ?? null,
+    status: step.is_error === true ? "error" : "ok",
+    detail: step.text ?? (step.type === "file" ? (step.paths ?? []).join("\n") : null),
+    at: step.ts,
+    call_id: step.call_id ?? null,
+    is_error: step.is_error ?? null,
+  }));
 }

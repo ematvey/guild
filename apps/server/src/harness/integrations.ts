@@ -1,3 +1,6 @@
+import { readIntegrationAgentIdentity, readIntegrationAgentScope } from "../agents/store/coordination.js";
+import { memberCeiling, minClass } from "../platform/domain/integration-access.js";
+import { coordinationSettings } from "../agents/coordination.js";
 // The integrations chat runtime (server_tool_step + the plugin turn
 // machinery): per turn the enabled
 // plugins of the conversation's org resolve into a snapshot, one dynamic
@@ -61,11 +64,18 @@ interface TurnSnapshot {
   turns: IntegrationTurn[];
   caller: IntegrationCaller | null;
   scope: IntegrationScope;
+  sharedAgent?: boolean;
 }
 
 /** Whether a snapshot's Turn may call one tool. */
 function offered(snapshot: TurnSnapshot, turn: IntegrationTurn, info: IntegrationToolInfo): boolean {
-  return toolOffered(turn, info, scopeCeiling(snapshot.scope, turn.slug, info), snapshot.caller?.role ?? "member");
+  return toolOffered(
+    turn,
+    info,
+    scopeCeiling(snapshot.scope, turn.slug, info),
+    snapshot.caller?.role ?? "member",
+    snapshot.sharedAgent,
+  );
 }
 
 /** The narrow gateway slice the runtime needs (structurally the
@@ -169,13 +179,13 @@ function approvalClass(turn: IntegrationTurn, info: IntegrationToolInfo): Integr
 /** External read classes do not promise that a download's local file
  * effects are independent. Raw API semantics belong to the connector. */
 export function independentIntegrationRead(
-  turn: Pick<IntegrationTurn, "slug" | "executor">,
+  turn: Pick<IntegrationTurn, "slug" | "kind" | "executor">,
   info: Pick<IntegrationToolInfo, "raw" | "class">,
   args: Record<string, unknown>,
 ): boolean {
-  if (turn.slug === "google_workspace" && ["drive_get_file", "gmail_get_attachment"].includes(info.raw)) return false;
+  if (turn.kind === "google_workspace" && ["drive_get_file", "gmail_get_attachment"].includes(info.raw)) return false;
   if (info.class === "read") return true;
-  if (turn.executor !== "connector" || turn.slug !== "hubspot" || info.raw !== "api") return false;
+  if (turn.executor !== "connector" || turn.kind !== "hubspot" || info.raw !== "api") return false;
   if (args.method === undefined && !("method" in args)) return true;
   if (args.method === "GET") return true;
   return (
@@ -257,7 +267,15 @@ export class IntegrationsRuntime {
       throw error;
     }
     const [caller, scope] = await Promise.all([this.chatCaller(chatId), this.scopeOf(chatId)]);
-    const draft: TurnSnapshot = { orgId, chatId, turns: [], caller, scope };
+    const agentRow = (await readIntegrationAgentIdentity<{ is_personal: boolean }>(this.deps.pool, [chatId])).rows[0];
+    const draft: TurnSnapshot = {
+      orgId,
+      chatId,
+      turns: [],
+      caller,
+      scope,
+      sharedAgent: agentRow !== undefined && !agentRow.is_personal,
+    };
     const turns = resolved
       .map((turn) => ({ ...turn, tools: turn.tools.filter((info) => offered(draft, turn, info)) }))
       .filter((turn) => turn.tools.length > 0);
@@ -276,8 +294,40 @@ export class IntegrationsRuntime {
     return { extensions: [extension], tools };
   }
 
-  private scopeOf(chatId: string): Promise<IntegrationScope> {
-    return this.deps.scopeOf?.(chatId) ?? integrationScopeForChat(this.access, chatId);
+  private async scopeOf(chatId: string): Promise<IntegrationScope> {
+    const scope = await (this.deps.scopeOf?.(chatId) ?? integrationScopeForChat(this.access, chatId));
+    const row = (
+      await readIntegrationAgentScope<{
+        resources: Record<string, unknown>;
+        is_personal: boolean;
+        model: string;
+        user_id: string;
+        org_id: string;
+      }>(this.deps.pool, [chatId])
+    ).rows[0];
+    if (row === undefined || row.is_personal || coordinationSettings(row).scope !== "member") return scope;
+    const context = await this.access.context(row.org_id);
+    const member = context.members.get(row.user_id);
+    return {
+      ...scope,
+      integrations: new Map(
+        [...scope.integrations].flatMap(([slug, ceiling]) => {
+          const audience = context.audiences.get(slug);
+          const granted = member === undefined || audience === undefined ? null : memberCeiling(audience, member);
+          return granted === null ? [] : [[slug, minClass(ceiling, granted)]];
+        }),
+      ),
+    };
+  }
+
+  /** Shared execution boundary for direct tools and App data functions. */
+  async authorizeTool(conversationId: number, slug: string, name: string): Promise<string | null> {
+    const snapshot = await this.authorizedSnapshot(conversationId);
+    const turn = snapshot?.turns.find((t) => t.slug === slug);
+    const info = turn?.tools.find((t) => t.raw === name || t.spec.name === name);
+    return snapshot !== undefined && turn !== undefined && info !== undefined && offered(snapshot, turn, info)
+      ? null
+      : "Tool is outside this Agent's current Integration grants or requires unsupported account impersonation";
   }
 
   /** Resolve the chat owner's current role and acting identity. */

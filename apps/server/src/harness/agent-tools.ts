@@ -9,10 +9,18 @@ import { MachineTargetError } from "../machines/targets.js";
 
 /** The tool API with `env` replaced: pi's tools resolve their environment
  *  through `api.env`, so this is the whole binding. */
+const MACHINE_TARGET = Symbol("machine-tool-call");
+
+/** Trusted routing context after the machine argument has been consumed. */
+export function isMachineToolCall(api: ToolExecutionApi): boolean {
+  return Reflect.get(api, MACHINE_TARGET) === true;
+}
+
 function withEnv<T extends JsonValue>(api: ToolExecutionApi<T>, env: ExecutionEnv): ToolExecutionApi<T> {
   return new Proxy(api, {
     get(target, prop, receiver) {
       if (prop === "env") return env;
+      if (prop === MACHINE_TARGET) return true;
       return Reflect.get(target, prop, receiver);
     },
   });

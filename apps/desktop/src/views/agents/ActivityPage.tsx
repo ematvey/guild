@@ -7,7 +7,7 @@
 // filters ride the query, the open run is /runs/<id>, the conversation is
 // /chats/<id>.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -26,6 +26,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@guild/ui/components/button";
 import { cn } from "@guild/ui/lib/utils";
+import { ACTIVITY_CONVERSATION_PAGE, type ConversationSnapshot } from "@guild/wire/rest";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import {
   AGENTS_ACTIVITY,
@@ -53,7 +54,14 @@ import {
   type TraceRow,
 } from "./agents-api";
 import type { AgentRun } from "./agents-api";
-import { summaryWithTrace, traceFromRun, traceWithRun, useAgentRunUpdates } from "./agents-store";
+import {
+  summaryWithTrace,
+  traceFromRun,
+  traceWithRun,
+  useActivityRunUpdates,
+  useActivityConversationUpdates,
+  useAgentConnectionEpoch,
+} from "./agents-store";
 import { AgentGlyph, ErrorState, InlineLoading, LoadingRows, PageBody, TabBar, ToneBadge } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
@@ -73,7 +81,7 @@ const PERIOD_MS: Record<ActivityPeriod, number> = {
   "30d": 30 * 24 * 3_600_000,
 };
 const ACTIVITY_TABS: ReadonlyArray<readonly [ActivityTab, string]> = [
-  ["chats", "Conversations"],
+  ["chats", "Threads"],
   ["traces", "Runs"],
   ["calls", "Model calls"],
 ];
@@ -121,10 +129,16 @@ export function ActivityPage({
   /** The signed-in user's workspace role. */
   role: string;
 }) {
-  const [summary, setSummary] = useState<ActivitySummary | null>(null);
-  const [traces, setTraces] = useState<TraceRow[] | null>(null);
+  const [summarySeed, setSummary] = useState<ActivitySummary | null>(null);
+  const [traceSeed, setTraceSeed] = useState<Awaited<ReturnType<typeof listTraces>> | null>(null);
   const [spans, setSpans] = useState<SpanRow[] | null>(null);
-  const [conversations, setConversations] = useState<ConversationRow[] | null>(null);
+  const [conversationSeed, setConversations] = useState<ConversationRow[] | null>(null);
+  const [updates, setUpdates] = useState<{
+    scope: string;
+    epoch: number;
+    runs?: ReadonlyMap<string, AgentRun>;
+    counts?: Record<string, Pick<ConversationRow, "runs" | "open_runs" | "failed_runs">>;
+  } | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -136,11 +150,46 @@ export function ActivityPage({
   // The text filters fetch once typing pauses; the URL follows every key.
   const q = useDebounced(filters.q.trim(), SEARCH_DEBOUNCE_MS);
   const model = useDebounced(filters.model, SEARCH_DEBOUNCE_MS);
+  const admin = role === "admin";
+  const background = admin && filters.background;
   const { tab, period, status, trigger, caller } = filters;
+  const connectionEpoch = useAgentConnectionEpoch();
+  const seedEpoch = tab === "calls" ? 0 : connectionEpoch;
+  const scope = JSON.stringify([tab, period, status, trigger, q, caller, model, agentId, background, tick, role]);
+  const pushed = updates?.scope === scope && updates.epoch === seedEpoch ? updates : null;
+  const conversations = useMemo(
+    () => conversationSeed?.map((row) => ({ ...row, ...pushed?.counts?.[row.thread?.id ?? ""] })) ?? null,
+    [conversationSeed, pushed],
+  );
+
+  // Socket updates received during the read win over the snapshot. Keep
+  // telemetry that a Run frame doesn't carry and count each Run only once.
+  const display = useMemo(() => {
+    const seed = traceSeed?.traces ?? null;
+    if (tab !== "traces" || seed === null) return { traces: null, summary: summarySeed, total };
+    const rows = new Map(seed.map((trace) => [trace.trace_id, trace]));
+    const added: TraceRow[] = [];
+    let summary = summarySeed;
+    for (const run of pushed?.runs?.values() ?? []) {
+      const before = rows.get(run.id);
+      if (before === undefined && !runMatchesFilters(run, filters, agentId)) continue;
+      const after = before === undefined ? traceFromRun(run) : traceWithRun(before, run);
+      if (before === undefined) added.push(after);
+      else rows.set(run.id, after);
+      if (summary !== null) summary = summaryWithTrace(summary, before, after);
+    }
+    return {
+      traces: [...added.reverse(), ...rows.values()],
+      summary,
+      total: (traceSeed?.total ?? 0) + added.length,
+    };
+  }, [tab, traceSeed, pushed, summarySeed, total, filters, agentId]);
 
   useEffect(() => {
     let live = true;
     setError(null);
+    // On connect a Run may arrive before React starts the new HTTP read.
+    setUpdates((current) => (current?.scope === scope && current.epoch === seedEpoch ? current : null));
     // The window ends now: computed per fetch, not per render.
     const range = windowQuery(period);
     const query: ActivityQuery = {
@@ -171,7 +220,7 @@ export function ActivityPage({
             setTotal(res.total);
           })
         : tab === "chats"
-          ? listConversations(query).then((res) => {
+          ? listConversations({ ...query, ...(background ? { background } : {}) }).then((res) => {
               if (!live) return;
               setConversations(res.conversations);
               setTotal(res.total);
@@ -182,44 +231,41 @@ export function ActivityPage({
               ...(trigger !== "all" ? { trigger } : {}),
             }).then((res) => {
               if (!live) return;
-              setTraces(res.traces);
-              setTotal(res.total);
+              setTraceSeed(res);
             });
     void load.catch((err: unknown) => {
       if (!live) return;
       setError(err instanceof Error ? err.message : "The activity API did not answer.");
-      setTraces(null);
+      setTraceSeed(null);
       setSpans(null);
       setConversations(null);
     });
     return () => {
       live = false;
     };
-  }, [tab, period, status, trigger, q, caller, model, agentId, tick]);
+  }, [tab, period, status, trigger, q, caller, model, agentId, background, tick, scope, seedEpoch]);
 
-  // The traces tab is live: a pushed run moves its row, and a new run that
-  // matches the filters joins the top. The calls and chats tabs are span
-  // analytics over the trace store and reload on their Refresh.
-  useAgentRunUpdates((run) => {
-    if (filters.tab !== "traces" || traces === null) return;
-    const before = traces.find((row) => row.trace_id === run.id);
-    if (before !== undefined) {
-      const after = traceWithRun(before, run);
-      setTraces((rows) => rows?.map((row) => (row.trace_id === run.id ? after : row)) ?? rows);
-      setSummary((value) => (value === null ? value : summaryWithTrace(value, before, after)));
-      return;
+  useActivityRunUpdates((frame, epoch) => {
+    if (frame.type !== "activity_run") return;
+    const { run, counts } = frame;
+    const threadId = run.thread_id;
+    if (tab === "chats" && counts !== null && threadId !== null && (!run.internal || background)) {
+      setUpdates((current) => {
+        const previous = current?.scope === scope && current.epoch === epoch ? current.counts : undefined;
+        return { scope, epoch, counts: { ...previous, [threadId]: counts } };
+      });
     }
-    if (!runMatchesFilters(run, filters, agentId)) return;
-    const row = traceFromRun(run);
-    setTraces((rows) => (rows === null || rows.some((r) => r.trace_id === run.id) ? rows : [row, ...rows]));
-    setSummary((value) => (value === null ? value : summaryWithTrace(value, undefined, row)));
-    setTotal((value) => value + 1);
+    if (tab === "traces" && (!run.internal || admin) && (agentId === undefined || run.agent_id === agentId)) {
+      setUpdates((current) => {
+        const previous = current?.scope === scope && current.epoch === epoch ? current.runs : undefined;
+        return { scope, epoch, runs: new Map(previous).set(run.id, run) };
+      });
+    }
   });
 
-  const admin = role === "admin";
   const body = (
     <>
-      <SummaryCards summary={summary} admin={admin} />
+      <SummaryCards summary={display.summary} admin={admin} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Select value={filters.period} onValueChange={(v) => set({ period: v as ActivityPeriod })}>
           <SelectTrigger aria-label="Period" className="h-8 w-28 text-xs">
@@ -303,9 +349,19 @@ export function ActivityPage({
             className="w-full rounded-md border border-border bg-transparent py-1 pl-7 pr-2 text-xs placeholder:text-muted-foreground/60"
           />
         </div>
+        {admin && tab === "chats" && (
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={background}
+              onChange={(event) => set({ background: event.target.checked })}
+            />
+            Include background threads
+          </label>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {count(total, filters.tab === "chats" ? "conversation" : filters.tab === "calls" ? "call" : "run")}
+            {count(display.total, filters.tab === "chats" ? "thread" : filters.tab === "calls" ? "call" : "run")}
           </span>
           {filters.tab !== "traces" && (
             <Button
@@ -327,7 +383,7 @@ export function ActivityPage({
         )}
         {error === null && filters.tab === "traces" && (
           <TracesTable
-            rows={traces}
+            rows={display.traces}
             admin={admin}
             showAgent={agentId === undefined}
             onOpen={(id) => onNavigate({ view: "run", runId: id })}
@@ -372,7 +428,6 @@ export function ActivityPage({
       <PageHeader
         variant="bar"
         title="Activity"
-        description="Conversations and the runs inside them, then the model and tool calls of one run."
         tabs={
           <TabBar label="Activity views" tabs={ACTIVITY_TABS} value={filters.tab} onChange={(tab) => set({ tab })} />
         }
@@ -650,15 +705,14 @@ function ConversationsTable({
     return (
       <EmptyState
         icon={MessageSquare}
-        title="No conversations in this window"
-        hint="A conversation is one chat: its trigger messages, its runs, and the agent's replies."
+        title="No threads in this window"
       />
     );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="hidden grid-cols-[minmax(0,1fr)_9rem_8rem_4rem_5rem_5rem_7rem_2rem] gap-3 border-b border-border px-3 py-2 text-2xs uppercase tracking-wide text-muted-foreground lg:grid">
-        <span>Conversation</span>
+        <span>Thread</span>
         <span>Owner</span>
         <span>Agent</span>
         <span className="text-right">Runs</span>
@@ -677,8 +731,9 @@ function ConversationsTable({
           <span className="min-w-0">
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-sm font-medium">
-                {row.title !== null && row.title.trim() !== "" ? row.title : "Untitled conversation"}
+                {row.title !== null && row.title.trim() !== "" ? row.title : "Untitled thread"}
               </span>
+              {row.internal && <ToneBadge tone="neutral">Background</ToneBadge>}
               {row.open_runs > 0 && <ToneBadge tone="info">Running</ToneBadge>}
               {row.failed_runs > 0 && <ToneBadge tone="danger">{count(row.failed_runs, "failed run")}</ToneBadge>}
               {row.archived && <ToneBadge tone="neutral">Archived</ToneBadge>}
@@ -763,77 +818,181 @@ function ownerInitials(row: ConversationRow): string {
   return parts.length === 1 ? name.slice(0, 2) : `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`;
 }
 
-const CONVERSATION_PAGE = 200;
+function conversationItemKey(item: ConversationItem): string {
+  return item.kind === "message" ? `message:${item.seq}` : `run:${item.run.id}`;
+}
+
+function mergeConversationPage(
+  current: ConversationSnapshot | null,
+  newest: ConversationSnapshot,
+): ConversationSnapshot {
+  if (current === null || !newest.has_more || newest.items.length === 0) return newest;
+  const newestKeys = new Set(newest.items.map(conversationItemKey));
+  // A reconnect can miss a whole page. Without an overlap between the two
+  // pages, use the new cursor so paging can fill the gap.
+  if (!current.items.some((item) => item.kind === "message" && newestKeys.has(conversationItemKey(item)))) {
+    return newest;
+  }
+  const first = Date.parse(newest.items[0]!.ts);
+  const older = current.items.filter(
+    (item) => Date.parse(item.ts) <= first && !newestKeys.has(conversationItemKey(item)),
+  );
+  return older.length === 0
+    ? newest
+    : {
+        ...newest,
+        items: [...older, ...newest.items],
+        has_more: current.has_more,
+      };
+}
 
 export function ConversationPage({
   chatId,
   role,
   onNavigate,
   onOpenChat,
+  onResync,
 }: {
   chatId: string;
   /** The signed-in user's workspace role. */
   role: string;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat?: (chatId: string) => void;
+  onResync?: () => void;
 }) {
-  const [detail, setDetail] = useState<ConversationDetail | null>(null);
-  const [items, setItems] = useState<ConversationItem[]>([]);
-  const [hasMore, setHasMore] = useState(false);
+  const [snapshot, setSnapshot] = useState<{ detail: ConversationSnapshot | null; socket: boolean } | null>(null);
+  const [analytics, setAnalytics] = useState<ConversationDetail | null>(null);
+  const [liveCallCounts, setLiveCallCounts] = useState<Record<string, { call_count?: number; tool_count?: number }>>(
+    {},
+  );
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const detail = snapshot?.detail ?? null;
+  const unavailable = snapshot?.socket === true && detail === null;
+  const unavailableRef = useRef(false);
+  const loadError = unavailable ? "This conversation is unavailable." : error;
+  const refresh = () => {
+    onResync?.();
+    setTick((current) => current + 1);
+  };
+
+  useActivityRunUpdates((frame) => {
+    if (frame.type !== "activity_run") return;
+    const { run } = frame;
+    if (run.thread_id === null || run.thread_id !== detail?.conversation.thread?.id) return;
+    if (run.call_count === undefined && run.tool_count === undefined) return;
+    setLiveCallCounts((current) => ({
+      ...current,
+      [run.id]: {
+        ...current[run.id],
+        ...(run.call_count === undefined ? {} : { call_count: run.call_count }),
+        ...(run.tool_count === undefined ? {} : { tool_count: run.tool_count }),
+      },
+    }));
+  });
+
+  useActivityConversationUpdates(({ chat_id: watchedId, detail: page }) => {
+    if (watchedId !== chatId) return;
+    unavailableRef.current = page === null;
+    if (page === null) {
+      setAnalytics(null);
+      setLiveCallCounts({});
+    }
+    setSnapshot((current) => ({
+      detail: page === null ? null : mergeConversationPage(current?.detail ?? null, page),
+      socket: true,
+    }));
+    setError(null);
+  });
 
   useEffect(() => {
     let live = true;
     setError(null);
-    setDetail(null);
-    setItems([]);
-    void getConversation(chatId, { limit: CONVERSATION_PAGE })
+    void getConversation(chatId, { limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
-        if (!live) return;
-        setDetail(value);
-        setItems(value.items);
-        setHasMore(value.has_more);
+        if (!live || unavailableRef.current) return;
+        setAnalytics(value);
+        setSnapshot((current) =>
+          current?.socket === true
+            ? current
+            : {
+                detail: mergeConversationPage(current?.detail ?? null, value),
+                socket: false,
+              },
+        );
       })
       .catch((err: unknown) => {
         if (!live) return;
         setError(err instanceof Error ? err.message : "The conversation did not load.");
-        setDetail(null);
       });
     return () => {
       live = false;
     };
   }, [chatId, tick]);
 
-  // An older page prepends; a run the newer page already showed is skipped.
   const loadOlder = () => {
-    const oldestSeq = items.reduce<number | null>((min, item) => {
+    const oldestSeq = detail?.items.reduce<number | null>((min, item) => {
       if (item.kind !== "message") return min;
       return min === null ? item.seq : Math.min(min, item.seq);
     }, null);
-    if (oldestSeq === null || loadingOlder) return;
+    if (oldestSeq == null || loadingOlder) return;
     setLoadingOlder(true);
-    void getConversation(chatId, { before: oldestSeq, limit: CONVERSATION_PAGE })
+    void getConversation(chatId, { before: oldestSeq, limit: ACTIVITY_CONVERSATION_PAGE })
       .then((value) => {
-        setItems((current) => {
-          const knownRuns = new Set(current.filter((item) => item.kind === "run").map((item) => item.run.id));
-          const knownSeqs = new Set(current.filter((item) => item.kind === "message").map((item) => item.seq));
-          const fresh = value.items.filter((item) =>
-            item.kind === "run" ? !knownRuns.has(item.run.id) : !knownSeqs.has(item.seq),
-          );
-          return [...fresh, ...current];
+        if (unavailableRef.current) return;
+        setSnapshot((current) => {
+          if (current?.detail == null) return current;
+          const keys = new Set(current.detail.items.map(conversationItemKey));
+          const older = value.items.filter((item) => !keys.has(conversationItemKey(item)));
+          // If reconnect moved the cursor beyond the requested page, leave
+          // the new page contiguous and allow an older-page read from it.
+          if (!current.detail.items.some((item) => item.kind === "message" && item.seq === oldestSeq)) return current;
+          return {
+            ...current,
+            detail: {
+              ...current.detail,
+              items: [...older, ...current.detail.items],
+              has_more: value.has_more,
+            },
+          };
         });
-        setHasMore(value.has_more);
+        setAnalytics((current) =>
+          current === null ? value : { ...current, items: [...value.items, ...current.items] },
+        );
       })
       .catch(() => {
-        // The page stays as it is; the reader can retry.
+        // The page stays as it is, and the reader can retry.
       })
       .finally(() => setLoadingOlder(false));
   };
 
   const admin = role === "admin";
-  const conversation = detail?.conversation ?? null;
+  const conversation =
+    detail === null
+      ? null
+      : {
+          ...detail.conversation,
+          tokens_in: analytics?.conversation.tokens_in ?? 0,
+          tokens_out: analytics?.conversation.tokens_out ?? 0,
+          cost_usd: analytics?.conversation.cost_usd ?? 0,
+          errors: analytics?.conversation.errors ?? 0,
+        };
+  const items = useMemo(() => {
+    const measured = new Map(
+      analytics?.items
+        .filter((item): item is ConversationRunItem => item.kind === "run")
+        .map((item) => [item.run.id, item]) ?? [],
+    );
+    return (detail?.items ?? []).map((item) => {
+      if (item.kind !== "run") return item;
+      const measuredCounts = measured.get(item.run.id);
+      const live = liveCallCounts[item.run.id];
+      const call_count = live?.call_count ?? measuredCounts?.call_count ?? item.call_count;
+      const tool_count = live?.tool_count ?? measuredCounts?.tool_count ?? item.tool_count;
+      return { ...item, steps: call_count + tool_count, call_count, tool_count };
+    });
+  }, [detail, analytics, liveCallCounts]);
   const totals = useMemo(() => {
     const runItems = items.filter((item): item is ConversationRunItem => item.kind === "run");
     return {
@@ -850,7 +1009,7 @@ export function ConversationPage({
         title={
           conversation?.title !== null && conversation?.title !== undefined && conversation.title.trim() !== ""
             ? conversation.title
-            : "Conversation"
+            : "Thread"
         }
         description={
           conversation !== null
@@ -859,11 +1018,21 @@ export function ConversationPage({
         }
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate(AGENTS_ACTIVITY)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                onNavigate(
+                  conversation?.internal
+                    ? { ...AGENTS_ACTIVITY, filters: { ...AGENTS_ACTIVITY.filters, background: true } }
+                    : AGENTS_ACTIVITY,
+                )
+              }
+            >
               <ArrowLeft />
               Activity
             </Button>
-            <Button variant="ghost" size="sm" aria-label="Refresh conversation" onClick={() => setTick((t) => t + 1)}>
+            <Button variant="ghost" size="sm" aria-label="Refresh thread" onClick={refresh}>
               <RefreshCw />
               Refresh
             </Button>
@@ -877,7 +1046,22 @@ export function ConversationPage({
                 Parent thread
               </Button>
             )}
-            {onOpenChat !== undefined && (
+            {(detail?.related_threads?.length ?? 0) > 0 && (
+              <Select value="" onValueChange={(id) => onNavigate({ view: "chat", chatId: id })}>
+                <SelectTrigger aria-label="Related threads" className="h-8 w-40 text-xs">
+                  <SelectValue placeholder="Related threads" />
+                </SelectTrigger>
+                <SelectContent>
+                  {detail?.related_threads?.map((thread) => (
+                    <SelectItem key={thread.id} value={thread.id}>
+                      {thread.title?.trim() || "Untitled thread"}
+                      {thread.internal ? " · Background" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {onOpenChat !== undefined && conversation !== null && !conversation.internal && (
               <Button variant="outline" size="sm" onClick={() => onOpenChat(chatId)}>
                 <MessageSquare />
                 Open chat
@@ -887,8 +1071,8 @@ export function ConversationPage({
         }
       />
       <PageBody className="max-w-[80rem]">
-        {error !== null && <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />}
-        {error === null && detail === null && <InlineLoading label="Loading conversation" />}
+        {loadError !== null && detail === null && <ErrorState message={loadError} onRetry={refresh} />}
+        {loadError === null && detail === null && <InlineLoading label="Loading thread" />}
         {detail !== null && (
           <>
             <div className="rounded-xl border border-border bg-card p-4">
@@ -927,7 +1111,7 @@ export function ConversationPage({
             </div>
 
             <div className="mt-4 space-y-3">
-              {hasMore && (
+              {detail.has_more && (
                 <div className="flex justify-center">
                   <Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlder}>
                     {loadingOlder ? "Loading earlier…" : "Load earlier messages"}
@@ -941,7 +1125,7 @@ export function ConversationPage({
                   hint="A chat with no turns has nothing to read yet."
                 />
               )}
-              {items.map((item, index) =>
+              {items.map((item) =>
                 item.kind === "run" ? (
                   <RunItem
                     key={`run-${item.run.id}`}
@@ -950,7 +1134,7 @@ export function ConversationPage({
                     onOpen={() => onNavigate({ view: "run", runId: item.run.id })}
                   />
                 ) : (
-                  <MessageItem key={`${item.role}-${item.seq}-${index}`} item={item} />
+                  <MessageItem key={conversationItemKey(item)} item={item} />
                 ),
               )}
             </div>

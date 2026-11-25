@@ -33,6 +33,7 @@ export interface ChatRow {
 
 /** The chat's tenant and owner account (ownerOf). */
 export interface ChatOwner {
+  internal?: true;
   org_id: string;
   user_id: string;
   email: string;
@@ -42,6 +43,7 @@ export interface ChatOwner {
 
 /** A chat's tenant, owner, machine binding and archive state. */
 export interface ChatIdentity {
+  internal?: boolean;
   org_id: string;
   user_id: string;
   machine_id: string | null;
@@ -49,6 +51,8 @@ export interface ChatIdentity {
 }
 
 export interface ChatListRow {
+  /** The persistent Assistant inbox, distinct from ordinary Threads. */
+  assistant_inbox?: boolean;
   id: string;
   org_id: string;
   user_id: string;
@@ -154,7 +158,7 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
           WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-    COALESCE(xt.type, 'user') AS type,
+    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
     c.archived_at IS NOT NULL AS archived,
     c.deleted_at IS NOT NULL AS deleted,
     rt.id AS routine_id, rt.name AS routine_name
@@ -173,10 +177,10 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
  *  children are execution transcripts, reachable by direct link but never
  *  listed. The HTTP lists and the socket's thread_list push share this one
  *  predicate. */
-export const USER_THREAD = `NOT EXISTS (
+export const USER_THREAD = `NOT c.internal AND (EXISTS (SELECT 1 FROM agent_threads st WHERE st.chat_id=c.id AND st.surfaced) OR NOT EXISTS (
     SELECT 1 FROM agent_threads xt
     WHERE xt.chat_id = c.id AND xt.type <> 'user'
-  )`;
+  ))`;
 
 /** The sidebar lists sort by recent activity, not creation: a chat's place
  *  follows its latest thread event (creation is its initial activity), so a
@@ -234,12 +238,15 @@ export class ChatStore {
    *  conversation → chat → owner mapping), with the owner's account fields.
    *  null when the chat is gone. */
   async ownerOf(chatId: string): Promise<ChatOwner | null> {
-    const res = await this.pool.query<ChatOwner>(
-      "SELECT c.org_id, c.user_id, u.email, u.display_name, u.role " +
+    const res = await this.pool.query<Omit<ChatOwner, "internal"> & { internal: boolean }>(
+      "SELECT c.org_id, c.user_id, u.email, u.display_name, u.role, c.internal " +
         "FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
       [chatId],
     );
-    return res.rows[0] ?? null;
+    const row = res.rows[0];
+    if (row === undefined) return null;
+    const { internal, ...owner } = row;
+    return internal ? { ...owner, internal: true } : owner;
   }
 
   /** Creates a chat on a caller-supplied executor (the agent-session create
@@ -331,7 +338,7 @@ export class ChatStore {
                     WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-              COALESCE(xt.type, 'user') AS type,
+              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
               true AS archived, false AS deleted
        FROM chats c
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
@@ -355,7 +362,7 @@ export class ChatStore {
    *  deletes a chat must return the row it changed. */
   async getChatListRow(orgId: string, userId: string, chatId: string): Promise<ChatListRow | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.id = $3`,
+      `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.id = $3 AND NOT c.internal`,
       [orgId, userId, chatId],
     );
     const row = res.rows[0];
@@ -367,7 +374,7 @@ export class ChatStore {
    *  transcript stays reachable by link). */
   async getChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)`,
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND NOT internal AND (user_id = $3 OR $4)`,
       [orgId, chatId, caller.id, readsWholeOrg(caller)],
     );
     const row = res.rows[0];
@@ -381,7 +388,7 @@ export class ChatStore {
    *  to acting inside a member's conversation. */
   async getOwnChat(orgId: string, chatId: string, caller: UserRow): Promise<ChatRow> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+      `${CHAT_ROW_SELECT} WHERE org_id = $1 AND id = $2 AND user_id = $3 AND NOT internal AND deleted_at IS NULL`,
       [orgId, chatId, caller.id],
     );
     const row = res.rows[0];
@@ -406,7 +413,7 @@ export class ChatStore {
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
-       WHERE c.org_id = $1
+       WHERE c.org_id = $1 AND NOT c.internal
          AND ($2::uuid IS NULL OR c.user_id = $2)
          AND ($3::text IS NULL OR u.email ILIKE '%' || $3 || '%')
          AND ($4::uuid IS NULL OR xt.agent_id = $4)
@@ -458,7 +465,7 @@ export class ChatStore {
        LEFT JOIN LATERAL (
          SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
        ) le ON true
-       WHERE c.org_id = $1`,
+       WHERE c.org_id = $1 AND NOT c.internal`,
       [orgId, since],
     );
     const row = res.rows[0] ?? {};
@@ -893,7 +900,7 @@ export class ChatStore {
    *  when the chat is gone. */
   async identityOf(chatId: string): Promise<ChatIdentity | null> {
     const res = await this.pool.query<ChatIdentity>(
-      "SELECT org_id, user_id, machine_id, archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
+      "SELECT org_id, user_id, machine_id, internal, archived_at IS NOT NULL AS archived FROM chats WHERE id = $1",
       [chatId],
     );
     return res.rows[0] ?? null;
@@ -1011,6 +1018,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     project_machine_label: (r.project_machine_label as string | null) ?? null,
     last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
     type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
+    ...(r.assistant_inbox === true ? { assistant_inbox: true } : {}),
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),
     routine:

@@ -32,6 +32,7 @@ import {
   availableUpdates,
   buildCatalog,
   compactCount,
+  displayName,
   findCatalogEntry,
   installedStatus,
   matchesQuery,
@@ -157,7 +158,7 @@ function ListPane({
     if (route.view === "installed" || route.view === "catalog") navigate({ ...route, q: next }, { replace: true });
     else navigate(view === "catalog" ? { ...INTEGRATIONS_CATALOG, q: next } : { ...INTEGRATIONS_HOME, q: next });
   };
-  const shownInstalled = installed.filter((i) => matchesQuery(q, i.title, i.name, i.summary));
+  const shownInstalled = installed.filter((i) => matchesQuery(q, displayName(i), i.title, i.name, i.summary));
   const attention = shownInstalled.filter((i) => needsAttention(installedStatus(i, usage.get(i.name))));
   const on = shownInstalled.filter((i) => i.enabled && !attention.includes(i));
   const off = shownInstalled.filter((i) => !i.enabled && !attention.includes(i));
@@ -166,6 +167,10 @@ function ListPane({
     .filter((g) => g.entries.length > 0);
   const catalogCount = catalog.reduce((n, g) => n + g.entries.length, 0);
 
+  // Two instances of one kind share the kind's title until an admin names
+  // them; the slug tells them apart.
+  const kindCounts = new Map<string, number>();
+  for (const i of installed) kindCounts.set(i.kind, (kindCounts.get(i.kind) ?? 0) + 1);
   const installedGroups: [string, ShopItem[]][] = [
     ["Needs attention", attention],
     ["On", on],
@@ -263,7 +268,7 @@ function ListPane({
                   <ul className="space-y-0.5">
                     {list.map((i) => {
                       const status = installedStatus(i, usage.get(i.name));
-                      const update = updates.get(i.name);
+                      const update = updates.get(i.kind);
                       return (
                         <ListRow
                           key={i.name}
@@ -277,9 +282,15 @@ function ListPane({
                             })
                           }
                           logo={i.logo}
-                          title={i.title}
+                          title={displayName(i)}
                           dot={<StatusDot status={status} />}
-                          line={update ? `${statusLine(status)} · update ${update.latest}` : statusLine(status)}
+                          line={[
+                            (kindCounts.get(i.kind) ?? 0) > 1 ? i.name : null,
+                            statusLine(status),
+                            update ? `update ${update.latest}` : null,
+                          ]
+                            .filter((part) => part !== null)
+                            .join(" · ")}
                         />
                       );
                     })}
@@ -371,13 +382,13 @@ function InstalledHome({
             {installed.map((i) => {
               const u = usage.get(i.name);
               const status = installedStatus(i, u);
-              const update = updates.get(i.name);
+              const update = updates.get(i.kind);
               return (
                 <tr key={i.name} className="border-b border-border/60 hover:bg-accent/40">
                   <td className="py-2.5 pr-4">
                     <button type="button" className="flex items-center gap-3 text-left" onClick={() => open(i.name)}>
-                      <Logo svg={i.logo} title={i.title} size="size-6" />
-                      <span className="font-medium">{i.title}</span>
+                      <Logo svg={i.logo} title={displayName(i)} size="size-6" />
+                      <span className="font-medium">{displayName(i)}</span>
                     </button>
                   </td>
                   <td className="py-2.5 pr-4">
@@ -513,7 +524,7 @@ export function IntegrationsPage({
   const sidebar = useSidebar();
   const items = data.items;
   const installed = useMemo(
-    () => (items ?? []).filter((i) => i.configured).sort((a, b) => a.title.localeCompare(b.title)),
+    () => (items ?? []).filter((i) => i.configured).sort((a, b) => displayName(a).localeCompare(displayName(b))),
     [items],
   );
   const catalog = useMemo(() => buildCatalog(items ?? [], data.catalogs ?? []), [items, data.catalogs]);
@@ -573,13 +584,21 @@ export function IntegrationsPage({
             item={item}
             tab={route.tab}
             usage={data.usage.get(item.name)}
-            update={updates.get(item.name)}
+            update={updates.get(item.kind)}
             onTab={(tab) => navigate({ ...route, tab })}
             onOpenAgent={openAgent}
             onChanged={data.reload}
             onRemoved={() => {
               data.reload();
               navigate({ ...INTEGRATIONS_HOME, q: route.q });
+            }}
+            onCreated={(name) => {
+              data.reload();
+              navigate({ view: "installed", slug: name, tab: "configuration", q: "" });
+            }}
+            onRenamed={(name) => {
+              data.reload();
+              navigate({ view: "installed", slug: name, tab: "configuration", q: route.q }, { replace: true });
             }}
           />
         );
@@ -657,7 +676,10 @@ export function IntegrationsPage({
         : route.view === "installed"
           ? route.slug === null
             ? "Installed"
-            : (installed.find((i) => i.name === route.slug)?.title ?? "Installed")
+            : (() => {
+                const item = installed.find((i) => i.name === route.slug);
+                return item === undefined ? "Installed" : displayName(item);
+              })()
           : route.slug === null
             ? "Catalog"
             : (findCatalogEntry(catalog, route.slug, route.from)?.title ?? "Catalog");

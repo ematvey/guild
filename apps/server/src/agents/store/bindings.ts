@@ -11,25 +11,19 @@ export interface AgentThreadRef {
   org_id: string;
   /** The user whose private conversation this thread is. */
   user_id: string;
+  is_personal: boolean;
+  internal: boolean;
 }
 
 /** The agent row behind a chat journal row, or null for a plain chat. */
 export async function agentThreadForChat(pool: PlatformPool, chatId: string): Promise<AgentThreadRef | null> {
-  const res = await pool.query<{ thread_id: string; agent_id: string; org_id: string; user_id: string }>(
-    `SELECT t.id AS thread_id, t.agent_id, a.org_id, t.user_id
-     FROM agent_threads t JOIN agents a ON a.id = t.agent_id
+  const res = await pool.query<AgentThreadRef>(
+    `SELECT t.id AS thread_id, t.agent_id, a.org_id, t.user_id, a.is_personal, c.internal
+     FROM agent_threads t JOIN agents a ON a.id = t.agent_id JOIN chats c ON c.id = t.chat_id
      WHERE t.chat_id = $1`,
     [chatId],
   );
-  const row = res.rows[0];
-  return row === undefined
-    ? null
-    : {
-        thread_id: row.thread_id,
-        agent_id: row.agent_id,
-        org_id: row.org_id,
-        user_id: row.user_id,
-      };
+  return res.rows[0] ?? null;
 }
 
 /** Inserts the chat's user thread; null when another one won the race. */
@@ -56,13 +50,13 @@ export async function moveChatThread(pool: PlatformPool, chatId: string, agentId
   );
 }
 
-/** The chat thread's type and whether it is its agent's Main thread. */
+/** The chat thread's type and the coordination role that owns it. */
 export async function chatThreadKind(
   pool: PlatformPool,
   chatId: string,
-): Promise<{ type: string; is_default: boolean } | null> {
-  const res = await pool.query<{ type: string; is_default: boolean }>(
-    "SELECT type, is_default FROM agent_threads WHERE chat_id = $1",
+): Promise<{ type: string; execution_role: string } | null> {
+  const res = await pool.query<{ type: string; execution_role: string }>(
+    "SELECT type, execution_role FROM agent_threads WHERE chat_id = $1",
     [chatId],
   );
   return res.rows[0] ?? null;
@@ -148,7 +142,6 @@ export interface TitleSourceRow {
   title: string | null;
   title_locked: boolean;
   type: string;
-  is_default: boolean;
   model: string | null;
 }
 
@@ -159,7 +152,7 @@ export async function titleSourceRow(
   threadId: string,
 ): Promise<TitleSourceRow | null> {
   const res = await pool.query<TitleSourceRow>(
-    `SELECT c.org_id, t.title, t.title_locked, t.type, t.is_default, a.model
+    `SELECT c.org_id, t.title, t.title_locked, t.type, a.model
      FROM agent_threads t
      JOIN chats c ON c.id = t.chat_id
      JOIN agents a ON a.id = t.agent_id

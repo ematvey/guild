@@ -32,11 +32,11 @@ export const AGENT_COLUMNS = `a.id, a.org_id, a.owner_user_id, a.name, a.descrip
   ${utcText("a.deleted_at")} AS deleted_at, ${utcText("a.purge_after")} AS purge_after,
   ${utcText("a.created_at")} AS created_at, ${utcText("a.updated_at")} AS updated_at`;
 
-export const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type, t.is_default,
+export const THREAD_COLUMNS = `t.id, t.agent_id, t.user_id, t.chat_id, t.title, t.title_locked, t.type,
   t.parent_thread_id, t.origin_thread_id, t.depth, ${utcText("t.closed_at")} AS closed_at,
   ${utcText("t.created_at")} AS created_at, ${utcText("t.last_activity_at")} AS last_activity_at`;
 
-export const RUN_COLUMNS = `r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
+export const RUN_COLUMNS = `r.internal, r.id, r.agent_id, r.user_id, r.thread_id, r.routine_id, r.parent_run_id,
   r.delegate_agent_id, r.depth, r.trigger, r.status, r.summary,
   r.error_code, r.error_message, r.error_step, r.tokens,
   ${utcText("r.started_at")} AS started_at, ${utcText("r.finished_at")} AS finished_at,
@@ -48,9 +48,7 @@ export const NOTICE_COLUMNS = `n.id, n.org_id, n.agent_id, n.user_id, n.kind, n.
   ${utcText("n.read_at")} AS read_at, ${utcText("n.created_at")} AS created_at`;
 
 function optionalTime(value: unknown): string | null {
-  return value === null || value === undefined
-    ? null
-    : pgTimestampToRfc3339(value as string);
+  return value === null || value === undefined ? null : pgTimestampToRfc3339(value as string);
 }
 
 export function toAgent(row: Record<string, unknown>): Agent {
@@ -67,10 +65,7 @@ export function toAgent(row: Record<string, unknown>): Agent {
     model_alias: (row.model_alias as string | null) ?? null,
     tools: (row.tools as AgentToolRef[] | null) ?? [],
     tools_mode: (row.tools_mode as AgentToolsMode | null) ?? "selected",
-    generative_ui:
-      row.generative_ui === undefined || row.generative_ui === null
-        ? true
-        : Boolean(row.generative_ui),
+    generative_ui: row.generative_ui === undefined || row.generative_ui === null ? true : Boolean(row.generative_ui),
     visibility: row.visibility as AgentVisibility,
     resources: (row.resources as Record<string, unknown> | null) ?? {},
     status: row.status as AgentStatus,
@@ -94,7 +89,6 @@ export function toThread(row: Record<string, unknown>): AgentThread {
     title: (row.title as string | null) ?? "",
     title_locked: Boolean(row.title_locked),
     type: row.type as AgentThreadType,
-    is_default: Boolean(row.is_default),
     parent_thread_id: (row.parent_thread_id as string | null) ?? null,
     origin_thread_id: (row.origin_thread_id as string | null) ?? null,
     depth: Number(row.depth ?? 0),
@@ -106,6 +100,7 @@ export function toThread(row: Record<string, unknown>): AgentThread {
 
 export function toRun(row: Record<string, unknown>): AgentRun {
   return {
+    ...(row.internal === true ? { internal: true as const } : {}),
     id: row.id as string,
     agent_id: row.agent_id as string,
     user_id: (row.user_id as string | null) ?? null,

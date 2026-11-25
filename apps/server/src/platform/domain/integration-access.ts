@@ -70,7 +70,7 @@ function maxClass(a: ToolClass | null, b: ToolClass | null): ToolClass | null {
   return classRank(a) >= classRank(b) ? a : b;
 }
 
-function minClass(a: ToolClass, b: ToolClass): ToolClass {
+export function minClass(a: ToolClass, b: ToolClass): ToolClass {
   return classRank(a) <= classRank(b) ? a : b;
 }
 

@@ -1,3 +1,4 @@
+import { coordinationSettings } from "./coordination.js";
 // Starting a run in an existing agent thread: the one path for subagent
 // spawns and sends and for scheduled and manual routine runs. It rechecks
 // the agent (active, not being deleted) and the requester's access, opens
@@ -103,7 +104,7 @@ export async function startThreadRun(
       requestId: run.id,
       content: input.content,
       images: [],
-      model: agent.model,
+      model: coordinationSettings(agent).worker_model,
       entry: postedTurnEntry(),
     });
   } catch (error) {

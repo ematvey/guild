@@ -11,7 +11,7 @@
 // tables are TS-owned (idempotent DDL on first use).
 
 import { createHash } from "node:crypto";
-import { clickhouseDateTime64, type ClickhouseClient } from "./clickhouse.js";
+import { clickhouseDateTime, clickhouseDateTime64, type ClickhouseClient } from "./clickhouse.js";
 import { errorText } from "./usage.js";
 
 /** The zero uuid: "no parent" on a payload row and "no chain row yet". */
@@ -124,7 +124,7 @@ export interface LlmTraceCall {
   ts: Date;
   request_id: string;
   org_id: string;
-  user_id: string;
+  user_id: string | null;
   session_id: string;
   /** The agent run this call belongs to; null outside an agent run. */
   run_id?: string | null;
@@ -155,6 +155,7 @@ export interface LlmTraceCall {
 
 export interface TraceFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   /** Member scoping: when set, only this user's traces. */
   userId?: string;
   from?: Date;
@@ -173,6 +174,7 @@ export interface TraceFilters {
 
 export interface SpanFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   userId?: string;
   from?: Date;
   to?: Date;
@@ -190,12 +192,35 @@ export interface SpanFilters {
 
 export interface SessionFilters {
   orgId: string;
+  excludeSessions?: readonly string[];
   userId?: string;
   from?: Date;
   to?: Date;
   query?: string;
   limit: number;
   offset: number;
+}
+
+function applyTraceVisibility(
+  where: string[],
+  binds: (string | number)[],
+  visibility: Pick<TraceFilters, "userId" | "excludeSessions">,
+): void {
+  excludeInternalSessions(where, binds, visibility.excludeSessions);
+  if (visibility.userId !== undefined) {
+    where.push("user_id = toUUID(?)");
+    binds.push(visibility.userId);
+  }
+}
+
+function excludeInternalSessions(
+  where: string[],
+  binds: (string | number)[],
+  ids: readonly string[] = [],
+): void {
+  if (ids.length === 0) return;
+  where.push(`(session_id IS NULL OR session_id NOT IN (${ids.map(() => "toUUID(?)").join(", ")}))`);
+  binds.push(...ids);
 }
 
 const SPAN_COLUMNS =
@@ -457,9 +482,10 @@ export class TraceStore {
   ): Promise<void> {
     try {
       await this.ensureOnce();
-      const ts = clickhouseDateTime64(new Date());
+      const now = new Date();
+      const ts = clickhouseDateTime64(now);
       const row: Record<string, unknown> = {
-        ts,
+        ts: clickhouseDateTime(now),
         request_id: requestId,
         org_id: orgId,
         kind,
@@ -533,10 +559,7 @@ export class TraceStore {
   async traces(filter: TraceFilters): Promise<{ rows: Record<string, unknown>[]; total: number }> {
     const where: string[] = ["org_id = toUUID(?)"];
     const binds: (string | number)[] = [filter.orgId];
-    if (filter.userId !== undefined) {
-      where.push("user_id = toUUID(?)");
-      binds.push(filter.userId);
-    }
+    applyTraceVisibility(where, binds, filter);
     if (filter.from !== undefined) {
       where.push("started_at >= toDateTime64(?, 3)");
       binds.push(clickhouseDateTime64(filter.from));
@@ -585,6 +608,7 @@ export class TraceStore {
     const aggregates = await this.spanAggregates(
       filter.orgId,
       rows.map((row) => String(row["trace_id"])),
+      filter,
     );
     return {
       rows: rows.map((row) => ({ ...row, ...(aggregates.get(String(row["trace_id"])) ?? {}) })),
@@ -596,31 +620,38 @@ export class TraceStore {
   async trace(
     orgId: string,
     traceId: string,
+    visibility: Pick<TraceFilters, "userId" | "excludeSessions"> = {},
   ): Promise<{
     trace: Record<string, unknown> | null;
     spans: Record<string, unknown>[];
     children: Record<string, unknown>[];
   }> {
     await this.ensureOnce();
+    const where = ["org_id = toUUID(?)"];
+    const binds: (string | number)[] = [orgId];
+    applyTraceVisibility(where, binds, visibility);
+    const predicate = where.join(" AND ");
     const traces = await this.client.query(
-      `SELECT ${TRACE_COLUMNS} FROM agent_traces FINAL WHERE org_id = toUUID(?) AND trace_id = toUUID(?) LIMIT 1`,
-      [orgId, traceId],
+      `SELECT ${TRACE_COLUMNS} FROM agent_traces FINAL WHERE ${predicate} AND trace_id = toUUID(?) LIMIT 1`,
+      [...binds, traceId],
     );
+    if (traces.length === 0) return { trace: null, spans: [], children: [] };
     const spans = await this.client.query(
-      `SELECT ${SPAN_COLUMNS} FROM agent_spans WHERE org_id = toUUID(?) AND trace_id = toUUID(?) ` +
+      `SELECT ${SPAN_COLUMNS} FROM agent_spans WHERE ${predicate} AND trace_id = toUUID(?) ` +
         "ORDER BY start_time ASC, span_id ASC",
-      [orgId, traceId],
+      [...binds, traceId],
     );
     const children = await this.client.query(
-      `SELECT ${TRACE_COLUMNS} FROM agent_traces FINAL WHERE org_id = toUUID(?) AND parent_trace_id = toUUID(?) ` +
+      `SELECT ${TRACE_COLUMNS} FROM agent_traces FINAL WHERE ${predicate} AND parent_trace_id = toUUID(?) ` +
         "ORDER BY started_at ASC, trace_id ASC",
-      [orgId, traceId],
+      [...binds, traceId],
     );
     const trace = traces[0] ?? null;
     if (trace !== null) Object.assign(trace, spanTotals(spans));
     const childAggregates = await this.spanAggregates(
       orgId,
       children.map((row) => String(row["trace_id"])),
+      visibility,
     );
     return {
       trace,
@@ -640,10 +671,7 @@ export class TraceStore {
       where.push("span_type = ?");
       binds.push(filter.spanType);
     }
-    if (filter.userId !== undefined) {
-      where.push("user_id = toUUID(?)");
-      binds.push(filter.userId);
-    }
+    applyTraceVisibility(where, binds, filter);
     if (filter.from !== undefined) {
       where.push("start_time >= toDateTime64(?, 3)");
       binds.push(clickhouseDateTime64(filter.from));
@@ -691,10 +719,7 @@ export class TraceStore {
   async sessions(filter: SessionFilters): Promise<{ rows: Record<string, unknown>[]; total: number }> {
     const where: string[] = ["org_id = toUUID(?)", "session_id IS NOT NULL"];
     const binds: (string | number)[] = [filter.orgId];
-    if (filter.userId !== undefined) {
-      where.push("user_id = toUUID(?)");
-      binds.push(filter.userId);
-    }
+    applyTraceVisibility(where, binds, filter);
     if (filter.from !== undefined) {
       where.push("start_time >= toDateTime64(?, 3)");
       binds.push(clickhouseDateTime64(filter.from));
@@ -724,17 +749,14 @@ export class TraceStore {
   }
 
   /** Totals for the activity header + the daily series. */
-  async summary(filter: { orgId: string; userId?: string; from: Date; to: Date }): Promise<Record<string, unknown>> {
+  async summary(filter: { orgId: string; userId?: string; from: Date; to: Date; excludeSessions?: readonly string[] }): Promise<Record<string, unknown>> {
     const where = ["org_id = toUUID(?)", "start_time >= toDateTime64(?, 3)", "start_time <= toDateTime64(?, 3)"];
     const binds: (string | number)[] = [
       filter.orgId,
       clickhouseDateTime64(filter.from),
       clickhouseDateTime64(filter.to),
     ];
-    if (filter.userId !== undefined) {
-      where.push("user_id = toUUID(?)");
-      binds.push(filter.userId);
-    }
+    applyTraceVisibility(where, binds, filter);
     const predicate = where.join(" AND ");
     await this.ensureOnce();
     const totals = await this.client.query(
@@ -751,10 +773,7 @@ export class TraceStore {
       clickhouseDateTime64(filter.from),
       clickhouseDateTime64(filter.to),
     ];
-    if (filter.userId !== undefined) {
-      traceWhere.push("user_id = toUUID(?)");
-      traceBinds.push(filter.userId);
-    }
+    applyTraceVisibility(traceWhere, traceBinds, filter);
     const traces = await this.client.query(
       `SELECT count() AS traces, countIf(status = 'failed') AS failed FROM agent_traces FINAL WHERE ${traceWhere.join(" AND ")}`,
       traceBinds,
@@ -777,8 +796,15 @@ export class TraceStore {
   }
 
   /** The stored request/response bodies for one span (admin only). */
-  async payloads(orgId: string, spanId: string): Promise<Record<string, unknown>[]> {
+  async payloads(orgId: string, spanId: string, excludeSessions: readonly string[] = []): Promise<Record<string, unknown>[]> {
     await this.ensureOnce();
+    if (excludeSessions.length > 0) {
+      const where = ["org_id = toUUID(?)", "span_id = toUUID(?)"];
+      const binds: (string | number)[] = [orgId, spanId];
+      excludeInternalSessions(where, binds, excludeSessions);
+      const visible = await this.client.query(`SELECT span_id FROM agent_spans WHERE ${where.join(" AND ")} LIMIT 1`, binds);
+      if (visible.length === 0) return [];
+    }
     const rows = await this.client.query(
       "SELECT kind, body, parent_request_id, prefix_count FROM llm_payloads " +
         "WHERE org_id = toUUID(?) AND request_id = toUUID(?) ORDER BY kind",
@@ -854,17 +880,24 @@ export class TraceStore {
   }
 
   /** Per-trace span totals for the listed trace ids. */
-  private async spanAggregates(orgId: string, traceIds: string[]): Promise<Map<string, Record<string, unknown>>> {
+  private async spanAggregates(
+    orgId: string,
+    traceIds: string[],
+    visibility: Pick<TraceFilters, "userId" | "excludeSessions"> = {},
+  ): Promise<Map<string, Record<string, unknown>>> {
     const out = new Map<string, Record<string, unknown>>();
     if (traceIds.length === 0) return out;
     const list = traceIds.map((id) => `toUUID('${id.replace(/'/g, "")}')`).join(", ");
+    const where = ["org_id = toUUID(?)", `trace_id IN (${list})`];
+    const binds: (string | number)[] = [orgId];
+    applyTraceVisibility(where, binds, visibility);
     const rows = await this.client.query(
       "SELECT trace_id, count() AS span_count, countIf(span_type = 'llm') AS call_count, " +
         "countIf(span_type = 'tool') AS tool_count, countIf(status = 'error') AS error_count, " +
         "sum(tokens_in) AS tokens_in, sum(tokens_out) AS tokens_out, sum(reasoning_tokens) AS reasoning_tokens, " +
         "sum(cost_usd) AS cost_usd, max(duration_ms) AS longest_ms " +
-        `FROM agent_spans WHERE org_id = toUUID(?) AND trace_id IN (${list}) GROUP BY trace_id`,
-      [orgId],
+        `FROM agent_spans WHERE ${where.join(" AND ")} GROUP BY trace_id`,
+      binds,
     );
     for (const row of rows) out.set(String(row["trace_id"]), row);
     return out;

@@ -4,6 +4,16 @@
 
 import type { CatalogPluginRow, CatalogRow, ShopItem, UsageSummaryRow } from "./integrations-api";
 
+/** The name the panel shows for one instance: the admin's label, else the
+ *  catalog item's title. */
+/** The instance slug rule, the server's `INSTANCE_SLUG`. */
+export const INSTANCE_SLUG = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+
+export function displayName(item: { label?: string; title: string }): string {
+  const label = item.label ?? "";
+  return label !== "" ? label : item.title;
+}
+
 export type InstalledStatus =
   | { kind: "needs_setup"; missing: string[] }
   | { kind: "disabled" }

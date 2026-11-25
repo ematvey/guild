@@ -122,6 +122,9 @@ pub struct UpdateChatRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chat {
+    /// Persistent Assistant inbox, pinned separately from ordinary threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_inbox: Option<bool>,
     pub id: Uuid,
     pub org_id: Uuid,
     pub user_id: Uuid,

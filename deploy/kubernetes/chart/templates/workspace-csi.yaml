@@ -1,0 +1,57 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild-workspace-csi
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: guild-workspace-csi
+  ports:
+    - port: 50051
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guild-workspace-csi
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: guild-workspace-csi
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ate-system
+          podSelector:
+            matchLabels:
+              app: ate-api-server
+      ports:
+        - port: 50051
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: guild-workspace-csi
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "guild.workloadSpec" (list . "guild-workspace-csi" (include "guild.spec.guild-workspace-csi" .)) | nindent 2 }}
+
+{{- $endpoint := printf "tcp://guild-workspace-csi.%s.svc.%s:50051" .Release.Namespace .Values.clusterDomain }}
+{{- with lookup "ate.dev/v1" "CSIDriverConfig" "" "workspace.csi.guild.dev" }}
+  {{- if ne .spec.controllerEndpoint $endpoint }}
+    {{- fail "workspace.csi.guild.dev already points at a different endpoint; use the one-time migration runbook or a separate cluster" }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: ate.dev/v1
+kind: CSIDriverConfig
+metadata:
+  name: workspace.csi.guild.dev
+spec:
+  driverName: workspace.csi.guild.dev
+  controllerEndpoint: {{ $endpoint | quote }}

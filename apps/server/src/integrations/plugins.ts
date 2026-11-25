@@ -31,7 +31,9 @@ export interface PluginSecretSource {
  *  bundles load from, and the org KV holding the trait bindings. */
 export interface IntegrationGateway extends PluginSecretSource, ConnectorSource {
   integrations: {
-    listEnabled(orgId: string): Promise<{ name: string; config: unknown; enabled: boolean }[]>;
+    listEnabled(
+      orgId: string,
+    ): Promise<{ name: string; kind: string; label: string; config: unknown; enabled: boolean }[]>;
   };
   orgKv: Pick<OrgKvStore, "get">;
 }
@@ -64,7 +66,11 @@ function traitOfTool(connector: Connector, raw: string): string | undefined {
  *  routes need: the executor kind, the tool list, and the row config. */
 export interface IntegrationTurn {
   executor: IntegrationExecutor;
+  /** The instance slug: the secret key, the tool prefix, the audit name. */
   slug: string;
+  /** The catalog item this instance instantiates: what resolves a connector
+   *  and a manifest. Equal to `slug` for a single-instance kind. */
+  kind: string;
   description: string;
   tools: IntegrationToolInfo[];
   /** The skill slug that documents this integration, from its manifest's
@@ -74,6 +80,7 @@ export interface IntegrationTurn {
   rowConfig: JsonObject;
   secretNames: string[];
   identityKey: string;
+  impersonated?: boolean;
 }
 
 /** The first skill slug a manifest names, or null. One resolver for a
@@ -217,7 +224,7 @@ export async function resolveIntegrations(
     const config = (row.config ?? {}) as JsonObject;
     // An installed v2 bundle is the admin's explicit choice — a row
     // carrying an mcp.url resolves as MCP even when a compiled-in connector
-    // of the same slug exists.
+    // of the same kind exists.
     const mcpUrl =
       config["mcp"] !== null && typeof config["mcp"] === "object" && !Array.isArray(config["mcp"])
         ? (config["mcp"] as JsonObject)["url"]
@@ -225,7 +232,7 @@ export async function resolveIntegrations(
     if (typeof mcpUrl !== "string" || mcpUrl === "") {
       let connector: Connector | undefined;
       try {
-        connector = await connectorFor(gateway, orgId, row.name);
+        connector = await connectorFor(gateway, orgId, row.kind);
       } catch (error) {
         warn(`${(error as Error).message}, skipping`);
         continue;
@@ -250,6 +257,7 @@ export async function resolveIntegrations(
       out.push({
         executor: "connector",
         slug: row.name,
+        kind: row.kind,
         description: resolved.summary,
         guide: firstSkill(resolved),
         tools: specs.map((spec) => {
@@ -264,6 +272,7 @@ export async function resolveIntegrations(
         rowConfig: config,
         secretNames,
         identityKey: resolved.identity_key,
+        impersonated: resolved.auth_kind === "org_secret_impersonated",
       });
       continue;
     }
@@ -273,7 +282,7 @@ export async function resolveIntegrations(
     // disabled) requires the live list.
     let manifest: JsonObject;
     try {
-      manifest = await requireApprovedManifest(gateway, orgId, row.name);
+      manifest = await requireApprovedManifest(gateway, orgId, row.kind);
     } catch {
       warn(`integration ${row.name}: no registry manifest, skipping`);
       continue;
@@ -307,7 +316,12 @@ export async function resolveIntegrations(
     const auth = manifest["auth"];
     out.push({
       executor: "mcp",
+      impersonated:
+        auth !== null &&
+        typeof auth === "object" &&
+        ["org_secret_impersonated", "impersonated"].includes(String((auth as JsonObject)["kind"])),
       slug: row.name,
+      kind: row.kind,
       description: indexDescription(manifest),
       guide: firstSkill(manifest as { skills?: unknown }),
       tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),
@@ -323,11 +337,10 @@ export async function resolveIntegrations(
   return out;
 }
 
-/** Trait tools take their Guild-provided name, description, and schema, and
- *  one integration answers each trait: the org's bound provider when it is
- *  among the resolved integrations, else the first one declaring it. The
- *  model never sees two tools with the same name; the losers keep their
- *  other tools. */
+/** One integration answers each trait: the org's bound provider when it is
+ *  among the resolved integrations, else the first one declaring it. Its
+ *  namespaced tool uses the Guild-provided description and schema. Other
+ *  providers keep their non-trait tools. */
 export function assignTraits(turns: IntegrationTurn[], bindings: TraitBindings = {}): void {
   const winner = new Map<string, string>();
   for (const turn of turns) {
@@ -349,7 +362,10 @@ export function assignTraits(turns: IntegrationTurn[], bindings: TraitBindings =
       }
       const spec = traitSpec(info.trait);
       if (spec === undefined || winner.get(info.trait) !== turn.slug) continue;
-      kept.push({ ...info, spec: { name: spec.name, description: spec.description, parameters: spec.parameters } });
+      kept.push({
+        ...info,
+        spec: { name: info.spec.name, description: spec.description, parameters: spec.parameters },
+      });
     }
     turn.tools = kept;
   }

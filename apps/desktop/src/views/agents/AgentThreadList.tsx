@@ -1,4 +1,4 @@
-// Thread list for an agent: the default thread pinned first, then most
+// Thread list for an agent: most
 // recent activity. A thread opens at its canonical chat address. The list is
 // live: the member socket pushes it whenever one of the threads changes.
 
@@ -12,14 +12,9 @@ import type { AgentsRoute } from "./agents-route";
 import { ErrorState, Mono, ToneBadge } from "./agent-ui";
 import { useAgentThreads } from "./agents-store";
 
-/** Thread list: default thread pinned first, then most recent activity. */
+/** Thread list: most recent activity first. */
 export function sortAgentThreads(threads: AgentThread[]): AgentThread[] {
-  const rank = (t: AgentThread) => (t.is_default ? 0 : 1);
-  return [...threads].sort((a, b) => {
-    const byKind = rank(a) - rank(b);
-    if (byKind !== 0) return byKind;
-    return Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at);
-  });
+  return [...threads].sort((a, b) => Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at));
 }
 
 export function ThreadList({
@@ -72,7 +67,7 @@ export function ThreadList({
       {sorted !== null && sorted.length === 0 && (
         <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
           <p className="text-sm font-medium">No threads yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">The default thread appears after the first message.</p>
+          <p className="mt-1 text-sm text-muted-foreground">A thread appears after its first message.</p>
         </div>
       )}
       {sorted !== null && sorted.length > 0 && (
@@ -92,7 +87,6 @@ export function ThreadList({
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{thread.title}</span>
-                  {thread.is_default && <ToneBadge tone="info">Default</ToneBadge>}
                   {thread.type === "routine" && <ToneBadge tone="neutral">Routine</ToneBadge>}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">

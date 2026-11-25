@@ -321,7 +321,8 @@ describe("GitHub releases", () => {
         updater_signature: "signed-artifact",
       }));
     });
-    const metadata = { version, tag, repository: "alice/guild", artifacts };
+    const sourceCommit = "a".repeat(40);
+    const metadata = { version, tag, repository: "alice/guild", commit: "b".repeat(40), artifacts };
     const release = {
       tag_name: tag,
       draft: false,
@@ -369,7 +370,14 @@ describe("GitHub releases", () => {
       e.env.config.serverVersion = "0.7.0";
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
       e.env.config.serverVersion = version;
-      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag });
+      e.env.config.serverCommit = sourceCommit;
+      const pairing = { tag, source_commit: sourceCommit };
+      const mismatched = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
+      expect(mismatched.statusCode).toBe(400);
+      expect(mismatched.body).toContain("client release source commit does not match this server");
+      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+      metadata.commit = sourceCommit;
+      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
       expect(accepted.statusCode).toBe(200);
       expect(json(accepted)).toEqual({ version, artifacts: 6 });
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(200);
@@ -731,7 +739,7 @@ describe("M6 admin users + prompts", () => {
     expect(json(before)).toEqual({
       prompt: null,
       default:
-        'You are the assistant in m6 test org\'s Guild workspace. A user\'s "you", "we" or "us" can mean m6 test org or you; when the question is about m6 test org\'s product, customers or systems, it means m6 test org. Ask when it is unclear. Answer concisely and help with the user\'s tasks, including software work when asked.',
+        'You are the assistant in m6 test org\'s Guild workspace. A user\'s "you", "we" or "us" can mean m6 test org or you; when the question is about m6 test org\'s product, customers or systems, it means m6 test org. Ask when it is unclear. Help with the user\'s tasks, including software work when asked. Lead with the answer or outcome. One to three sentences usually suffice for routine questions and completion reports. Add detail when the user asks for it or needs it to understand the result or act on it. Send progress updates when you have a meaningful finding, a change of plan, or a blocker. Skip routine narration and state each finding once.',
     });
 
     const set = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "You are terse." });
@@ -766,7 +774,7 @@ describe("M6 admin integrations (read paths)", () => {
     // A configured compiled-in row (github) and an MCP-plugin row
     // (installed via the registry suite above).
     await e.env.db.query(
-      "INSERT INTO integrations (id, org_id, name, config, enabled) VALUES ($1, $2, 'github', $3, true) ON CONFLICT (org_id, name) DO NOTHING",
+      "INSERT INTO integrations (id, org_id, name, kind, config, enabled) VALUES ($1, $2, 'github', 'github', $3, true) ON CONFLICT (org_id, name) DO NOTHING",
       [crypto.randomUUID(), e.orgId, JSON.stringify({ token_config: "x" })],
     );
     const list = await inject("GET", "/api/v1/admin/integrations", e.adminToken);
@@ -878,7 +886,7 @@ describe("M6 admin integrations (read paths)", () => {
     expect(after.items.find((a) => a.name === "github")!.configured).toBe(false);
 
     const ins = await e.env.db.query(
-      "INSERT INTO integrations (id, org_id, name, config, enabled) VALUES ($1, $2, 'slack', '{}', false) RETURNING id",
+      "INSERT INTO integrations (id, org_id, name, kind, config, enabled) VALUES ($1, $2, 'slack', 'slack', '{}', false) RETURNING id",
       [crypto.randomUUID(), e.orgId],
     );
     const rowId = ins.rows[0]!.id as string;

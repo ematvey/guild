@@ -181,6 +181,13 @@ describe("turn scope", () => {
   const offered = (s: IntegrationScope, info: IntegrationToolInfo, role = "member") =>
     toolOffered(turn, info, scopeCeiling(s, turn.slug, info), role);
 
+  it("rejects account impersonation for every shared Agent even with admin read grants", () => {
+    const impersonated = { ...turn, impersonated: true };
+    const read = tool("hubspot_search_deals", "read");
+    for (const role of ["member", "admin"]) expect(toolOffered(impersonated, read, "admin", role, true)).toBe(false);
+    expect(toolOffered(impersonated, read, "read", "member", false)).toBe(true);
+  });
+
   it("an Integration outside the agent's list offers nothing", () => {
     expect(offered(scope([]), tool("hubspot_search_deals", "read"))).toBe(false);
   });
@@ -195,7 +202,7 @@ describe("turn scope", () => {
   });
 
   it("a Trait tool follows the built-in allowlist, not the Integration list", () => {
-    const search = tool("web_search", "read", "web_search");
+    const search = tool("searxng_web_search", "read", "web_search");
     expect(offered(scope([]), search)).toBe(true);
     expect(offered(scope([], new Set(["read"])), search)).toBe(false);
     expect(offered(scope([], new Set(["web_search"])), search)).toBe(true);
@@ -210,7 +217,7 @@ describe("integration access over HTTP", () => {
     stack = await setupGatewayStack();
     await stack.routeModel("GLM-Test-Model");
     const row = await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'hubspot', '{}', false) RETURNING id",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled) VALUES ($1, 'hubspot', 'hubspot', '{}', false) RETURNING id",
       [stack.orgId],
     );
     integrationId = row.rows[0].id as string;
@@ -293,7 +300,7 @@ describe("integration access over HTTP", () => {
 
   it("an all-tools agent follows the admin's audiences and takes no list of its own", async () => {
     const row = await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'crm2', '{}', true) RETURNING id",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled) VALUES ($1, 'crm2', 'hubspot', '{}', true) RETURNING id",
       [stack.orgId],
     );
     const crmId = row.rows[0].id as string;

@@ -647,7 +647,10 @@ describe("worker-per-chat (fork supervisor)", () => {
       ws.on("error", reject);
     });
     try {
-      await waitFor(async () => stack.env.app.platform.hub.machineOnline(machineId));
+      await waitFor(async () => {
+        const owner = await stack.env.app.platform.machines.ownerOf(machineId);
+        return owner !== null && owner[0] === stack.memberId && stack.env.app.platform.hub.machineOnline(machineId);
+      });
       const chatId = await createChat("cancel machine tool");
       await stack.env.db.query("UPDATE chats SET approval=$2 WHERE id=$1", [
         chatId,
@@ -712,7 +715,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     const vendorBase = `http://127.0.0.1:${(vendor.address() as AddressInfo).port}`;
 
     await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'slack', 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
       [
         stack.orgId,
         JSON.stringify({

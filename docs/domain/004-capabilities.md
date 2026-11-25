@@ -11,7 +11,7 @@ Capabilities are what a Turn can use: the model behind each Step, the Tools it c
 | Usage event | One model request's tokens and cost, attributed to Org, Member, Team and key | Written for every gateway call, including a stream aborted after its first frame | Spend is visible and enforceable |
 | Tool | One capability the model can call | Is a built-in tool, an Integration tool, a Member's MCP tool or a Skill tool. Reaches a Turn only through the access rules of 002 | Everything an Agent does outside the model |
 | Integration | A third-party service the Org connects: built in, an installed Plugin, or served by MCP | Off until an admin enables it. Has an audience that decides who may add it to an Agent (see 002). Its secrets are encrypted and resolved at call time. Every Tool it declares has a class | Org data sources, under Org control |
-| Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The Tool name, description and schema are Guild's, whichever vendor serves it | Agents keep one tool name when the Org swaps vendors |
+| Trait | A capability Guild names and an Integration implements: `web_search`, `web_fetch` | The provider prefixes the callable Tool name. Guild supplies the description and schema | Agents keep the same allowlist entry when the Org swaps vendors |
 | Skill | A versioned instruction bundle in the Org registry: `SKILL.md` and its files | Published through one path. Each version is content-addressed by its sha256. A Member installs it, following the latest or a pinned version | Knowledge an Agent loads when it needs it, with provenance |
 | Generated UI | Interactive components an Agent writes into a reply: an `openui` fenced block holding an OpenUI Lang program over Guild's component library | Per Agent, on by default. Takes one answer: the first user message after it settles its controls. Only the library's components render; a block runs no Tool and no HTML. A click leaves the block only as the Member's next message in the Thread or a web link opened outside the app. Spawned Threads never get it | Answers that need structure, numbers or input read as UI, not prose |
 | App | An HTML page an Agent publishes, with named data functions, that a Member opens from the Apps page | Owned by the Member the publishing Thread acts for. Who may open and edit it is its Access list (see 002): everyone in the Org, Teams, or named Members. Each publish is a new version and the newest runs. The page has no network: it reads Integrations only through its data functions, and every call acts for the viewer. An Agent discovers the Apps its Member can open, reads one with its page, publishes a version of any App that Member may edit, changes that App's list, and calls its functions for that Member | Live views of Org data (dashboards, trackers) that outlast the Thread that made them |
@@ -59,7 +59,7 @@ An Agent's allowlist is `all` or `selected`. `all` means every built-in tool and
 | Group | Tools |
 | --- | --- |
 | Files and shell | `read`, `write`, `edit`, `list`, `bash` |
-| Web | `web_search`; `web_fetch` arrives as an Integration's Trait tool |
+| Web | The `web_search` and `web_fetch` Trait IDs grant access to the selected providers’ tools |
 | Skills | `read_skill`, `search_skills` |
 | Conversations | `conversations_search`, `conversations_list`, `conversation_read` |
 | Messaging | `send_message`, `send_file` |
@@ -80,7 +80,9 @@ An Integration is a plugin with a manifest: its fields, its Tools, its Traits an
 | --- | --- | --- |
 | Built-in | A plugin folder compiled into the server: code, or an MCP plugin wrapping a remote MCP server | A code built-in runs in the server process, and a Tool's class is its code declaration unless an admin curates one. An MCP built-in serves its manifest as an approved MCP item would, with no publishing, and runs as the MCP kind below |
 | Plugin | An approved registry item whose bundle carries a `plugin.js` (`runtime: "code"`), built against `@guild/integration-sdk`. It may not reuse a built-in slug | In a worker thread of the server, loaded from the approved bundle bytes (checked against the approved hash). A Tool's class is its code declaration unless an admin curates one |
-| MCP | An approved registry item naming a remote MCP server. An admin connects one from the Integrations page, which publishes and approves the item in the same step, or installs an MCP plugin bundle (`mcpIntegration` packed with no code) from a catalog, a file or a URL | On the remote server, only while the approval covers the item's latest version and hash. Its Tools are discovered live. A Tool's class is the admin's choice for that row, else the manifest's (`tool_classes`), else the class the server's read-only and destructive hints suggest, else `read` for a name that starts with a read verb and `write` for any other |
+| MCP | A built-in catalog manifest or an approved registry item naming a remote MCP server. An admin connects one from the Integrations page, which publishes and approves the item in the same step, or installs an MCP plugin bundle (`mcpIntegration` packed with no code) from a catalog, a file or a URL | On the remote server. A registry item runs only while approval covers its latest version and hash. Its Tools are discovered live. A Tool's class is the admin's choice for that row, else the manifest's (`tool_classes`), else the class the server's read-only and destructive hints suggest, else `read` for a name that starts with a read verb and `write` for any other |
+
+An Integration row is one instance of a kind. The row's `kind` names the catalog item it instantiates and its `name` is the instance's own slug; its `label` is the name an admin gives it, shown in the panel. One kind runs any number of instances: five ClickHouse clusters are five instances of one kind, each with its own URL, credentials, Tool curation, audience and grants. The instance slug is the secret key and the Tool namespace, so two instances never collide; a rename moves stored secrets and Trait bindings, and the Tools take the new prefix. Identity changes, settings, and submitted credentials in one save commit together. An admin names the slug and the label when it creates an instance and edits them later.
 
 A Plugin reaches an Org's registry three ways, all ending in the same install: an admin installs a version from one of the Org's catalogs, uploads a `.guildplugin` file, or names a bundle URL; or a publisher pushes it with `guild-plugin publish` and an admin approves it. Install checks the bundle, starts it once, publishes it, approves its exact hash and adds a disabled row. The Org never depends on the source afterwards. Approval is the trust decision: the worker contains a Plugin's crashes and hangs, but it is not a sandbox.
 
@@ -90,11 +92,11 @@ An Integration speaks to two readers. Its manifest `description` is what the age
 
 The slugs `catalog`, `connect` and `sources` are reserved: they are addresses of the Integrations page.
 
-Each Trait has one provider per Turn: the Integration the Org bound to it when that one is enabled, else the first enabled Integration that declares it (built-ins, then Plugins by slug). The losers keep their other Tools.
+Each Trait has one provider per Turn: the Integration instance the Org bound to it when that one is enabled, else the first enabled instance that declares it (built-ins, then Plugins by slug). The losers keep their other Tools.
 
 An MCP Integration sends Guild's identity headers (`x-guild-org`, `-caller`, `-acting-as`, `-call-id`) unless the row turns them off. Its credentials are Integration secrets: a row with a header map sends each one in the header whose template names it; a row without one sends them as `x-guild-secret-<name>`. Every Tool the server serves, including one it starts serving later, is on until an admin turns it off; its class (the admin's, the manifest's, else the one the server's hints and the tool name suggest, `write` when unsure) and the reach ceilings decide who gets it.
 
-Each Integration adds its Tools as `<slug>_<tool>` and one `<slug>_list_tools` tool, which answers the JSON schema of every Tool the Turn may call. The Tools themselves are deferred: they are callable from a script, and the prompt carries the Integration's one-line index entry rather than their declarations. A `<slug>_guide` tool joins them only when the Integration's manifest names a skill in `skills`; the first slug is the guide, and the tool returns that skill's `SKILL.md`. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). Curation is per Tool: on or off, the approval rule, and the class. The admin sets the class on any Tool, not only an MCP one, because the class states what the credential behind the Tool can do: a key that cannot write marks its raw API Tool `read`. The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
+Each Integration adds its Tools as `<slug>_<tool>`. This includes the selected providers’ Trait Tools. Each Integration exposes a `<slug>_list_tools` tool that returns the exact names and JSON schemas of its Tools the Turn may call. The Tools themselves are deferred: they are callable from a script, and the prompt carries the Integration's one-line index entry rather than their declarations. A `<slug>_guide` tool joins them only when the Integration's manifest names a skill in `skills`; the first slug is the guide, and the tool returns that skill's `SKILL.md`. Curation and the Agent's Integration list decide which of its Tools a Turn sees (see 002). Curation is per Tool: on or off, the approval rule, and the class. The admin sets the class on any Tool, not only an MCP one, because the class states what the credential behind the Tool can do: a key that cannot write marks its raw API Tool `read`. The Integration page's Access tab sets the audience and lists every Agent that uses it, with its warnings.
 
 The HubSpot Integration offers read-class tools for marketing emails, delivery events, audience lists and memberships, campaign assets and v4 workflows. Email attribution keeps the creator, publisher and visible sender address separate from a list maintainer. CRM reads can return property history. These tools preserve complete JSON and the vendor pagination fields; callers follow each page to establish a full result. `hubspot_check_capabilities` probes CRM, email, events, lists, campaigns and workflows independently; the connection save gate checks contacts access only.
 
@@ -166,7 +168,7 @@ The Apps page lists the Apps whose Access list reaches the Member, and an admin 
 
 Every call acts for the viewer: their Integration audience ceilings (the script rule of 002), the Org's curation, `admin`-class tools for admins only, and the `integration.tool_called` event with `via: "app"`, the App and the function. A call whose function is `write`- or `admin`-class or curated `always_ask` needs the viewer's yes in Guild's own dialog, which shows the function, the request it makes (a raw API tool's method and path) and the parameters; the server refuses such a call without it. The viewer answers Decline, Allow once, or Always allow for this app. Always allow records a grant for that viewer, that function and that App version: the function's arguments are fixed and only its bounded parameters vary, so one yes covers every call it can make. A new version asks again, and the viewer clears their grants from the App's menu. Calls of one function that arrive while its question is open wait for the same answer. A function declared `read` runs without asking; `publish_app` tells the author to declare it when a fixed request only reads, and to prefer read-class tools first. One Member may call one App at most 120 times a minute, and a result over 4 MiB is refused.
 
-An Agent's `call_app` runs the same function through the same rules, for the Member the Thread acts for, with the same audit event. A `read`-class function runs at once. A function curated `always_ask` asks the Member with the Approval card, even where the Agent otherwise works unattended (see 002). A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the card is the Agent's question, and the page's grants stay the page's.
+An Agent's `call_app` runs the same function through the same rules, for the Member the Thread acts for, with the same audit event. A `read`-class function runs at once. A function curated `always_ask` asks in an interactive Thread. In coordinator-managed work and Routines it receives the unattended judge decision as a tool result (see 002). A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the card is the Agent's question, and the page's grants stay the page's.
 
 An App's Access list decides who may open it and who may edit it: an `edit` entry publishes a new version, renames the App and changes its list. The owner, or an admin, deletes it. A new App starts with an empty list, so only its owner opens it.
 
@@ -191,7 +193,6 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 | An Agent writing through an App without a card | A data function that changes data asks the Member, whether the page or the Agent calls it |
 | The vendor's hosted gateway or chat client for Generated UI | Org traffic stays on the Org gateway, and the Thread stays on the member socket |
 | Showing provider model ids | Members see the Org's aliases, and the id stays a wire identifier |
-| Vendor tool names for search and fetch | Traits keep one name across vendors |
 | An approval that survives a new version | A review covers one version and hash, so a change returns the item to draft |
 | Removing unmanaged skill folders on a Machine | Only folders the sync wrote, marked by their provenance file, are its to remove |
 
@@ -213,7 +214,10 @@ Every installer, listing and updater candidate is capped at the running server
 version. An installation persists its own stable/develop preference across
 sign-out and pairing changes. Native offers bind to the paired server, channel
 and observed server version and are revalidated before installation.
-The approved version and all artifact rows become visible together. The updater
+Deployment release pairing imports the published tag for the exact version
+reported by the running server when the image and release record the same
+source commit. The approved version and all artifact rows
+become visible together. The updater
 manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
 only on GitHub.
 
@@ -225,3 +229,7 @@ Release workflows run on develop and master pushes. Stable version increments
 originate on master and synchronize to develop through a version-only PR after
 publication. Develop release retention keeps the newest ten, those younger than
 fourteen days, and installation pins; stable releases are retained.
+
+## Coordinator capability surface
+
+Coordinator and reflection roles are provisioned before Integration or MCP resolution. No external capability is registered for either role. Coordinator Workspace tools reject a Machine target. Its `spawn` defaults to the same Agent and requires a trusted Input ID; a different accessible Agent can be selected. Workers discover their available tools progressively using the existing Integration catalog and disclosure tools, without a coordinator-selected schema whitelist. Reflection receives read/edit/write only, with an enforced operation budget.

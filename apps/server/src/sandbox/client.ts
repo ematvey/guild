@@ -25,7 +25,7 @@ export class SandboxRunnerError extends Error {
 }
 
 export interface SandboxTarget {
-  /** Stable sandbox identity: `ws:<org>:<name>` or `chat:<org>:<conversationId>`. */
+  /** Stable identity for a Workspace session, plain chat, or Agent sandbox scope. */
   key: string;
   /** The workspace dir on the data volume, relative to its root. */
   subpath: string;
@@ -67,11 +67,21 @@ export class RunnerClient {
 
   /** Removes the sandbox container for a key, if one exists. */
   async remove(key: string): Promise<void> {
-    await fetch(`${this.baseUrl}/v1/sandboxes?key=${encodeURIComponent(key)}`, {
-      method: "DELETE",
-      headers: this.headers(),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const signal = AbortSignal.timeout(30_000);
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${this.baseUrl}/v1/sandboxes?key=${encodeURIComponent(key)}`, {
+        method: "DELETE",
+        headers: this.headers(),
+        signal,
+      });
+      await res.body?.cancel();
+      if (res.ok || res.status === 404) return;
+      // The runner may still be accounting for the connection we just closed.
+      if (res.status !== 409 || attempt === 10) {
+        throw new SandboxRunnerError(`sandbox remove failed: ${res.status}`, res.status);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
 
   /** Opens an agent connection; resolves once the socket is open. */

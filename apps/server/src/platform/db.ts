@@ -4,6 +4,7 @@
 // size_bytes).
 
 import pg from "pg";
+import type { Logger } from "pino";
 
 let bigintParserInstalled = false;
 function installBigintNumberParser(): void {
@@ -15,11 +16,32 @@ function installBigintNumberParser(): void {
 export type PlatformPool = pg.Pool;
 export type PoolClient = pg.PoolClient;
 
-export function createPlatformPool(databaseUrl: string, poolMax = 10): pg.Pool {
+export function createPlatformPool(databaseUrl: string, poolMax = 10, log?: Pick<Logger, "warn">): pg.Pool {
   installBigintNumberParser();
   // Short idle timeout: suites (and redeploys) must release their slots
   // promptly on the shared dev server's connection budget.
-  return new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
+  // pg removes a failed idle client before emitting this event. Handle it
+  // so the next query can acquire a fresh client when Postgres is back.
+  pool.on("error", (error) => log?.warn({ err: error }, "idle PostgreSQL connection lost"));
+  return pool;
+}
+
+/** A short-lived session for advisory locks that span calls into the pool. */
+export async function withPlatformSession<T>(
+  databaseUrl: string,
+  onError: (error: Error) => void,
+  fn: (session: pg.Client) => Promise<T>,
+): Promise<T> {
+  // The platform pool uses the same connection string, including its TLS options.
+  const session = new pg.Client({ connectionString: databaseUrl });
+  session.on("error", onError);
+  try {
+    await session.connect();
+    return await fn(session);
+  } finally {
+    await session.end().catch(onError);
+  }
 }
 
 /** Runs `fn` inside one transaction on a dedicated pooled client: COMMIT

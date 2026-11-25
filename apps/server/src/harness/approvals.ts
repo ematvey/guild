@@ -1,3 +1,5 @@
+import { isRoutineChat } from "../agents/store/coordination.js";
+import { coordinationRole } from "../agents/coordination.js";
 // The approval gate (approval_gate + exec_and_approval_gate onto the
 // pi-durable tool-task hook):
 //
@@ -16,9 +18,8 @@
 //    suspension is recoverable: a restart re-runs the gate, which finds the
 //    recorded decision (echo semantics) or re-enters the wait.
 //
-// The batch contract (server-side workspace agent sessions) skips the
-// interactive gate — trusted workspace, pre-approved — but the exec policy
-// still applies.
+// Coordinator-managed work and Routines return judge rejections directly.
+// Independently started Threads retain their interactive approval settings.
 
 import { hook, ToolTask } from "@earendil-works/pi-durable";
 import type { HookApi } from "@earendil-works/pi-durable";
@@ -53,7 +54,6 @@ const JUDGE_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 /** Pinned identities for judge trace rows without a resolvable chat owner
  *  (same pattern as the internal gateway key's synthetic ids). */
-const INTERNAL_JUDGE_USER_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-user");
 const INTERNAL_JUDGE_SESSION_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-session");
 
 /** Server default approval policy for client tools (design §A): read-only
@@ -62,7 +62,6 @@ export const SERVER_DEFAULT_POLICY = { default: "ask", overrides: { read_file: "
 
 export { canonicalJson } from "../platform/domain/json.js";
 import { canonicalJson } from "../platform/domain/json.js";
-import { agentThreadForChat } from "../agents/workspace.js";
 
 /** The App call classifier: "ask" when the Org curates the function to always
  *  ask, "policy" when it targets a write- or admin-class data function (the
@@ -164,6 +163,7 @@ async function judgeVerdict(
   userId: string | null,
   model: string,
   call: ToolCall,
+  unattended = false,
 ): Promise<JudgeOutcome> {
   const startedAt = Date.now();
   const undecided: JudgeOutcome = { approve: null, reason: null, ms: 0 };
@@ -183,7 +183,11 @@ async function judgeVerdict(
   let responsePayload: string | null = null;
   let attempted = false;
   try {
-    const prompt = (await deps.orgKv.get(orgId, APPROVAL_POLICY_PROMPT_KEY))?.trim() || DEFAULT_APPROVAL_POLICY_PROMPT;
+    const prompt =
+      (await deps.orgKv.get(orgId, APPROVAL_POLICY_PROMPT_KEY))?.trim() ||
+      (unattended
+        ? 'Judge an unattended agent action within configured access grants. Allow ordinary scoped work, reads, file edits, integration updates and requested communications. Reject concrete dangerous actions: credential exfiltration, unauthorized access or privilege escalation, large irreversible destruction, and unauthorized financial transfers. Do not reject merely unusual syntax or routine installation/workspace operations. No human approval fallback exists. Return only JSON {"approve":true,"reason":"short reason"}, or approve false for a dangerous action.'
+        : DEFAULT_APPROVAL_POLICY_PROMPT);
     const action = canonicalJson({ tool: call.name, arguments: call.arguments });
     const body = {
       model,
@@ -289,7 +293,7 @@ async function judgeVerdict(
           ts: new Date(),
           request_id: requestId,
           org_id: orgId,
-          user_id: userId ?? INTERNAL_JUDGE_USER_UUID,
+          user_id: userId,
           session_id: INTERNAL_JUDGE_SESSION_UUID,
           run_id: runId,
           chat_id: chatId,
@@ -316,7 +320,7 @@ async function judgeVerdict(
           await sink.recordPayload(requestId, orgId, "request", requestPayload, runId ?? chatId);
         }
         if (responsePayload !== null) await sink.recordPayload(requestId, orgId, "response", responsePayload);
-      })();
+      })().catch(() => {});
     }
   }
 }
@@ -476,6 +480,35 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         if (decision.kind === "allow") return undefined; // static allow skips the gate
       }
 
+      const role = await coordinationRole(deps.pool, chatId);
+      const routine = await isRoutineChat(deps.pool, [chatId]);
+      const unattended =
+        role?.coordinator_managed === true ||
+        role?.execution_role === "coordinator" ||
+        role?.execution_role === "reflection" ||
+        routine.rowCount! > 0;
+      if (unattended) {
+        const integration = await deps.integrations?.gateDecision(
+          Number(runtime.conversationId),
+          call.name,
+          context.abortSignal,
+          call.id,
+        );
+        if (integration === "skip") return undefined;
+        const appDecision =
+          call.name === "call_app" ? await deps.appCallGate?.decision(Number(runtime.conversationId), call) : undefined;
+        if (!isCommandTool && integration === undefined && appDecision === undefined) return undefined;
+        const chat = await deps.chats.identityOf(chatId);
+        const model = await deps.currentModel(Number(runtime.conversationId));
+        if (chat === null || model === null) return { block: "Rejected: unattended action has no judge mapping" };
+        const verdict = await judgeVerdict(deps, chat.org_id, chatId, chat.internal ? null : chat.user_id, model, call, true);
+        return verdict.approve === true
+          ? undefined
+          : {
+              block: `Rejected by unattended judge: ${verdict.reason ?? "no approving verdict"}. No human approval is available; continue without this action.`,
+            };
+      }
+
       // 1b. Integration tools: the connector envelope. Guild-provided
       //     disclosure, read-class, and always_allow-curated tools flow;
       //     an always_ask curation forces the card; any other class falls
@@ -490,13 +523,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           context.abortSignal,
           call.id,
         );
-        // An agent's own thread runs unattended: its integration calls take
-        // the batch contract instead of a card.
-        if (decision === "ask" && (await agentThreadForChat(deps.pool, chatId)) === null) {
+        if (decision === "ask") {
           return waitForApproval(deps, runtime, chatId, call, context);
         }
         if (decision === "skip") return undefined;
-        if (decision === "ask") return undefined;
         // "policy" and undefined fall through to the chat approval mode.
       }
 
@@ -526,7 +556,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       const chat = await deps.chats.identityOf(chatId);
       if (chat === null) return undefined;
       const orgId = chat.org_id;
-      const chatOwnerId = chat.user_id;
+      const chatOwnerId = chat.internal ? null : chat.user_id;
       const { chat_mode, user_policy } = await readChatPolicy(deps, chatId);
       let decision: "allow" | "ask" | "never";
       if (chat_mode === "approve_for_me") {

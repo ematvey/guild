@@ -116,6 +116,10 @@ export async function createGatewayTestEnv(
     ...configOverrides,
   });
   const app = await buildApp(config);
+  // Canned model responses belong to explicitly submitted test work.
+  // Coordination scenarios advance tick() themselves; background reflection
+  // must not consume another scenario's scripted model response.
+  app.platform.coordination.stop();
 
   let done = false;
   const cleanup = async (): Promise<void> => {
@@ -160,8 +164,8 @@ export interface MockUpstream {
 export interface MockUpstreamResponse {
   status?: number;
   contentType?: string;
-  /** The whole body in one write. */
-  body?: string;
+  /** The whole body in one write, optionally generated when the request arrives. */
+  body?: string | (() => Promise<string>);
   /** Body pieces written with `chunkDelayMs` between them — a slow stream
    *  (the durable partial commits at most every 100 ms, so a fast mock
    *  never produces an in-flight partial). */
@@ -215,7 +219,14 @@ export async function startMockUpstream(responses: MockUpstreamResponse[]): Prom
         writeNext();
         return;
       }
-      res.end(scripted.body);
+      if (typeof scripted.body === "function") {
+        void scripted.body().then(
+          (body) => res.end(body),
+          (error: Error) => res.destroy(error),
+        );
+      } else {
+        res.end(scripted.body);
+      }
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

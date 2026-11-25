@@ -37,7 +37,7 @@ const RULES: readonly { pattern: RegExp; message: string }[] = [
   {
     pattern: /\b(require\s*\(|process\.|Buffer\b|global\.|window\.|document\.|fetch\s*\()/,
     message:
-      "the sandbox has no Node and no network: require, process, Buffer, window, document and fetch do not exist. All I/O goes through nested tool calls (`await tools.<name>(...)`) — e.g. web_fetch for URLs.",
+      "the sandbox has no Node and no network: require, process, Buffer, window, document and fetch do not exist. All I/O goes through nested tool calls (`await tools.<name>(...)`).",
   },
 ];
 

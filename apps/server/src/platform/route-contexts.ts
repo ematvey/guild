@@ -138,6 +138,8 @@ export interface SocketSeams {
    *  the same sync bracket so a (re)connect never waits for a poll to show
    *  the running tree or the child thread header. */
   subagentTree: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg[]>;
+  /** The Activity detail selected by this member socket. */
+  syncActivity: (user: UserRow, sink: SocketSink) => Promise<void>;
   /** The dispatch lane's tool-result completion. */
   toolResult: (args: { member: LiveMember; user: UserRow; frame: ToolResultFrame }) => Promise<void>;
   /** The dispatch lane's uncertain-execution sweep at machine connect. */

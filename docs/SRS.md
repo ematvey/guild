@@ -84,7 +84,8 @@ ONLY through a project binding: the workdir is the bound project's folder.
 
 **SRS-8 — Server executor.**
 The `server` executor runs the same client-tool specs in a gVisor sandbox
-via the `sandbox-runner` service: a plain chat gets
+via the sandbox runner protocol. Compose uses the Docker runner. Kubernetes
+uses the Substrate adapter to attach a gVisor Actor. A plain chat gets
 `chats/<org>/<conversationId>`, an agent chat gets the agent workspace
 `agents/<org>/<agent>`. Every unbound chat (web or desktop origin) uses it. The static exec-policy gate and the interactive approval
 gate both run before execution; `execute` additionally requires the server
@@ -651,3 +652,11 @@ never polls an HTTP endpoint for state the socket carries; a reconnect
 re-syncs the open chat. A change in a child thread is pushed to every
 ancestor chat that displays it, because each of those chats may be open on
 some device.
+
+## Persistent coordinator harness
+
+Agent coordination stores attributed Inputs durably and creates one internal coordinator per Agent. Member inboxes are separate visible Threads. Ordinary Thread messages are passive observations; delegated results wake their parent asynchronously. Internal histories are excluded from Member display and search APIs. Explicit delivery uses source Member/Thread references and replay-stable action IDs.
+
+Role provisioning restricts the coordinator to Workspace and coordination tools and reflection to Workspace file operations within a two-minute wall-time budget. Workers dynamically discover tools within current Agent Integration grants. Shared Agents have independent grants, default read access and optional Member-scope intersection; account impersonation and inherited personal MCP connections are unavailable. Coordinator-managed work and Routines return unattended judge rejection as a tool error without human Approval.
+
+Self-wakes are durable timed Inputs separate from Routines. Reflection learns in parallel, automatically updates shared Workspace memory with revision checks, and retries unreflected Inputs on failure. Proactive compaction uses activity/time thresholds in addition to context-size safeguards. Role models and thresholds use `resources.assistant`. The Assistant inbox and Agent Threads tab reuse Member socket Thread feeds; the client does not poll for work state. See [execution](domain/003-execution.md#coordinator-execution) for defaults and budgets.

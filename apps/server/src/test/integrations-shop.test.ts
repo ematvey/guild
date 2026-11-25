@@ -7,7 +7,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BUILTINS, builtinByName } from "../integrations/loader.js";
-import { TRAIT_BINDINGS_KEY } from "../integrations/connectors.js";
+import { TRAIT_BINDINGS_KEY } from "../platform/store/org-kv.js";
 import { resolveIntegrations } from "../integrations/plugins.js";
 import { grafanaExecute } from "../integrations/grafana/execute.js";
 import { posthogExecute } from "../integrations/posthog/execute.js";
@@ -15,10 +15,13 @@ import { posthogExecute } from "../integrations/posthog/execute.js";
 const SECRETS: [string, string][] = [["token", "glsa_test"]];
 
 function gateway(rows: { name: string; config: unknown; enabled: boolean }[], bindings: Record<string, string> = {}) {
+  // A row names an instance of the kind of the same slug unless it says
+  // otherwise: these suites exercise one instance per kind.
+  const instances = rows.map((r) => ({ ...r, kind: r.name, label: "" }));
   return {
     objects: { get: async () => Buffer.alloc(0) },
     orgKv: { get: async (_org: string, key: string) => (key === TRAIT_BINDINGS_KEY ? JSON.stringify(bindings) : null) },
-    integrations: { listEnabled: async () => rows },
+    integrations: { listEnabled: async () => instances },
     integrationSecrets: {
       names: async () => [],
       resolve: async () => SECRETS,
@@ -84,14 +87,14 @@ describe("posthog", () => {
 });
 
 describe("trait tools", () => {
-  it("take the Guild-provided name and description", async () => {
+  it("keep the provider-prefixed name and use the Guild description", async () => {
     const turns = await resolveIntegrations(
       gateway([{ name: "searxng", config: { base_url: "http://searx.test" }, enabled: true }]),
       "org-1",
     );
     expect(turns).toHaveLength(1);
     const tool = turns[0]!.tools.find((t) => t.trait === "web_search")!;
-    expect(tool.spec.name).toBe("web_search");
+    expect(tool.spec.name).toBe("searxng_web_search");
     expect(tool.spec.description).toContain("Search the public web");
     expect(tool.raw).toBe("web_search");
   });
@@ -106,10 +109,10 @@ describe("trait tools", () => {
     );
     const searx = turns.find((t) => t.slug === "searxng")!;
     const firecrawl = turns.find((t) => t.slug === "firecrawl")!;
-    expect(searx.tools.map((t) => t.spec.name)).toContain("web_search");
+    expect(searx.tools.map((t) => t.spec.name)).toContain("searxng_web_search");
     // firecrawl keeps its own tools but loses the trait the earlier
     // integration provides.
-    expect(firecrawl.tools.map((t) => t.spec.name)).not.toContain("web_search");
+    expect(firecrawl.tools.map((t) => t.spec.name)).not.toContain("firecrawl_web_search");
     expect(firecrawl.tools.map((t) => t.spec.name)).toContain("firecrawl_map");
   });
 
@@ -126,8 +129,8 @@ describe("trait tools", () => {
     );
     const searx = turns.find((t) => t.slug === "searxng")!;
     const firecrawl = turns.find((t) => t.slug === "firecrawl")!;
-    expect(firecrawl.tools.map((t) => t.spec.name)).toContain("web_search");
-    expect(searx.tools.map((t) => t.spec.name)).not.toContain("web_search");
+    expect(firecrawl.tools.map((t) => t.spec.name)).toContain("firecrawl_web_search");
+    expect(searx.tools.map((t) => t.spec.name)).not.toContain("searxng_web_search");
   });
 
   it("fall back to catalog order when the bound provider is not enabled", async () => {
@@ -137,13 +140,13 @@ describe("trait tools", () => {
       }),
       "org-1",
     );
-    expect(turns[0]!.tools.map((t) => t.spec.name)).toContain("web_search");
+    expect(turns[0]!.tools.map((t) => t.spec.name)).toContain("searxng_web_search");
   });
 
   it("name the provider's raw tool for dispatch", async () => {
     const turns = await resolveIntegrations(gateway([{ name: "firecrawl", config: {}, enabled: true }]), "org-1");
     const trait = turns[0]!.tools.find((t) => t.trait === "web_fetch")!;
-    expect(trait.spec.name).toBe("web_fetch");
+    expect(trait.spec.name).toBe("firecrawl_web_fetch");
     expect(trait.raw).toBe("web_fetch");
   });
 });

@@ -7,14 +7,26 @@ import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
+import { lockTraitBindings, OrgKvStore, parseTraitBindings, TRAIT_BINDINGS_KEY } from "./org-kv.js";
 
-/** An integration row, fields in wire order. */
+/** An integration row, fields in wire order. `name` is the instance slug,
+ *  `kind` the catalog item it instantiates, `label` the admin's name for
+ *  the instance (empty = the item's title). */
 export interface IntegrationRow {
   id: string;
   org_id: string;
   name: string;
+  kind: string;
+  label: string;
   config: unknown;
   enabled: boolean;
+}
+
+/** The identity of one instance as a write names it. */
+export interface IntegrationInstance {
+  name: string;
+  kind: string;
+  label: string;
 }
 
 /** SecretRow (name, updated_at, masked) as the admin secrets listing. */
@@ -29,18 +41,44 @@ function row(r: Record<string, unknown>): IntegrationRow {
     id: r.id as string,
     org_id: r.org_id as string,
     name: r.name as string,
+    kind: r.kind as string,
+    label: (r.label as string | null) ?? "",
     config: r.config,
     enabled: r.enabled === true,
   };
 }
 
+const ROW_COLUMNS = "id, org_id, name, kind, label, config, enabled";
+
 export class IntegrationStore {
   constructor(readonly pool: PlatformPool) {}
 
-  /** Idempotent upsert: replaces config and enabled flag; the per-tool
-   *  curation map (`config.tools`) is preserved from the existing row —
-   *  the PUT tools endpoint is its only writer. Returns the row's stable
-   *  id. */
+  /** Idempotent upsert of one instance: replaces config and enabled flag;
+   *  the per-tool curation map (`config.tools`) is preserved from the
+   *  existing row — the PUT tools endpoint is its only writer. The instance's
+   *  identity (`kind`, `label`) is set on insert only: a settings save never
+   *  re-points a row's kind or drops an admin's label, and `rename` is the
+   *  one writer of both. Returns the row's stable id. */
+  async upsertInstance(
+    orgId: string,
+    instance: IntegrationInstance,
+    config: unknown,
+    enabled: boolean,
+    db: PlatformPool | PoolClient = this.pool,
+  ): Promise<string> {
+    const res = await db.query(
+      "INSERT INTO integrations (org_id, name, kind, label, config, enabled) VALUES ($1, $2, $3, $4, $5, $6) " +
+        "ON CONFLICT (org_id, name) " +
+        "DO UPDATE SET config = jsonb_set($5, '{tools}', " +
+        "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
+        "enabled = $6, updated_at = now() " +
+        "RETURNING id",
+      [orgId, instance.name, instance.kind, instance.label, jsonbText(config), enabled],
+    );
+    return res.rows[0]!.id as string;
+  }
+
+  /** The one-instance case: the instance slug is the kind. */
   async upsert(
     orgId: string,
     name: string,
@@ -48,16 +86,7 @@ export class IntegrationStore {
     enabled: boolean,
     db: PlatformPool | PoolClient = this.pool,
   ): Promise<string> {
-    const res = await db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, $2, $3, $4) " +
-        "ON CONFLICT (org_id, name) " +
-        "DO UPDATE SET config = jsonb_set($3, '{tools}', " +
-        "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
-        "enabled = $4, updated_at = now() " +
-        "RETURNING id",
-      [orgId, name, jsonbText(config), enabled],
-    );
-    return res.rows[0]!.id as string;
+    return this.upsertInstance(orgId, { name, kind: name, label: "" }, config, enabled, db);
   }
 
   /** Saves an integration's settings and its submitted secrets in one
@@ -65,18 +94,67 @@ export class IntegrationStore {
   async saveWithSecrets(
     secrets: IntegrationSecretStore,
     orgId: string,
-    name: string,
+    instance: IntegrationInstance,
     config: unknown,
     enabled: boolean,
     submitted: Iterable<[string, string]>,
     masterKey: Buffer,
+    existing?: Pick<IntegrationRow, "id" | "name" | "label">,
   ): Promise<void> {
     await withTransaction(this.pool, async (client) => {
+      if (existing !== undefined) await this.rename(orgId, existing, instance, client);
       for (const [secretName, plaintext] of submitted) {
-        await secrets.upsert(orgId, name, secretName, plaintext, masterKey, client);
+        await secrets.upsert(orgId, instance.name, secretName, plaintext, masterKey, client);
       }
-      await this.upsert(orgId, name, config, enabled, client);
+      await this.upsertInstance(orgId, instance, config, enabled, client);
     });
+  }
+
+  /** Slug changes move secrets and Trait bindings with the instance. */
+  async rename(
+    orgId: string,
+    existing: Pick<IntegrationRow, "id" | "name" | "label">,
+    instance: IntegrationInstance,
+    client?: PoolClient,
+  ): Promise<void> {
+    if (client === undefined) {
+      await withTransaction(this.pool, (tx) => this.rename(orgId, existing, instance, tx));
+      return;
+    }
+    const current = await client.query(
+      "SELECT name, label FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
+      [orgId, existing.id],
+    );
+    const stored = current.rows[0];
+    if (stored === undefined) throw ApiError.notFound("unknown integration");
+    if (stored.name !== existing.name || stored.label !== existing.label) {
+      throw ApiError.conflict("conflict", "integration identity changed during this save");
+    }
+    if (instance.name === existing.name && instance.label === existing.label) return;
+    if (instance.name !== existing.name) await lockTraitBindings(client, orgId);
+    try {
+      await client.query(
+        "UPDATE integrations SET name = $3, label = $4, updated_at = now() WHERE org_id = $1 AND id = $2",
+        [orgId, existing.id, instance.name, instance.label],
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw ApiError.conflict("already_configured", `integration ${instance.name} already has a configuration`);
+      }
+      throw error;
+    }
+    if (instance.name === existing.name) return;
+    await client.query("UPDATE integration_secrets SET integration = $3 WHERE org_id = $1 AND integration = $2", [
+      orgId,
+      existing.name,
+      instance.name,
+    ]);
+    const kv = new OrgKvStore(this.pool);
+    const bindings = parseTraitBindings(await kv.get(orgId, TRAIT_BINDINGS_KEY, client));
+    const affected = Object.keys(bindings).filter((trait) => bindings[trait] === existing.name);
+    if (affected.length === 0) return;
+    for (const trait of affected) bindings[trait] = instance.name;
+    await kv.put(orgId, TRAIT_BINDINGS_KEY, JSON.stringify(bindings), client);
   }
 
   /** Sets one tool's per-tool curation (`enabled`, `approval`, and for an
@@ -128,33 +206,40 @@ export class IntegrationStore {
   }
 
   async get(orgId: string, id: string): Promise<IntegrationRow | null> {
-    const res = await this.pool.query(
-      "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 AND id = $2",
-      [orgId, id],
-    );
+    const res = await this.pool.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND id = $2`, [
+      orgId,
+      id,
+    ]);
     return res.rows[0] === undefined ? null : row(res.rows[0]);
   }
 
   async getByName(orgId: string, name: string): Promise<IntegrationRow | null> {
+    const res = await this.pool.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND name = $2`, [
+      orgId,
+      name,
+    ]);
+    return res.rows[0] === undefined ? null : row(res.rows[0]);
+  }
+
+  /** The first instance of one kind, in name order. Catalog and credential
+   *  questions are about the kind, not about one instance's slug. */
+  async firstOfKind(orgId: string, kind: string): Promise<IntegrationRow | null> {
     const res = await this.pool.query(
-      "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 AND name = $2",
-      [orgId, name],
+      `SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND kind = $2 ORDER BY name LIMIT 1`,
+      [orgId, kind],
     );
     return res.rows[0] === undefined ? null : row(res.rows[0]);
   }
 
-  async list(orgId: string): Promise<IntegrationRow[]> {
-    const res = await this.pool.query(
-      "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 ORDER BY name",
-      [orgId],
-    );
+  async list(orgId: string, db: PlatformPool | PoolClient = this.pool): Promise<IntegrationRow[]> {
+    const res = await db.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 ORDER BY name`, [orgId]);
     return res.rows.map((r: Record<string, unknown>) => row(r));
   }
 
   /** Enabled rows only, in name order — the plugin resolver's input. */
   async listEnabled(orgId: string): Promise<IntegrationRow[]> {
     const res = await this.pool.query(
-      "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 AND enabled ORDER BY name",
+      `SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND enabled ORDER BY name`,
       [orgId],
     );
     return res.rows.map((r: Record<string, unknown>) => row(r));
@@ -166,7 +251,10 @@ export class IntegrationStore {
    *  old credentials). */
   async delete(orgId: string, id: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
-      const nameRes = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);
+      const nameRes = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE", [
+        orgId,
+        id,
+      ]);
       const name = nameRes.rows[0]?.name as string | undefined;
       if (name !== undefined) {
         await client.query("DELETE FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);

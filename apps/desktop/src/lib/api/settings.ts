@@ -192,8 +192,8 @@ export function createIntegration<T>(body: unknown): Promise<T> {
   return request<T>("POST", SETTINGS_PATHS.integrations, body);
 }
 
-export function updateIntegration(id: string, body: unknown): Promise<void> {
-  return request<void>("PUT", `${SETTINGS_PATHS.integrations}/${id}`, body);
+export function updateIntegration(id: string, body: unknown): Promise<{ ok: boolean; name: string; label: string }> {
+  return request<{ ok: boolean; name: string; label: string }>("PUT", `${SETTINGS_PATHS.integrations}/${id}`, body);
 }
 
 export function deleteIntegration(id: string): Promise<void> {

@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
+import type { IdentityStore } from "../platform/store/identity.js";
 import { deriveTitleFromMessage, type AgentStore } from "./store.js";
 import { search, type AgentSearchHit } from "./search.js";
 import { createRoutine, deleteRoutine, listRoutines, scheduleReminder, updateRoutine } from "./routines.js";
@@ -26,6 +27,8 @@ export interface AgentToolDeps {
   /** The user whose private thread this run serves: a thread this tool
    *  creates belongs to them. */
   userId: string;
+  identity: Pick<IdentityStore, "getUser">;
+  coordinatorManaged: boolean;
   /** The chat this turn runs in. A thread the agent opens records it as its
    *  origin, so the agent can read the run behind a delivered message. */
   chatId?: string;
@@ -215,7 +218,6 @@ const listedThreadOutput = Type.Object({
   chat_id: Type.String(),
   title: Type.String(),
   type: Type.String(),
-  is_default: Type.Boolean(),
   parent_thread_id: Type.Union([Type.String(), Type.Null()]),
   archived: Type.Boolean(),
   deleted: Type.Boolean(),
@@ -246,6 +248,11 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
   // `all` follows the catalog, so a tool added in a later release reaches
   // the agent without an edit.
   const allowed = new Set(deps.agent.tools_mode === "all" ? ALL_AGENT_TOOLS : deps.agent.tools);
+  const requireRoutineManagement = async () => {
+    if (deps.coordinatorManaged) throw new Error("Coordinator-managed workers cannot change Routines");
+    const member = await deps.identity.getUser(deps.userId);
+    await deps.store.requireAccess(member, deps.agent.id, "manage");
+  };
   // Outside the allowlist: every agent owns its own description.
   const tools: ToolRegistration[] = [
     defineTool({
@@ -381,7 +388,6 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
                   chat_id: thread.chat_id,
                   title: thread.title,
                   type: thread.type,
-                  is_default: thread.is_default,
                   parent_thread_id: thread.parent_thread_id,
                   archived: thread.archived,
                   deleted: thread.deleted,
@@ -416,6 +422,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 16 * 1024 },
         execute: async (args) => {
           try {
+            await requireRoutineManagement();
             const result = await scheduleReminder(deps.pool, deps.agent.id, {
               created_by_user_id: deps.userId,
               at: args.at,
@@ -478,6 +485,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 16 * 1024 },
         execute: async (args) => {
           try {
+            await requireRoutineManagement();
             const routine = await createRoutine(deps.pool, deps.agent.id, {
               created_by_user_id: deps.userId,
               name: args.name,
@@ -526,6 +534,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 16 * 1024 },
         execute: async (args) => {
           try {
+            await requireRoutineManagement();
             const routine = await updateRoutine(deps.pool, deps.agent.id, args.routine_id, {
               ...(args.name === undefined ? {} : { name: args.name }),
               ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
@@ -557,6 +566,7 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         outputLimits: { maxBytes: 4 * 1024 },
         execute: async (args) => {
           try {
+            await requireRoutineManagement();
             await deleteRoutine(deps.pool, deps.agent.id, args.routine_id);
             return {
               structuredOutput: structured({ deleted: true, routine_id: args.routine_id }),

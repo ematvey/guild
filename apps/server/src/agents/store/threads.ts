@@ -1,14 +1,16 @@
 // The agent thread index: each thread owns one chats row (agent_threads.
-// chat_id) holding its transcript. Create (top-level, default and delegated
-// child), the caller's paged thread list, lookups, rename, activity and the
-// derived title.
+// chat_id) holding its transcript. Create (top-level and delegated child),
+// the caller's paged thread list, lookups, rename, activity and the derived
+// title.
 
+import type { AgentThread as WireThread } from "@guild/wire/rest";
 import { ApiError } from "../../platform/errors.js";
 import { withTransaction, type PlatformPool } from "../../platform/db.js";
-import { uuidv7 } from "../../platform/time.js";
+import { uuidv7, uuidv5 } from "../../platform/time.js";
 import type { ChatStore } from "../../platform/store/chats.js";
 import type { Agent, AgentThread, AgentThreadType } from "../types.js";
 import { THREAD_COLUMNS, toThread } from "./rows.js";
+import { findCoordinationThread } from "./coordination.js";
 
 /** A parent thread already holds its maximum number of children. */
 export class ChildLimitReached extends Error {
@@ -49,6 +51,13 @@ export interface ListedThread extends AgentThread {
 export interface ThreadPage {
   threads: ListedThread[];
   next_cursor: string | null;
+}
+
+/** A thread as the wire carries it. `is_default` is false for every thread:
+ *  the contract keeps the field for clients built before a thread stopped
+ *  being its agent's default. */
+export function wireThread(thread: ListedThread): WireThread {
+  return { ...thread, is_default: false };
 }
 
 function encodeThreadCursor(sort: ThreadSort, at: string, id: string): string {
@@ -121,7 +130,8 @@ export class AgentThreadStore {
     type: AgentThreadType = "user",
     options: {
       originThreadId?: string;
-      isDefault?: boolean;
+      executionRole?: "coordinator" | "inbox" | "reflection";
+      internal?: boolean;
       /** The routine whose output this thread is. */
       routineId?: string;
       /** This thread is the routine's feed: thread-mode deliveries append here. */
@@ -130,8 +140,15 @@ export class AgentThreadStore {
     } = {},
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
-    const id = uuidv7();
-    await withTransaction(this.pool, async (client) => {
+    const id = await withTransaction(this.pool, async (client) => {
+      const role = options.executionRole;
+      if (role === "coordinator" || role === "inbox") {
+        const key = `coordinator:${agentId}:${role}:${role === "inbox" ? userId : ""}`;
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+        const { rows } = await findCoordinationThread<{ id: string }>(client, [agentId, role, userId]);
+        if (rows[0] !== undefined) return rows[0].id;
+      }
+      const id = uuidv7();
       const chat = await this.chats.createChatOn(
         client,
         agent.org_id,
@@ -141,25 +158,29 @@ export class AgentThreadStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, type, is_default, origin_thread_id,
+           (id, agent_id, user_id, chat_id, title, title_locked, type, origin_thread_id,
             routine_id, routine_feed)
-         VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           id,
           agentId,
           userId,
           chat.id,
           title,
-          type,
-          options.isDefault === true,
-          options.originThreadId ?? null,
           options.titleLocked === true,
+          type,
+          options.originThreadId ?? null,
           options.routineId ?? null,
           options.routineFeed === true,
         ],
       );
+      if (options.executionRole !== undefined) {
+        await client.query("UPDATE agent_threads SET execution_role=$2 WHERE id=$1", [id, options.executionRole]);
+        if (options.internal) await client.query("UPDATE chats SET internal=true WHERE id=$1", [chat.id]);
+      }
+      return id;
     });
-    return this.getThread(agentId, userId, id);
+    return (await this.threadById(id))!;
   }
 
   /** Creates a delegated child thread under an existing node. The edge is
@@ -173,9 +194,10 @@ export class AgentThreadStore {
     title: string,
     titleLocked = false,
     maxChildren?: number,
+    coordination?: { sourceInputId?: string; managed: boolean; actionKey?: string },
   ): Promise<AgentThread> {
     const agent = await this.fetchAgent(agentId);
-    const id = uuidv7();
+    const id = coordination?.actionKey === undefined ? uuidv7() : uuidv5(agentId, `worker:${coordination.actionKey}`);
     await withTransaction(this.pool, async (client) => {
       const parent = await client.query<{ depth: number; closed_at: Date | null }>(
         "SELECT depth, closed_at FROM agent_threads WHERE id = $1 FOR UPDATE",
@@ -184,9 +206,13 @@ export class AgentThreadStore {
       const parentRow = parent.rows[0];
       if (parentRow === undefined) throw ApiError.notFound("no such parent thread");
       if (parentRow.closed_at !== null) throw ApiError.badRequest("the parent thread is closed");
+      const exists = await client.query("SELECT id FROM agent_threads WHERE id=$1", [id]);
+      if (exists.rowCount !== 0) return;
       if (maxChildren !== undefined) {
         const count = await client.query<{ count: string }>(
-          "SELECT count(*)::text AS count FROM agent_threads WHERE parent_thread_id = $1",
+          `SELECT count(*)::text AS count FROM agent_threads t WHERE parent_thread_id=$1
+           AND (NOT EXISTS (SELECT 1 FROM agent_threads p WHERE p.id=$1 AND p.execution_role='coordinator')
+             OR (t.closed_at IS NULL AND (NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.thread_id=t.id) OR EXISTS (SELECT 1 FROM agent_runs r WHERE r.thread_id=t.id AND r.status IN ('queued','running')))))`,
           [parentThreadId],
         );
         const children = Number(count.rows[0]?.count ?? 0);
@@ -201,23 +227,54 @@ export class AgentThreadStore {
       );
       await client.query(
         `INSERT INTO agent_threads
-           (id, agent_id, user_id, chat_id, title, title_locked, type, parent_thread_id, depth)
-         VALUES ($1, $2, $3, $4, $5, $8, 'subagent', $6, $7)`,
-        [id, agentId, userId, chat.id, title, parentThreadId, Number(parentRow.depth) + 1, titleLocked],
+           (id, agent_id, user_id, chat_id, title, title_locked, type, parent_thread_id, depth,coordinator_managed,source_input_id)
+         VALUES ($1, $2, $3, $4, $5, $8, 'subagent', $6, $7,$9,$10)`,
+        [
+          id,
+          agentId,
+          userId,
+          chat.id,
+          title,
+          parentThreadId,
+          Number(parentRow.depth) + 1,
+          titleLocked,
+          coordination?.managed ?? false,
+          coordination?.sourceInputId ?? null,
+        ],
       );
     });
-    return this.getThread(agentId, userId, id);
+    return (await this.threadById(id))!;
   }
 
-  /** The user's Main thread with this agent, when they have one. */
-  async mainThread(agentId: string, userId: string): Promise<AgentThread | null> {
-    const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.is_default`,
-      [agentId, userId],
+  /** Opening or surfacing a managed task makes it a sidebar conversation. */
+  async surfaceThread(threadId: string, userId: string): Promise<void> {
+    await this.pool.query(
+      `WITH changed AS (
+      UPDATE agent_threads t SET surfaced=true FROM chats c
+      WHERE t.id=$1 AND t.user_id=$2 AND t.chat_id=c.id AND NOT c.internal AND t.coordinator_managed AND NOT t.surfaced
+      RETURNING c.org_id,c.user_id
+    ) SELECT pg_notify('guild_workspace',json_build_object('org_id',org_id,'user_id',user_id,'parts',json_build_array('chats'))::text) FROM changed`,
+      [threadId, userId],
     );
-    const row = res.rows[0];
-    return row === undefined ? null : toThread(row);
+  }
+
+  /** Recent active conversations and coordinator tasks owned by this Member. */
+  async displayThreads(agentId: string, userId: string): Promise<ThreadPage["threads"]> {
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT ${THREAD_COLUMNS}, c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
+      FROM agent_threads t JOIN chats c ON c.id=t.chat_id
+      LEFT JOIN agent_threads parent ON parent.id=t.parent_thread_id
+      WHERE (t.agent_id=$1 OR (parent.agent_id=$1 AND parent.execution_role='coordinator'))
+        AND t.user_id=$2 AND agent_display_thread(t.type, c.internal, parent.execution_role)
+        AND c.archived_at IS NULL AND c.deleted_at IS NULL
+      ORDER BY t.last_activity_at DESC,t.id DESC LIMIT $3`,
+      [agentId, userId, MAX_THREAD_PAGE],
+    );
+    return result.rows.map((row) => ({
+      ...toThread(row),
+      archived: Boolean(row.archived),
+      deleted: Boolean(row.deleted),
+    }));
   }
 
   /** One page of the caller's threads with this agent. Type, archive and
@@ -229,7 +286,12 @@ export class AgentThreadStore {
     const sort = options.sort ?? "activity_desc";
     const limit = Math.max(1, Math.min(MAX_THREAD_PAGE, Math.floor(options.limit ?? 20)));
     const params: unknown[] = [agentId, userId, types];
-    const where = ["t.agent_id = $1", "t.user_id = $2", "t.type = ANY($3::text[])"];
+    const where = [
+      "(t.agent_id = $1 OR t.parent_thread_id IN (SELECT id FROM agent_threads WHERE agent_id=$1 AND execution_role='coordinator'))",
+      "t.user_id = $2",
+      "t.type = ANY($3::text[])",
+      "NOT c.internal",
+    ];
     if (options.archived === true) where.push("c.archived_at IS NOT NULL");
     else if (options.archived === false) where.push("c.archived_at IS NULL");
     if (options.deleted === true) where.push("c.deleted_at IS NOT NULL");
@@ -276,7 +338,7 @@ export class AgentThreadStore {
   }
 
   /** One of the caller's threads with this agent; 404 otherwise. */
-  async getThread(agentId: string, userId: string, threadId: string): Promise<AgentThread> {
+  async getThread(agentId: string, userId: string, threadId: string): Promise<ListedThread> {
     const thread = await this.findThread(agentId, userId, threadId);
     if (thread === null) throw ApiError.notFound("no such thread");
     return thread;
@@ -284,14 +346,17 @@ export class AgentThreadStore {
 
   /** One of the caller's threads with this agent; null for another agent's
    *  or another user's thread as for a missing one. */
-  async findThread(agentId: string, userId: string, threadId: string): Promise<AgentThread | null> {
+  async findThread(agentId: string, userId: string, threadId: string): Promise<ListedThread | null> {
     const res = await this.pool.query<Record<string, unknown>>(
-      `SELECT ${THREAD_COLUMNS} FROM agent_threads t
-       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3`,
+      `SELECT ${THREAD_COLUMNS}, c.archived_at IS NOT NULL AS archived, c.deleted_at IS NOT NULL AS deleted
+       FROM agent_threads t JOIN chats c ON c.id = t.chat_id
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.id = $3 AND NOT c.internal`,
       [agentId, userId, threadId],
     );
     const row = res.rows[0];
-    return row === undefined ? null : toThread(row);
+    return row === undefined
+      ? null
+      : { ...toThread(row), archived: Boolean(row.archived), deleted: Boolean(row.deleted) };
   }
 
   /** The newest thread of this agent and user with this title and origin
@@ -412,11 +477,13 @@ export class AgentThreadStore {
   }
 
   /** Renames a thread and locks the title against regeneration. */
-  async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<AgentThread> {
+  async renameThread(agentId: string, userId: string, threadId: string, title: string): Promise<ListedThread> {
     await withTransaction(this.pool, async (client) => {
       const res = await client.query<{ chat_id: string }>(
         `UPDATE agent_threads SET title = $4, title_locked = true
-         WHERE agent_id = $1 AND user_id = $2 AND id = $3 RETURNING chat_id`,
+         WHERE agent_id = $1 AND user_id = $2 AND id = $3
+           AND EXISTS (SELECT 1 FROM chats c WHERE c.id = agent_threads.chat_id AND NOT c.internal)
+         RETURNING chat_id`,
         [agentId, userId, threadId, title],
       );
       const row = res.rows[0];

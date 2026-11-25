@@ -69,7 +69,7 @@ export interface CatalogIndex {
 
 export interface CatalogDeps {
   readonly orgKv: Pick<OrgKvStore, "get" | "put">;
-  readonly integrations: Pick<IntegrationStore, "getByName">;
+  readonly integrations: Pick<IntegrationStore, "getByName" | "firstOfKind">;
   readonly integrationSecrets: Pick<IntegrationSecretStore, "names" | "resolve">;
   masterKey(): Buffer;
 }
@@ -183,12 +183,12 @@ async function providerCredentials(
   orgId: string,
   provider: "github" | "gitlab",
 ): Promise<{ config: JsonObject; token: string }> {
-  const row = await deps.integrations.getByName(orgId, provider);
+  const row = await deps.integrations.firstOfKind(orgId, provider);
   const label = provider === "github" ? "GitHub" : "GitLab";
   if (row === null) throw new CatalogError(`this catalog reads through the ${label} integration; configure it first`);
   let secrets: [string, string][];
   try {
-    secrets = await deps.integrationSecrets.resolve(orgId, provider, ["token"], deps.masterKey());
+    secrets = await deps.integrationSecrets.resolve(orgId, row.name, ["token"], deps.masterKey());
   } catch {
     throw new CatalogError(`the ${label} integration has no access token stored`);
   }

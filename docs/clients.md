@@ -119,7 +119,7 @@ Precedence order:
    VITE_DEFAULT_SERVER_URL=https://guild.example.com npm run build
    ```
    (then run the packaging script — the value is inside the shipped binary).
-3. Fallback: `http://localhost:18080`.
+3. Fallback: the installation's public host.
 
 The field stays editable, so any URL can always be typed at login.
 
@@ -152,11 +152,14 @@ asset digests and sizes match the local files. Published versions are not replac
 
 ### Stable releases
 
-Every push to `master` starts **Release clients**, which selects the next patch
-version, runs `scripts/bump-version.sh`, creates an SSH-signed version commit,
-and builds and publishes the stable GitHub Release. A verified signed version
-commit does not trigger another release. A rerun reuses its version commit;
-manual dispatch accepts an optional stable version override.
+Title a promotion PR to `master` `Release X.Y.Z` using the target stable
+version. The merge starts **Release clients**, which reads the title of the PR
+associated with that commit and validates that its version is a stable semver
+triple greater than the current version. The workflow runs
+`scripts/bump-version.sh`, creates an SSH-signed version commit, and builds and
+publishes the stable GitHub Release. A verified signed version commit skips
+release preparation. A rerun reuses its version commit. Manual dispatch on
+`master` accepts an explicit stable version and defaults to the next patch.
 
 After publication, the workflow opens a version-only PR to `develop` and merges it
 after the required Version policy check. The synchronization edits
@@ -216,14 +219,43 @@ CI builds use a generic client: the server address is editable at pairing, and
 the stored paired server controls updates. The same artifacts can serve several
 stacks. Signing and packaging do not publish to a Guild database.
 
-Deploy the matching dev server from the same source commit and artifact directory:
+### Pairing a deployment with a desktop release
+
+Use the same source commit and version for the server image and the published
+client artifacts. Set `BASE` to the installation's deployed origin, `version`
+to the version stamped into the image, and `TOKEN` to an admin session token
+for that installation. Configure the server with `GUILD_RELEASE_REPOSITORY`
+and the appropriate `GUILD_RELEASE_CHANNEL`.
+
+For a develop preview, set `installation` to the installation's pin name and
+create a pending pin before rolling the server. Run one rollout at a time per
+installation.
 
 ```bash
-node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42 dev
+node scripts/release.mjs pin "$installation" "client-v$version" --pending
 ```
 
-This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable. After the server reports the stamped
-version, deployment pins that release for the named installation.
+[Build and roll the stamped image through Helm](deploy-nuances.md#1-build-and-deploy-the-server).
+After the rollout, import the exact release for the running server.
+
+```bash
+TOKEN="$TOKEN" node scripts/release.mjs publish-running "$BASE" "$version"
+```
+
+The command reads the running version from health, checks that it matches the
+intended deployment, and asks the server to import `client-v<running-version>`
+from its configured GitHub repository. Before approval, the server checks
+that the release metadata records the same source commit as its image. A
+missing release or a version or commit mismatch leaves the existing approval
+in place.
+
+Verify the updater manifest as described below. For a develop preview, update
+the running pin after verification succeeds, then remove the pending pin.
+
+```bash
+node scripts/release.mjs pin "$installation" "client-v$version" &&
+  node scripts/release.mjs unpin "$installation" --pending
+```
 
 ### Approving a release on a server
 
@@ -263,7 +295,7 @@ records the published develop release tag. Installation names use letters,
 numbers and underscores and are case-insensitive. Deployment pins its target
 under `guild-pin-<name>-pending-<id>` before changing the server, preserves the previous
 running pin, then updates the running pin and removes the pending pin after
-health matches. A failed deployment leaves its pending pin for retry or removal.
+the matching release is approved and its updater manifest is verified. A failed deployment leaves its pending pin for retry or removal.
 Other stacks pin their approved release before it ages out. The cleanup cannot
 discover independently hosted servers.
 
@@ -404,9 +436,8 @@ meaning.
 
 ### 8.4 iOS constraints that change the deployment, not the client
 
-- **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The dev
-  and prod stacks serve `http://…:18080` / `:18081`; an iOS client needs a
-  public hostname with a valid certificate in front of them.
+- **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The
+  public server origin needs a valid HTTPS certificate.
 - **No iOS build on the Linux host.** `tauri ios build` needs Xcode,
   CocoaPods, and a provisioning profile. The whole release story in §4 is
   "no Mac required" — that stops at iOS. A Mac or a cloud Mac is a new

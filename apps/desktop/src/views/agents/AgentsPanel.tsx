@@ -11,12 +11,14 @@ export function AgentsPanel({
   viewer,
   onNavigate,
   onOpenChat,
+  onRefreshConversation,
 }: {
   route: AgentsRoute;
   viewer: Viewer;
   /** `replace` corrects the current address instead of adding a step. */
   onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
+  onRefreshConversation: () => void;
 }) {
   switch (route.view) {
     case "directory":
@@ -49,6 +51,7 @@ export function AgentsPanel({
     case "run":
       return (
         <RunDetailPage
+          key={`run:${route.runId}`}
           runId={route.runId}
           view={route.traceView ?? "transcript"}
           role={viewer.role}
@@ -59,6 +62,7 @@ export function AgentsPanel({
     case "trace":
       return (
         <RunDetailPage
+          key={`trace:${route.traceId}`}
           runId={route.traceId}
           traceOnly
           view={route.traceView ?? "transcript"}
@@ -69,7 +73,14 @@ export function AgentsPanel({
       );
     case "chat":
       return (
-        <ConversationPage chatId={route.chatId} role={viewer.role} onNavigate={onNavigate} onOpenChat={onOpenChat} />
+        <ConversationPage
+          key={route.chatId}
+          onResync={onRefreshConversation}
+          chatId={route.chatId}
+          role={viewer.role}
+          onNavigate={onNavigate}
+          onOpenChat={onOpenChat}
+        />
       );
   }
 }

@@ -126,6 +126,64 @@ export async function compactionActivity(
   return { running: row?.running === true, queued: row?.queued ?? [] };
 }
 
+/** Count coordination inputs that have entered the model context and are
+ * still outside the latest applied compaction's summarized prefix. A
+ * pending or failed summary cannot move the durable head. */
+export async function coordinatorCompactionActivity(
+  db: DurableQueryable,
+  chatId: string,
+): Promise<{ remaining: number; age: number; retryReady: boolean }> {
+  const { rows } = await db.query<{
+    remaining: number;
+    created_at: Date;
+    summary_record: string | null;
+    attempt_record: string | null;
+  }>(
+    `SELECT activity.remaining, t.created_at, summary.record AS summary_record, attempt.record AS attempt_record
+     FROM agent_threads t
+     JOIN chat_conversations c ON c.chat_id=t.chat_id
+     LEFT JOIN LATERAL (
+       SELECT e.head, e.record
+       FROM entries e
+       WHERE e.conversation_id=c.conversation_id AND e.head IS NOT NULL AND e.kind='pi.compaction'
+       ORDER BY e.id DESC LIMIT 1
+     ) summary ON true
+     LEFT JOIN LATERAL (
+       SELECT task.record
+       FROM tasks task
+       WHERE task.conversation_id=c.conversation_id AND task.kind='"pi.compaction"'
+         AND task.status='terminal'
+       ORDER BY task.id DESC LIMIT 1
+     ) attempt ON true
+     CROSS JOIN LATERAL (
+       SELECT count(*)::int AS remaining
+       FROM agent_coordination_inputs input
+       JOIN submissions s ON s.conversation_id=c.conversation_id
+         AND s.request_id=to_json(
+           (CASE WHEN input.kind='worker_result' THEN input.source_event_id ELSE input.id END)::text
+         )::text
+       WHERE input.agent_id=t.agent_id AND input.delivered_at IS NOT NULL
+         AND s.status IN ('placed','done')
+         AND (s.record::json ->> 'entry')::bigint >= COALESCE(summary.head, 0)
+     ) activity
+     WHERE t.chat_id=$1`,
+    [chatId],
+  );
+  const row = rows[0];
+  if (row === undefined) return { remaining: 0, age: 0, retryReady: false };
+  // Summary text and task errors can contain escaped NULs that PostgreSQL
+  // cannot extract from JSON. Submission records carry placement metadata only.
+  const summary =
+    row.summary_record === null ? null : (JSON.parse(row.summary_record) as { model?: { timestamp?: number }[] });
+  const attempt = row.attempt_record === null ? null : (JSON.parse(row.attempt_record) as { endedAt?: number });
+  const now = Date.now();
+  return {
+    remaining: row.remaining,
+    age: (now - (summary?.model?.[0]?.timestamp ?? row.created_at.getTime())) / 1000,
+    retryReady: attempt?.endedAt === undefined || now - attempt.endedAt >= 60_000,
+  };
+}
+
 /** One compaction task of the chat's conversation; null when it is not
  *  one. */
 export async function compactionTask(

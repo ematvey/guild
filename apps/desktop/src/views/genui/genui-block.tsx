@@ -51,7 +51,7 @@ export function GenuiBlock({ source }: { source: string }) {
   if (empty && !streaming) return <GenuiSource source={source} />;
   return (
     <GenuiErrorBoundary source={source}>
-      <div className="not-prose my-3 flex flex-col gap-3 text-sm [overflow-wrap:normal]" data-genui>
+      <div className="not-prose my-3 flex flex-col gap-3 text-base [overflow-wrap:normal]" data-genui>
         <GenuiInertContext.Provider value={inert}>
           <GenuiAnswerContext.Provider value={settledAnswer}>
             <Renderer

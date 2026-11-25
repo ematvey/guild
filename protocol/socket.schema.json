@@ -39,6 +39,9 @@
     "AgentList": { "$ref": "#/$defs/AgentList" },
     "IntegrationAccess": { "$ref": "#/$defs/IntegrationAccess" },
     "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
+    "ActivityRunFrame": { "$ref": "#/$defs/ActivityRunFrame" },
+    "ActivityRunUnavailableFrame": { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
+    "ActivityConversationFrame": { "$ref": "#/$defs/ActivityConversationFrame" },
     "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
     "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
@@ -97,6 +100,9 @@
         { "$ref": "#/$defs/AgentList" },
         { "$ref": "#/$defs/IntegrationAccess" },
         { "$ref": "#/$defs/AgentRunFrame" },
+        { "$ref": "#/$defs/ActivityRunFrame" },
+        { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
+        { "$ref": "#/$defs/ActivityConversationFrame" },
         { "$ref": "#/$defs/AgentThreads" },
         { "$ref": "#/$defs/AgentRoutines" },
         { "$ref": "#/$defs/SkillCatalog" },
@@ -473,13 +479,64 @@
       }
     },
     "AgentRunFrame": {
-      "description": "One run, created or changed. Sent to every member who may see the run's agent; the client upserts it by id into each list that shows it.",
+      "description": "One non-internal run, created or changed, for the requesting member who can see the Agent.",
       "type": "object",
       "required": ["type", "run"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "agent_run" },
         "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" }
+      }
+    },
+    "ActivityRunFrame": {
+      "description": "A changed Run and its Thread's Run counts for viewers authorized to read them.",
+      "type": "object",
+      "required": ["type", "run", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "activity_run" },
+        "run": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRun" },
+        "steps": {
+          "description": "Durable transcript steps, sent only to the authorized socket watching this Run.",
+          "type": "array",
+          "items": { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/AgentRunStep" }
+        },
+        "counts": {
+          "type": ["object", "null"],
+          "required": ["runs", "open_runs", "failed_runs"],
+          "additionalProperties": false,
+          "properties": {
+            "runs": { "type": "integer" },
+            "open_runs": { "type": "integer" },
+            "failed_runs": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "ActivityRunUnavailableFrame": {
+      "description": "The selected Activity Run is unavailable to the viewer.",
+      "type": "object",
+      "required": ["type", "run_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "activity_run_unavailable" },
+        "run_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "ActivityConversationFrame": {
+      "description": "The newest durable page of the selected Activity Conversation, or null if it is unavailable.",
+      "type": "object",
+      "required": ["type", "chat_id", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "activity_conversation" },
+        "chat_id": { "$ref": "#/$defs/Uuid" },
+        "detail": {
+          "oneOf": [
+            { "$ref": "https://guild.local/protocol/rest.schema.json#/$defs/ConversationSnapshot" },
+            { "type": "null" }
+          ]
+        }
       }
     },
     "AgentThreads": {
@@ -584,6 +641,14 @@
         "chat_id": {
           "type": ["string", "null"],
           "description": "Optional. Omitted or null means no chat is open."
+        },
+        "run_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Optional. The Activity Run this socket is watching."
+        },
+        "activity_chat_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "Optional. The Activity Conversation this socket is watching."
         }
       }
     },

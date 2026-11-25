@@ -64,7 +64,17 @@ COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 # Build stamps are baked into the image; runtime environment cannot lift the
 # client-update ceiling independently of the deployed server artifact.
 ARG GUILD_BUILD_VERSION
-RUN if [ -n "$GUILD_BUILD_VERSION" ]; then node -e 'const fs=require("fs"); const v=process.argv[1]; if(!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*)?$/.test(v)) throw new Error("invalid server build version"); const p="apps/server/package.json"; const d=JSON.parse(fs.readFileSync(p)); d.version=v; fs.writeFileSync(p, JSON.stringify(d));' "$GUILD_BUILD_VERSION"; fi
+ARG GUILD_BUILD_COMMIT
+RUN node -e '\
+  const fs = require("node:fs"); \
+  const [version, commit] = process.argv.slice(1); \
+  const file = "apps/server/package.json"; \
+  const manifest = JSON.parse(fs.readFileSync(file)); \
+  if (version && !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-dev\.[1-9][0-9]*)?$/.test(version)) throw new Error("invalid server build version"); \
+  if (commit && !/^[a-f0-9]{40}$/.test(commit)) throw new Error("invalid server build commit"); \
+  if (version) manifest.version = version; \
+  if (commit) manifest.guildBuildCommit = commit; \
+  fs.writeFileSync(file, JSON.stringify(manifest));' "$GUILD_BUILD_VERSION" "$GUILD_BUILD_COMMIT"
 # The server sources Bun runs.
 COPY apps/server/src ./apps/server/src
 # The @guild/wire package the server imports resolve through node_modules:

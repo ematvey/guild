@@ -26,16 +26,16 @@ interface ChatListRecord {
 const frames = new WeakMap<Sink, Map<string, string>>();
 const chatLists = new WeakMap<Sink, ChatListRecord>();
 
-/** Sends `frame` under `key` unless the socket already holds that exact
- *  value. Returns whether it was sent. */
-export function sendChanged(sink: Sink, key: string, frame: WsServerMsg): boolean {
+/** Sends a changed frame, or always sends a requested sync seed. Returns
+ *  whether the frame was sent. */
+export function sendChanged(sink: Sink, key: string, frame: WsServerMsg, force = false): boolean {
   const wire = JSON.stringify(frame);
   let byKey = frames.get(sink);
   if (byKey === undefined) {
     byKey = new Map();
     frames.set(sink, byKey);
   }
-  if (byKey.get(key) === wire) return false;
+  if (!force && byKey.get(key) === wire) return false;
   if (!sink.send(frame)) return false;
   byKey.set(key, wire);
   return true;

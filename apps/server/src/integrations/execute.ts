@@ -18,7 +18,7 @@ import { connectorFor, type ConnectorSource } from "./connectors.js";
 export async function executeConnectorTool(
   source: ConnectorSource,
   orgId: string,
-  slug: string,
+  kind: string,
   config: JsonObject,
   tool: string,
   args: JsonObject,
@@ -27,8 +27,8 @@ export async function executeConnectorTool(
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   signal?.throwIfAborted();
-  const integration = await connectorFor(source, orgId, slug);
-  if (integration === undefined) throw new Error(`unknown integration ${slug}`);
+  const integration = await connectorFor(source, orgId, kind);
+  if (integration === undefined) throw new Error(`unknown integration ${kind}`);
   return callSignals.run(signal, () => integration.execute(config, tool, args, secrets, actingAs));
 }
 
@@ -65,7 +65,7 @@ export async function callPlugin(
     return executeConnectorTool(
       source,
       identity.orgId,
-      turn.slug,
+      turn.kind,
       turn.rowConfig,
       rawTool,
       args,

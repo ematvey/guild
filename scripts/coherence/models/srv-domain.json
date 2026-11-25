@@ -66,6 +66,14 @@
         {
           "where": "apps/server/src/agents/store/delivery.ts",
           "role": "db"
+        },
+        {
+          "where": "apps/server/src/platform/store/conversation-history.ts",
+          "role": "db"
+        },
+        {
+          "where": "packages/wire/src/rest.ts",
+          "role": "wire"
         }
       ],
       "translations": [
@@ -78,6 +86,11 @@
           "from": "db",
           "to": "domain",
           "at": "apps/server/src/agents/store/threads.ts"
+        },
+        {
+          "from": "db",
+          "to": "wire",
+          "at": "apps/server/src/hub/agent-state.ts"
         }
       ]
     },

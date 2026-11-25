@@ -4,6 +4,9 @@ dist
 .env
 config.env
 juicefs.env
+# Preserve ignores for local copies of deployment credentials.
+deploy/compose/config.env.bak*
+deploy/compose/.env.bak*
 BOOTSTRAP-ADMIN.txt
 *.local
 crates/server/data-test/
@@ -17,8 +20,7 @@ tsconfig.tsbuildinfo
 
 .fixer-prompt.md
 FIX-REPORT.md
-deploy/compose/config.env.bak*
-deploy/compose/.env.bak*
+test.env
 .worktrees/
 
 

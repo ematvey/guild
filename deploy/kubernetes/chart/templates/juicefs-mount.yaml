@@ -1,0 +1,8 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: guild-juicefs
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "guild.workloadSpec" (list . "guild-juicefs" (include "guild.spec.guild-juicefs" .)) | nindent 2 }}

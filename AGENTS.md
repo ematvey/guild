@@ -14,8 +14,9 @@ only what the repo cannot tell you.
   access, execution, capabilities and live state, in numbered documents
   read in order. Its terms are the project's vocabulary; a change to a
   concept or rule updates the matching document in the same commit.
-- **`docs/deploy-nuances.md`** — deploy recipes, the compose stack on
-  :18080, and the frontend-embedding model. Read before shipping anything.
+- **`docs/deploy-nuances.md`** — the cluster installation, the image build
+  and rollout, and the frontend-embedding model. Read before shipping
+  anything. `deploy/kubernetes/README.md` is the chart procedure.
 - **`docs/clients.md`** — building, signing, and releasing desktop clients.
 - **`docs/PRD.md`** and **`docs/SRS.md`** — what the product is and the
   system contracts that satisfy it.
@@ -58,14 +59,17 @@ only what the repo cannot tell you.
   `apps/desktop/src/views/thread/route.ts` (driven by
   `thread/hooks/use-thread-route.ts`); the reference implementation of
   the contract is `apps/desktop/src/views/skills/skills-route.ts`.
-- **Always redeploy after a change.** The user tests against
-  `http://localhost:18080`; a local build or container restart ships
-  nothing. Every task ends with the compose rebuild recipe from
-  `deploy-nuances.md` §2 and a live-bundle check (§2 end). Run the rebuild
-  detached — the npm install and vite build inside Docker are the long pole.
-- **Desktop-affecting changes get a signed client release in the same task.**
-  Publish a GitHub prerelease from the working branch and approve it on the dev
-  stack; verify all four platforms in its updater manifest (`docs/clients.md` §4).
+- **Local iterations use local tools.** Run builds and checks on the
+  development host. For app changes, build the server image and roll the
+  dev installation through Helm (`docs/deploy-nuances.md` §1). Run the build
+  detached and verify the served bundle. Run GitHub Actions or other CI only
+  when the user explicitly requests CI or a release.
+- **Signed desktop releases require an explicit request.** For a requested dev
+  release, publish a prerelease from the working branch, approve it on the dev
+  stack, and verify all four platforms in its updater manifest
+  (`docs/clients.md` §4).
+- **Title stable release PRs `Release X.Y.Z`.** Use the intended stable
+  version. The master release workflow reads and validates the merged PR title.
 - **Committed versions change only in the master release workflow.**
   `scripts/bump-version.sh` updates the synchronized product version on `master`.
   Branch/local builds use `scripts/release.mjs preview` to stamp a temporary
@@ -79,11 +83,9 @@ only what the repo cannot tell you.
 - **Sessions run this repo concurrently.** Check `git log` / `git status`
   for fresh commits before and after editing; pull/rebase rather than
   clobber.
-- **Never touch prod while developing.** Dev tasks act on the dev stack
-  only (`:18080`, `compose`, db `guild` — including its release registry;
-  publish client releases to dev so the dev-paired desktop sees them).
-  The prod stack (port 18081, its own checkout, database `guild_live`) is only
-  touched when the user explicitly asks for a prod deploy/release.
+- **Never touch prod while developing.** Use the dev installation
+  and its release registry for development. Deploy or release to prod only
+  when the user explicitly requests it.
 - **Type sizes come from the theme scale.** `packages/ui/src/theme.css`
   declares the only steps (`text-3xs` … `text-2xl`). Views use those names;
   no raw `text-[Npx]`/`text-[Nrem]` sizes. Resize text by editing the token.
@@ -91,6 +93,10 @@ only what the repo cannot tell you.
   layout and spacing, not just text. `docs/type-scale.md` maps every role —
   prose, chrome, titles, metadata, dense data, micro labels — to a step and
   an icon size; a new element takes a role from that table.
+- **Integration icons use official brand assets.** Copy the icon from the
+  provider's brand kit, website, or official repository into the integration's
+  `logo.svg` and record the source URL in an SVG comment. When the provider
+  publishes no icon, use the existing generic fallback.
 - **No personal identifier in a document, a comment, a fixture or a test.**
   A person, a machine, a company or a host is a placeholder: `alice`/`bob`,
   `user@example.com`, `/home/user`, `C:\Users\alice`, `WORKSTATION-A`,
@@ -100,6 +106,14 @@ only what the repo cannot tell you.
   domains (`example.com`, `example.org`, `example.test`).
   `scripts/check-identifiers.py` fails the gate on a listed identifier or on
   an email domain outside those.
+- **One installation's data never enters this repository.** Addresses,
+  cluster and host names, DSNs, credentials and the deployment manifests of
+  a particular installation belong to that installation: its own repository
+  or the deploy host. This repository carries the product — code, the chart
+  with placeholder values, and documents. An integration the installation
+  runs itself (an MCP server in front of its data sources, a plugin for its
+  own CRM) ships from its repository, and the product only carries the
+  mechanism that runs it.
 - **Documents and comments describe the present.** A document states what
   the system is and does now. It does not narrate a migration, name a
   retired component, explain why an earlier design was dropped, or carry a
@@ -115,8 +129,8 @@ only what the repo cannot tell you.
   dependency tree dominates compile time. `cargo test/build` skip it —
   target it explicitly with `-p guild-desktop`.
 - **Server-side tools run in gVisor sandboxes** (workspace sessions and
-  plain chats) via the `sandbox-runner` compose service — never in the
-  server process. Production refuses `GUILD_SANDBOX=inprocess-unsafe` and
+  plain chats) via the Substrate actor workers — never in the server
+  process. Production refuses `GUILD_SANDBOX=inprocess-unsafe` and
   requires a runner (there is no disabled mode); the
   test suite uses it by default. Sandbox integration tests need the host's
   `runsc` runtime: `scripts/sandbox-it.sh`. Shell calls still go through

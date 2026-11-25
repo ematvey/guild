@@ -332,7 +332,9 @@ export function AgentFiles({
     setEditBusy(true);
     try {
       const threads = await listAgentThreads(agentId);
-      const thread = threads.find((t) => t.is_default) ?? threads[0] ?? (await createAgentThread(agentId, "Files"));
+      const thread =
+        threads.find((row) => row.agent_id === agentId && row.type === "user" && !row.archived && !row.deleted) ??
+        (await createAgentThread(agentId, "Files"));
       await sendAgentTurn(agentId, {
         thread_id: thread.id,
         message: `Please edit the workspace file \`${path}\`. Read it first, then make the change I describe in the next message.`,

@@ -87,7 +87,7 @@ export class OrgModels {
       {
         selfBaseUrl: this.deps.config.selfBaseUrl,
         internalKey: this.deps.config.internalKey,
-        traceHeaders: async (sessionId) => {
+        traceHeaders: async (sessionId): Promise<Record<string, string>> => {
           const source = sessionId === undefined ? undefined : this.sessions.get(sessionId);
           if (!source) return {};
           const owner = await this.deps.chats.ownerOf(source.chatId);
@@ -97,7 +97,8 @@ export class OrgModels {
             "x-guild-conversation-id": String(source.conversationId),
             "x-guild-cause": "conversation-request",
             ...(runId !== null ? { "x-guild-run-id": runId } : {}),
-            ...(owner ? { "x-guild-user-id": owner.user_id } : {}),
+            // Background activity keeps its organization-level usage identity.
+            ...(owner && !owner.internal ? { "x-guild-user-id": owner.user_id } : {}),
           };
         },
       },
