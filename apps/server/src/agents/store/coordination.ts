@@ -33,7 +33,8 @@ export function readCoordinationRole<T extends QueryResultRow = QueryResultRow>(
 
 export function retryCoordinationInput<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `UPDATE agent_coordination_inputs SET lease_until = now() + interval '5 seconds' WHERE id = $1`,
+    `UPDATE agent_coordination_inputs SET lease_until = now() + interval '5 seconds'
+     WHERE id=$1 AND evaluation_request_id IS NOT DISTINCT FROM $2::uuid`,
     values,
   );
 }
@@ -69,7 +70,8 @@ export function claimCoordinationInputs<T extends QueryResultRow = QueryResultRo
 
 export function deliverCoordinationInput<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `UPDATE agent_coordination_inputs SET delivered_at = now(), lease_until = NULL WHERE id = $1`,
+    `UPDATE agent_coordination_inputs SET delivered_at = now(), lease_until = NULL
+     WHERE id=$1 AND evaluation_request_id IS NOT DISTINCT FROM $2::uuid`,
     values,
   );
 }
@@ -129,6 +131,7 @@ export function expireReflectedInputContent(db: Database) {
   return db.query(`WITH expired AS (
     SELECT id FROM agent_coordination_inputs
     WHERE reflected_at < now() - interval '30 days' AND content <> ''
+      AND NOT (attached_thread_id IS NOT NULL AND launch_error IS NULL AND launched_run_id IS NULL)
     ORDER BY reflected_at,id LIMIT 200 FOR UPDATE SKIP LOCKED
   )
   UPDATE agent_coordination_inputs i SET content='' FROM expired WHERE i.id=expired.id`);
@@ -313,6 +316,25 @@ export function acceptCoordinationWork(db: Database, values: unknown[]) {
   );
 }
 
+export function attachCoordinationWork(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs i SET attached_thread_id=worker.id,
+       accepted_agent_id=worker.agent_id,accepted_parent_run_id=work.accepted_parent_run_id,
+       launch_due_at=now(),reply_text=$4,reply_due_at=now()
+     FROM agent_threads worker JOIN agent_coordination_inputs work ON work.id=worker.source_input_id
+     JOIN agent_runs parent ON parent.id=work.accepted_parent_run_id
+     JOIN chats chat ON chat.id=worker.chat_id AND NOT chat.internal AND chat.deleted_at IS NULL
+     WHERE i.id=$1 AND i.agent_id=$2 AND i.kind='request' AND i.source_thread_id IS NOT NULL
+       AND i.reply_due_at IS NULL AND COALESCE(i.evaluation_request_id,i.id)=ANY($5::uuid[])
+       AND work.agent_id=i.agent_id AND work.user_id=i.user_id AND work.accepted_scope IS NOT NULL
+       AND worker.user_id=i.user_id AND worker.parent_thread_id=parent.thread_id
+       AND worker.agent_id=work.accepted_agent_id AND worker.coordinator_managed
+       AND worker.closed_at IS NULL AND worker.chat_id=$3
+       AND strpos(i.content, '/thread/' || worker.chat_id::text) > 0`,
+    values,
+  );
+}
+
 export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database) {
   return db.query<T>(
     `WITH due AS (
@@ -325,7 +347,7 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
      UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'
      FROM due WHERE i.id=due.id
      RETURNING i.id,i.agent_id,i.user_id,i.accepted_scope,i.accepted_agent_id,
-               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt,i.kind`,
+               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt,i.kind,i.attached_thread_id,i.content`,
   );
 }
 
@@ -392,16 +414,33 @@ export function readWorkFollowups<T extends QueryResultRow>(db: Database, values
   return db.query<T>(
     `SELECT source_event_id FROM agent_coordination_inputs
      WHERE source_thread_id=$1 AND kind='work_followup' AND source_event_id=ANY($2::uuid[])
-     ORDER BY seq`,
+     UNION ALL
+     SELECT i.id FROM agent_coordination_inputs i
+     WHERE i.id=ANY($2::uuid[]) AND i.attached_thread_id=$1
+       AND EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=i.id AND r.thread_id=$1)
+       AND NOT EXISTS (SELECT 1 FROM agent_coordination_inputs handback WHERE handback.source_event_id=i.id)
+     ORDER BY source_event_id`,
     values,
   );
 }
 
 export function handBackWorkFollowup(db: Database, values: unknown[]) {
   return db.query(
-    `UPDATE agent_coordination_inputs SET kind='request',wake=true,due_at=now(),delivered_at=NULL,
-       reflected_at=NULL,lease_until=NULL,handback_reason=$3
-     WHERE source_thread_id=$1 AND source_event_id=$2 AND kind='work_followup'`,
+    `WITH moved AS (
+       UPDATE agent_coordination_inputs SET kind='request',wake=true,due_at=now(),delivered_at=NULL,
+         reflected_at=NULL,lease_until=NULL,handback_reason=$3
+       WHERE source_thread_id=$1 AND source_event_id=$2 AND kind='work_followup'
+       RETURNING id
+     ), attached AS (
+       INSERT INTO agent_coordination_inputs(agent_id,user_id,source_thread_id,source_event_id,kind,content,wake,handback_reason)
+       SELECT i.agent_id,i.user_id,i.source_thread_id,r.id,'request',i.content,true,$3
+       FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.id AND r.thread_id=$1
+       WHERE i.id=$2 AND i.attached_thread_id=$1 AND i.source_thread_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM moved)
+       ON CONFLICT (source_event_id) DO NOTHING
+       RETURNING id
+     )
+     SELECT id FROM moved UNION ALL SELECT id FROM attached`,
     values,
   );
 }

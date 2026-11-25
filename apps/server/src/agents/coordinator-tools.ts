@@ -2,6 +2,7 @@ import {
   readCoordinationSource,
   queueCoordinationReply,
   acceptCoordinationWork,
+  attachCoordinationWork,
   activeCoordinationInput,
   recordCoordinationDecision,
   isInternalChat,
@@ -198,6 +199,26 @@ export function coordinatorTools(deps: {
           origin.id, agent.id, acknowledgment, task, target.id, name, parentRun.id,
         ]);
         return { input_id: origin.id, accepted: accepted.rowCount === 1 };
+      },
+    ),
+    tool(
+      "attach_work",
+      "Continue existing work only when the Member's active direct request explicitly links its worker chat.",
+      { input_id: str, chat_id: str, acknowledgment: str },
+      ["input_id", "chat_id", "acknowledgment"],
+      async (args, _callId, api, context) => {
+        const origin = await source(args["input_id"]);
+        const chatId = String(args["chat_id"]);
+        const acknowledgment = String(args["acknowledgment"]).trim();
+        if (origin.kind !== "request" || !isUuid(chatId) || acknowledgment === "" || acknowledgment.length > 16000) {
+          throw new Error("Attachment requires a direct request, a linked worker chat and a bounded acknowledgment");
+        }
+        const requester = await deps.identity.getUser(origin.user_id);
+        await store.requireAccess(requester, agent.id, "use");
+        const requests = await activeRequestIds(api, context);
+        const result = await attachCoordinationWork(pool, [origin.id, agent.id, chatId, acknowledgment, requests]);
+        if (result.rowCount !== 1) throw new Error("The active request does not link an open worker for this Member, or it already has a reply");
+        return { input_id: origin.id, attached: true };
       },
     ),
     tool(
@@ -412,7 +433,7 @@ Your context and Workspace are shared Agent knowledge. Inputs identify their ori
 For every coordination input with kind "request", send the Member a reply as your first action. Call codemode with JavaScript of the form \`return await tools.reply({ input_id: "the current input ID", text: "your reply" });\`. Copy input_id from that request's coordination_input block so the reply reaches its source Thread.
 For greetings and questions you can answer immediately, put the answer itself in text and finish after the tool queues the reply. For work you need to delegate, call accept_work with the acknowledgment and work scope in one call. Use send_message for later updates. Your final text stays in the internal coordinator Thread.
 Keep member-facing replies short. Follow the Member's reporting instructions for background results, which may need no message.
-Delegate substantive direct requests with accept_work; use spawn for background inputs. Omit agent for a general worker. Integrations, external research and Machine work belong to workers.
+Delegate substantive direct requests with accept_work; use attach_work to continue existing work when the Member explicitly links its worker chat. Use spawn for background inputs. Omit agent for a general worker. Integrations, external research and Machine work belong to workers.
 Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll. A worker report specifies whether the work is ready, waiting, blocked or failed independently of the Run. Relay a blocked report’s question to the originating Member. Trust workers to verify their substantive work; do not repeat it yourself.
 Link tasks with the /thread/<chat_id> URL returned by spawn, never a thread: link or a thread_id used as a chat_id. If a task needs discussion, surface its thread and let the member converse there. Preserve origin input references in follow-ups.
 Use schedule_wake for future follow-up, then finish this turn. Wakes are distinct from recurring Routines.

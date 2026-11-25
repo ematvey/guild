@@ -467,7 +467,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       const role = await coordinationRole(deps.pool, chatId);
       if (
         role?.execution_role === "coordinator" &&
-        !["evaluate_event", "reply", "accept_work"].includes(call.name)
+        !["evaluate_event", "reply", "accept_work", "attach_work"].includes(call.name)
       ) {
         const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
         const ids = (await inputRequestIds(deps.pool, active?.inputs.map(Number) ?? [])).filter(isUuid);

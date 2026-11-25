@@ -571,6 +571,50 @@ describe("configured coordinator conversation", () => {
     const workerChatId = (await stack.env.db.query(
       "SELECT chat_id FROM agent_threads WHERE id=$1", [workerThreadId],
     )).rows[0]?.chat_id as string;
+    const attachedMessage = randomUUID();
+    const attachment = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
+      payload: { message: `Continue the analysis in /thread/${workerChatId}`, user_message_id: attachedMessage },
+    });
+    expect(attachment.statusCode, attachment.body).toBeLessThan(300);
+    let attachmentId: string;
+    await waitFor(async () => {
+      attachmentId = (await stack.env.db.query(
+        "SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [attachedMessage],
+      )).rows[0]?.id as string;
+      return attachmentId !== undefined;
+    }, 10000);
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      const content = JSON.stringify(last?.content);
+      if (last?.role === "user" && content?.includes(`<inbox_delivery>Send your visible reply now by calling reply with input_id ${attachmentId}`)) {
+        return call("codemode", { code: `return await tools.attach_work(${JSON.stringify({
+          input_id: attachmentId, chat_id: workerChatId, acknowledgment: "Continuing in the same worker chat.",
+        })});` });
+      }
+      if (last?.role === "user" && content?.includes("Follow-up from the Member in the originating Assistant inbox.")) {
+        return call("codemode", { code: 'return await tools.hand_back({reason:"Original scope complete"});' });
+      }
+      return final("Routing checked.");
+    } }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id
+         WHERE i.id=$1 AND i.reply_delivered_at IS NOT NULL AND r.thread_id=$2 AND r.finished_at IS NOT NULL`,
+        [attachmentId, workerThreadId],
+      )).rowCount === 1;
+    }, 10000);
+    const returned = await stack.env.db.query(
+      `SELECT source_thread_id FROM agent_coordination_inputs WHERE source_event_id=$1
+       AND kind='request' AND handback_reason='Original scope complete'`, [attachmentId!],
+    );
+    expect(returned.rows).toEqual([{ source_thread_id: inbox.thread_id }]);
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+    )).rowCount === 0, 10000);
     const followup = randomUUID();
     stack.mock.setResponses([{ body: async () => {
       const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
@@ -610,7 +654,7 @@ describe("configured coordinator conversation", () => {
         [workerChatId],
       )).rowCount === 1;
     }, 10000);
-  }, 30000);
+  }, 45000);
 
 
   it("records source admission decisions and launches inferred work only in auto mode", async () => {
