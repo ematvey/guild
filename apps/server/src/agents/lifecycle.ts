@@ -29,7 +29,8 @@ import {
 } from "./store/run-finish.js";
 import type { AgentRunStore } from "./store/runs.js";
 import { inputRequestIds } from "../storage/postgres/queries.js";
-import { coordinatorAgentForChat, queueMissingCoordinationReplies, settleUnansweredCoordinationCandidates } from "./store/coordination.js";
+import { bindCoordinationFollowupRun, coordinatorAgentForChat, queueMissingCoordinationReplies, settleUnansweredCoordinationCandidates } from "./store/coordination.js";
+import { isUuid } from "../platform/time.js";
 import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
@@ -175,16 +176,22 @@ export class AgentRunLifecycle {
     const { pool, runs } = this.deps;
     const thread = await runThread(pool, chatId);
     if (thread === null) return;
-    if ((await runningRunsForChat(pool, chatId)).length > 0) return;
     const requestIds = await inputRequestIds(pool, inputs);
+    const followupIds = requestIds.filter(isUuid);
+    const current = (await runningRunsForChat(pool, chatId))[0];
+    if (current) {
+      await bindCoordinationFollowupRun(pool, thread.id, current.id, followupIds);
+      return;
+    }
     const queued = await queuedRunsFor(pool, thread.id, requestIds);
     const startedAt = new Date().toISOString();
     if (queued.length > 0) {
       for (const id of queued) await runs.updateRun(id, { status: "running", started_at: startedAt });
+      await bindCoordinationFollowupRun(pool, thread.id, queued[0]!, followupIds);
       return;
     }
     if (!create) return;
-    await runs.createRun({
+    const run = await runs.createRun({
       agent_id: thread.agent_id,
       user_id: (await requestingMember(pool, chatId, requestIds)) ?? thread.user_id,
       thread_id: thread.id,
@@ -193,6 +200,7 @@ export class AgentRunLifecycle {
       status: "running",
       started_at: startedAt,
     });
+    await bindCoordinationFollowupRun(pool, thread.id, run.id, followupIds);
   }
 
   private async finish(run: OpenChatRun, error: string | null): Promise<void> {

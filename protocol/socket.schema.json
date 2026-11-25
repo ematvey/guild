@@ -580,7 +580,8 @@
             "$ref": "#/$defs/CoordinationOutcome"
           },
           "maxItems": 100
-        }
+        },
+        "unavailable": { "type": "boolean" }
       }
     },
     "CoordinationOutcome": {
@@ -848,7 +849,8 @@
         "activity_chat_id": {
           "$ref": "#/$defs/Uuid",
           "description": "Optional. The Activity Conversation this socket is watching."
-        }
+        },
+        "coordination_agent_id": { "$ref": "#/$defs/Uuid" }
       }
     },
     "Read": {

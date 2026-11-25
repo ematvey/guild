@@ -126,6 +126,8 @@ export function parseClientMsg(text: string): ParsedClientMsg | null {
       const chatId = raw["chat_id"];
       const runId = raw["run_id"];
       const activityChatId = raw["activity_chat_id"];
+      const coordinationAgentId = raw["coordination_agent_id"];
+      if (coordinationAgentId !== undefined && (typeof coordinationAgentId !== "string" || !UUID_RE.test(coordinationAgentId))) return null;
       if (chatId != null && (typeof chatId !== "string" || !UUID_RE.test(chatId))) return null;
       if (runId !== undefined && (typeof runId !== "string" || !UUID_RE.test(runId))) return null;
       if (activityChatId !== undefined && (typeof activityChatId !== "string" || !UUID_RE.test(activityChatId)))
@@ -135,6 +137,7 @@ export function parseClientMsg(text: string): ParsedClientMsg | null {
         chat_id: chatId ?? null,
         ...(runId === undefined ? {} : { run_id: runId }),
         ...(activityChatId === undefined ? {} : { activity_chat_id: activityChatId }),
+        ...(coordinationAgentId === undefined ? {} : { coordination_agent_id: coordinationAgentId }),
       };
     }
     case "read": {

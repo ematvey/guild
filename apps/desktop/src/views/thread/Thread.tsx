@@ -305,7 +305,9 @@ function ThreadView(props: ThreadProps) {
   const recoverMissingChatRef = useRef<() => void>(() => {});
   const activityRunId = route.agents?.view === "run" ? route.agents.runId : null;
   const activityChatId = route.agents?.view === "chat" ? route.agents.chatId : null;
+  const coordinationAgentId = route.agents?.view === "agent" && route.agents.tab === "activity" ? route.agents.agentId : null;
   const { socketRef } = useMemberSocket({
+    coordinationAgentId,
     runId: activityRunId,
     activityChatId,
     signOut,
@@ -410,7 +412,7 @@ function ThreadView(props: ThreadProps) {
   }, [chatId]);
   useEffect(() => {
     socketRef.current?.resync();
-  }, [chatId, activityRunId, activityChatId, socketRef]);
+  }, [chatId, activityRunId, activityChatId, coordinationAgentId, socketRef]);
 
   // The composer belongs to the displayed chat, not the route target: a
   // pending swap keeps the old transcript and its draft until the one

@@ -233,7 +233,7 @@ export interface ModelOption {
 /** Client → server. */
 export type ClientFrame =
   | { type: "ping" }
-  | { type: "sync"; chat_id?: string | null; run_id?: Uuid; activity_chat_id?: Uuid }
+  | { type: "sync"; chat_id?: string | null; run_id?: Uuid; activity_chat_id?: Uuid; coordination_agent_id?: Uuid }
   | { type: "read"; chat_id: Uuid }
   | {
       type: "machine_response";

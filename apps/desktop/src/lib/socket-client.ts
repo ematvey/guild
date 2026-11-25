@@ -102,7 +102,7 @@ export interface SocketHandlers {
 
 /** Optional server frames this client applies: one changed chat-list row
  *  instead of the whole list. */
-export const SOCKET_FEATURES = "chat_row";
+export const SOCKET_FEATURES = "chat_row,coordination_watch";
 
 /** Converts the current HTTP origin into the WebSocket origin. */
 
@@ -263,6 +263,7 @@ export function startSocket(
     getOpenChatId: () => string | null;
     getOpenRunId?: () => string | null;
     getOpenActivityChatId?: () => string | null;
+    getOpenCoordinationAgentId?: () => string | null;
     socketFactory?: SocketFactory;
   },
 ): { stop: () => void; resync: () => void; markRead: (chatId: string) => boolean } {
@@ -342,12 +343,14 @@ export function startSocket(
     traceEvent("socket.sync_sent", { attempt, chat: chatId ?? "-" });
     const runId = opts.getOpenRunId?.();
     const activityChatId = opts.getOpenActivityChatId?.();
+    const coordinationAgentId = opts.getOpenCoordinationAgentId?.();
     socket.send(
       serializeClientFrame({
         type: "sync",
         chat_id: chatId,
         ...(runId == null ? {} : { run_id: runId }),
         ...(activityChatId == null ? {} : { activity_chat_id: activityChatId }),
+        ...(coordinationAgentId == null ? {} : { coordination_agent_id: coordinationAgentId }),
       }),
     );
   };

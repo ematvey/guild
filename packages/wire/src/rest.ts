@@ -396,6 +396,7 @@ export interface CoordinationOutcome {
 }
 
 export interface CoordinationSnapshot {
+  unavailable?: boolean;
   paused: boolean;
   outcomes: CoordinationOutcome[];
 }

@@ -66,6 +66,7 @@ export function AgentPage({
   viewer,
   onNavigate,
   onOpenChat,
+  onResync,
 }: {
   agentId: string;
   tab: AgentTab;
@@ -76,6 +77,7 @@ export function AgentPage({
   viewer: Viewer;
   onNavigate: (route: AgentsRoute, options?: { replace?: boolean }) => void;
   onOpenChat?: (chatId: string) => void;
+  onResync?: () => void;
 }) {
   // The agent row is live: the pushed agent list carries every agent this
   // member may see, so an edit, archive or visibility change repaints here.
@@ -281,7 +283,7 @@ export function AgentPage({
           )}
           {tab === "activity" && (
             <>
-              <CoordinationActivity agent={agent} onOpenChat={onOpenChat} />
+              <CoordinationActivity agent={agent} onOpenChat={onOpenChat} onResync={onResync} />
               <ActivityPage
                 embedded
                 role={viewer.role}

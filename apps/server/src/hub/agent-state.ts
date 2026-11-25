@@ -233,20 +233,53 @@ export class AgentStateFeed {
     );
   }
 
-  coordination({ org_id: orgId, agent_id: agentId, user_id: ownerId }: OrgPayload, pool: PlatformPool): void {
-    if (agentId === null) return;
-    void this.chains.run(`coordination:${agentId}`, "guild_agent_coordination", async () => {
-      const viewers = await this.store.grants.visibleUserIds(agentId, this.ctx.hub.memberUsersOfOrg(orgId));
-      if (!viewers.length) return;
-      const users = await this.ctx.identity.getUsers(viewers);
-      await Promise.all(users.filter((user) => ownerId === null || user.id === ownerId || readsWholeOrg(user))
-        .map(async (user) => {
-          const snapshot = await coordinationSnapshot(pool, agentId, user.id, readsWholeOrg(user));
-          this.sendKeyed(user.id, `agent_coordination:${agentId}`, {
-            type: "agent_coordination", agent_id: agentId, snapshot,
-          });
-        }));
+  async syncCoordination(pool: PlatformPool, orgId: string, userId: string, sink: SocketSink, seed = false): Promise<void> {
+    const agents = sink.coordinationAgent === null ? sink.legacyCoordinationAgents : [sink.coordinationAgent];
+    await Promise.all([...agents].map((agentId) => this.sendCoordination(pool, orgId, userId, sink, agentId, seed)));
+  }
+
+  private async sendCoordination(
+    pool: PlatformPool, orgId: string, userId: string, sink: SocketSink, agentId: string, seed = false,
+  ): Promise<void> {
+    return this.chains.run(`coordination:${agentId}`, "sync_coordination", async () => {
+      const watching = sink.coordinationAgent === agentId;
+      const legacy = sink.coordinationAgent === null && !sink.features.has("coordination_watch");
+      if (!watching && !legacy) return;
+      const key = `agent_coordination:${agentId}`;
+      try {
+        const member = (await this.ctx.identity.getUsers([userId]))[0];
+        const viewers = member?.org_id === orgId ? await this.store.grants.visibleUserIds(agentId, [userId]) : [];
+        if (viewers.length === 0 && legacy && !sink.legacyCoordinationAgents.has(agentId)) return;
+        const snapshot = viewers.length === 0 || !member
+          ? { paused: false, outcomes: [] }
+          : await coordinationSnapshot(pool, agentId, userId, readsWholeOrg(member));
+        if (watching && sink.coordinationAgent !== agentId) return;
+        if (legacy) sink.legacyCoordinationAgents.add(agentId);
+        sendChanged(sink, key, { type: "agent_coordination", agent_id: agentId, snapshot }, seed);
+      } catch (error) {
+        if (sink.coordinationAgent === agentId) {
+          sendChanged(sink, key, {
+            type: "agent_coordination", agent_id: agentId,
+            snapshot: { paused: false, outcomes: [], unavailable: true },
+          }, seed);
+        }
+        throw error;
+      }
     });
+  }
+
+  async coordination({ org_id: orgId, agent_id: agentId, user_id: ownerId }: OrgPayload, pool: PlatformPool): Promise<void> {
+    if (agentId === null) return;
+    const users = this.ctx.hub.memberUsersOfOrg(orgId).filter((id) =>
+      this.ctx.hub.memberSinksOfUser(id).some((sink) =>
+        sink.coordinationAgent === agentId || (sink.coordinationAgent === null && !sink.features.has("coordination_watch")),
+      ),
+    );
+    const members = await this.ctx.identity.getUsers(users);
+    await Promise.all(members
+      .filter((user) => ownerId === null || user.id === ownerId || readsWholeOrg(user))
+      .flatMap((user) => this.ctx.hub.memberSinksOfUser(user.id)
+        .map((sink) => this.sendCoordination(pool, orgId, user.id, sink, agentId))));
   }
 
   /** A new member socket's first paint: the member's agent list (their
