@@ -66,7 +66,11 @@ function traitOfTool(connector: Connector, raw: string): string | undefined {
  *  routes need: the executor kind, the tool list, and the row config. */
 export interface IntegrationTurn {
   executor: IntegrationExecutor;
+  /** The instance slug: the secret key, the tool prefix, the audit name. */
   slug: string;
+  /** The catalog item this instance instantiates: what resolves a connector
+   *  and a manifest. Equal to `slug` for a single-instance kind. */
+  kind: string;
   description: string;
   tools: IntegrationToolInfo[];
   /** The skill slug that documents this integration, from its manifest's
@@ -253,6 +257,7 @@ export async function resolveIntegrations(
       out.push({
         executor: "connector",
         slug: row.name,
+        kind: row.kind,
         description: resolved.summary,
         guide: firstSkill(resolved),
         tools: specs.map((spec) => {
@@ -316,6 +321,7 @@ export async function resolveIntegrations(
         typeof auth === "object" &&
         ["org_secret_impersonated", "impersonated"].includes(String((auth as JsonObject)["kind"])),
       slug: row.name,
+      kind: row.kind,
       description: indexDescription(manifest),
       guide: firstSkill(manifest as { skills?: unknown }),
       tools: listed.map((t) => toMcpToolInfo(row.name, manifest, config, t)),

@@ -167,6 +167,10 @@ function ListPane({
     .filter((g) => g.entries.length > 0);
   const catalogCount = catalog.reduce((n, g) => n + g.entries.length, 0);
 
+  // Two instances of one kind share the kind's title until an admin names
+  // them; the slug tells them apart.
+  const kindCounts = new Map<string, number>();
+  for (const i of installed) kindCounts.set(i.kind, (kindCounts.get(i.kind) ?? 0) + 1);
   const installedGroups: [string, ShopItem[]][] = [
     ["Needs attention", attention],
     ["On", on],
@@ -264,7 +268,7 @@ function ListPane({
                   <ul className="space-y-0.5">
                     {list.map((i) => {
                       const status = installedStatus(i, usage.get(i.name));
-                      const update = updates.get(i.name);
+                      const update = updates.get(i.kind);
                       return (
                         <ListRow
                           key={i.name}
@@ -280,7 +284,13 @@ function ListPane({
                           logo={i.logo}
                           title={displayName(i)}
                           dot={<StatusDot status={status} />}
-                          line={update ? `${statusLine(status)} · update ${update.latest}` : statusLine(status)}
+                          line={[
+                            (kindCounts.get(i.kind) ?? 0) > 1 ? i.name : null,
+                            statusLine(status),
+                            update ? `update ${update.latest}` : null,
+                          ]
+                            .filter((part) => part !== null)
+                            .join(" · ")}
                         />
                       );
                     })}
@@ -372,7 +382,7 @@ function InstalledHome({
             {installed.map((i) => {
               const u = usage.get(i.name);
               const status = installedStatus(i, u);
-              const update = updates.get(i.name);
+              const update = updates.get(i.kind);
               return (
                 <tr key={i.name} className="border-b border-border/60 hover:bg-accent/40">
                   <td className="py-2.5 pr-4">
@@ -574,7 +584,7 @@ export function IntegrationsPage({
             item={item}
             tab={route.tab}
             usage={data.usage.get(item.name)}
-            update={updates.get(item.name)}
+            update={updates.get(item.kind)}
             onTab={(tab) => navigate({ ...route, tab })}
             onOpenAgent={openAgent}
             onChanged={data.reload}
@@ -585,6 +595,10 @@ export function IntegrationsPage({
             onCreated={(name) => {
               data.reload();
               navigate({ view: "installed", slug: name, tab: "configuration", q: "" });
+            }}
+            onRenamed={(name) => {
+              data.reload();
+              navigate({ view: "installed", slug: name, tab: "configuration", q: route.q }, { replace: true });
             }}
           />
         );

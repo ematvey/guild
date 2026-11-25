@@ -304,7 +304,7 @@ export class PlatformContext implements PlatformStores {
           for (const item of await integrationShop(this, orgId)) {
             if (item["configured"] !== true) continue;
             shown.set(item["name"] as string, {
-              title: item["title"] as string,
+              title: (item["label"] as string) || (item["title"] as string),
               summary: item["summary"] as string,
             });
           }

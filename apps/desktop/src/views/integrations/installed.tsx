@@ -30,7 +30,14 @@ import {
 import type { ShopItem, TraitRow, UsageSummaryRow } from "./integrations-api";
 import type { InstalledTab } from "./integrations-route";
 import { ExternalLinkText, Logo, SOURCE_LABELS, categoryLabel, linkHost, traitLabel } from "./brand";
-import { displayName, installedStatus, statusLine, type AvailableUpdate, type InstalledStatus } from "./model";
+import {
+  displayName,
+  INSTANCE_SLUG,
+  installedStatus,
+  statusLine,
+  type AvailableUpdate,
+  type InstalledStatus,
+} from "./model";
 import { ConfigurationTab } from "./configuration";
 import { ToolsTab } from "./tools";
 import { AccessTab } from "./access";
@@ -142,6 +149,9 @@ function DetailsList({ item, update }: { item: ShopItem; update: AvailableUpdate
           {update && <span className="ml-2 text-xs text-muted-foreground">{update.latest} available</span>}
         </Detail>
       )}
+      <Detail label="Slug">
+        <span className="font-mono text-xs">{item.name}</span>
+      </Detail>
       <Detail label="Publisher">{item.publisher || "—"}</Detail>
       {item.categories.length > 0 && <Detail label="Category">{item.categories.map(categoryLabel).join(", ")}</Detail>}
       {item.docs_url && (
@@ -342,7 +352,7 @@ function About({
     if (!update) return;
     setBusy("update");
     try {
-      await installCatalogPlugin(update.catalogId, item.name, update.latest);
+      await installCatalogPlugin(update.catalogId, item.kind, update.latest);
       toast.success(`Updated to ${update.latest}`, { description: displayName(item) });
       onChanged();
     } catch (e) {
@@ -443,6 +453,7 @@ function About({
               <Input
                 className="mt-1.5 font-mono text-xs"
                 value={draft.name}
+                maxLength={48}
                 placeholder={`${item.kind}_eu`}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
               />
@@ -454,7 +465,7 @@ function About({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={busy !== null || draft.name.trim() === ""}
+              disabled={busy !== null || !INSTANCE_SLUG.test(draft.name.trim())}
               onClick={(e) => {
                 e.preventDefault();
                 void addInstance();
@@ -478,6 +489,7 @@ export function InstalledDetail({
   onChanged,
   onRemoved,
   onCreated,
+  onRenamed,
   onOpenAgent,
 }: {
   item: ShopItem;
@@ -491,6 +503,8 @@ export function InstalledDetail({
   onRemoved: () => void;
   /** Opens a newly created instance of the same kind. */
   onCreated: (name: string) => void;
+  /** Replaces this page with the instance's new address after a rename. */
+  onRenamed: (name: string) => void;
 }) {
   const status = installedStatus(item, usage);
   const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
@@ -544,9 +558,15 @@ export function InstalledDetail({
       <div className="pt-8">
         {tab === "overview" && <Overview item={item} status={status} update={update} onTab={onTab} />}
         {tab === "configuration" && (
-          <ConfigurationTab key={JSON.stringify([item.id, item.config])} item={item} onSaved={onChanged} />
+          <ConfigurationTab
+            key={JSON.stringify([item.id, item.config])}
+            item={item}
+            onSaved={(name) => (name !== item.name ? onRenamed(name) : onChanged())}
+          />
         )}
-        {tab === "access" && <AccessTab id={item.id!} slug={item.name} title={item.title} onOpenAgent={onOpenAgent} />}
+        {tab === "access" && (
+          <AccessTab id={item.id!} slug={item.name} title={displayName(item)} onOpenAgent={onOpenAgent} />
+        )}
         {tab === "tools" && <ToolsTab id={item.id!} isMcp={isMcp} />}
         {tab === "usage" && <UsageTab id={item.id!} />}
         {tab === "about" && (

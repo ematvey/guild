@@ -179,13 +179,13 @@ function approvalClass(turn: IntegrationTurn, info: IntegrationToolInfo): Integr
 /** External read classes do not promise that a download's local file
  * effects are independent. Raw API semantics belong to the connector. */
 export function independentIntegrationRead(
-  turn: Pick<IntegrationTurn, "slug" | "executor">,
+  turn: Pick<IntegrationTurn, "slug" | "kind" | "executor">,
   info: Pick<IntegrationToolInfo, "raw" | "class">,
   args: Record<string, unknown>,
 ): boolean {
-  if (turn.slug === "google_workspace" && ["drive_get_file", "gmail_get_attachment"].includes(info.raw)) return false;
+  if (turn.kind === "google_workspace" && ["drive_get_file", "gmail_get_attachment"].includes(info.raw)) return false;
   if (info.class === "read") return true;
-  if (turn.executor !== "connector" || turn.slug !== "hubspot" || info.raw !== "api") return false;
+  if (turn.executor !== "connector" || turn.kind !== "hubspot" || info.raw !== "api") return false;
   if (args.method === undefined && !("method" in args)) return true;
   if (args.method === "GET") return true;
   return (

@@ -14,6 +14,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { useCachedGet } from "../settings/use-cached-api";
 import { integrationSecretsPath, updateIntegration } from "../../lib/api/settings";
 import { testIntegration, type FieldSpec, type ShopItem, type TestDraft, type TestResult } from "./integrations-api";
+import { INSTANCE_SLUG } from "./model";
 import { Note } from "./prose";
 
 interface SecretEntry {
@@ -209,7 +210,14 @@ export function TestConnectionButton({
   );
 }
 
-export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: () => void }) {
+export function ConfigurationTab({
+  item,
+  onSaved,
+}: {
+  item: ShopItem;
+  /** Called with the stored slug after a save: a rename changes the URL. */
+  onSaved: (name: string) => void;
+}) {
   const id = item.id!;
   const fields = item.settings?.fields ?? [];
   const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
@@ -256,19 +264,24 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
 
   const save = async () => {
     if (busy || !dirty) return;
+    const slug = identity.name.trim();
+    if (identityDirty && !INSTANCE_SLUG.test(slug)) {
+      setError("The slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const config = buildIntegrationConfig(fields, item.config, form, isMcp);
       const secrets = Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== ""));
-      await updateIntegration(id, {
+      const stored = await updateIntegration(id, {
         config,
         secrets,
         ...(identityDirty ? { name: identity.name.trim(), label: identity.label.trim() } : {}),
       });
-      toast.success("Changes saved", { description: identity.label.trim() || item.title });
+      toast.success("Changes saved", { description: stored.label || item.title });
       setSecretDraft({});
-      onSaved();
+      onSaved(stored.name);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -303,10 +316,11 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
           <Input
             id="instance-name"
             className="font-mono text-xs"
+            maxLength={48}
             value={identity.name}
             onChange={(e) => {
               setError(null);
-              setIdentity((v) => ({ ...v, name: e.target.value }));
+              setIdentity((v) => ({ ...v, name: e.target.value.trim().toLowerCase() }));
             }}
           />
         </FieldRow>

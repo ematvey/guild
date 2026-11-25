@@ -54,8 +54,10 @@ export class IntegrationStore {
 
   /** Idempotent upsert of one instance: replaces config and enabled flag;
    *  the per-tool curation map (`config.tools`) is preserved from the
-   *  existing row — the PUT tools endpoint is its only writer. Returns the
-   *  row's stable id. */
+   *  existing row — the PUT tools endpoint is its only writer. The instance's
+   *  identity (`kind`, `label`) is set on insert only: a settings save never
+   *  re-points a row's kind or drops an admin's label, and `rename` is the
+   *  one writer of both. Returns the row's stable id. */
   async upsertInstance(
     orgId: string,
     instance: IntegrationInstance,
@@ -66,7 +68,7 @@ export class IntegrationStore {
     const res = await db.query(
       "INSERT INTO integrations (org_id, name, kind, label, config, enabled) VALUES ($1, $2, $3, $4, $5, $6) " +
         "ON CONFLICT (org_id, name) " +
-        "DO UPDATE SET kind = $3, label = $4, config = jsonb_set($5, '{tools}', " +
+        "DO UPDATE SET config = jsonb_set($5, '{tools}', " +
         "COALESCE(integrations.config->'tools', '{}'::jsonb), true), " +
         "enabled = $6, updated_at = now() " +
         "RETURNING id",
@@ -106,9 +108,10 @@ export class IntegrationStore {
   }
 
   /** Renames one instance: its slug and its display name. The slug is the
-   *  secret key and the tool namespace, so the stored secrets and every
-   *  agent allowlist entry carrying `<old>_<tool>` move with it, in one
-   *  transaction. Returns the row as stored. */
+   *  secret key, so the stored secrets move with it in the same transaction.
+   *  Nothing else stores the slug: Agents reach an instance by row id
+   *  (`agent_integrations`), and a tool name is derived from the slug when
+   *  the Turn resolves. Returns the row as stored. */
   async rename(orgId: string, id: string, name: string, label: string): Promise<IntegrationRow> {
     return withTransaction(this.pool, async (client) => {
       const current = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE", [
@@ -122,25 +125,25 @@ export class IntegrationStore {
         if (taken.rowCount !== 0) {
           throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
         }
-        await client.query("UPDATE integrations SET name = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [
-          orgId,
-          id,
-          name,
-        ]);
+        try {
+          await client.query("UPDATE integrations SET name = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [
+            orgId,
+            id,
+            name,
+          ]);
+        } catch (error) {
+          // Two renames racing for one slug: the loser answers the conflict
+          // the pre-check intends, not a raw unique violation.
+          if ((error as { code?: string }).code === "23505") {
+            throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
+          }
+          throw error;
+        }
         await client.query("UPDATE integration_secrets SET integration = $3 WHERE org_id = $1 AND integration = $2", [
           orgId,
           previous,
           name,
         ]);
-        await client.query(
-          "UPDATE agents SET tools = (" +
-            "SELECT COALESCE(jsonb_agg(CASE WHEN t LIKE $2 || '\\_%' THEN $3 || substr(t, length($2) + 2) ELSE t END " +
-            "ORDER BY ord), '[]'::jsonb) " +
-            "FROM jsonb_array_elements_text(tools) WITH ORDINALITY AS e(t, ord)) " +
-            "WHERE org_id = $1 AND jsonb_typeof(tools) = 'array' " +
-            "AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(tools) x WHERE x LIKE $2 || '\\_%')",
-          [orgId, previous, name],
-        );
       }
       await client.query("UPDATE integrations SET label = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [
         orgId,
@@ -216,6 +219,16 @@ export class IntegrationStore {
       orgId,
       name,
     ]);
+    return res.rows[0] === undefined ? null : row(res.rows[0]);
+  }
+
+  /** The first instance of one kind, in name order. Catalog and credential
+   *  questions are about the kind, not about one instance's slug. */
+  async firstOfKind(orgId: string, kind: string): Promise<IntegrationRow | null> {
+    const res = await this.pool.query(
+      `SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND kind = $2 ORDER BY name LIMIT 1`,
+      [orgId, kind],
+    );
     return res.rows[0] === undefined ? null : row(res.rows[0]);
   }
 

@@ -11,20 +11,17 @@ import { ApiError } from "../platform/errors.js";
 import { isToolClass, type ToolClass } from "../platform/domain/tool-class.js";
 import { packBundle } from "../platform/bundle.js";
 import { BundleWriteError, bundleSha256, publishRegistryBundle, type Publisher } from "../platform/registry-publish.js";
-import {
-  RESERVED_INTEGRATION_SLUGS,
-  singleLineDescription,
-  validateV2,
-  type Manifest,
-} from "../platform/registry-manifest.js";
+import { singleLineDescription, validateV2, type Manifest } from "../platform/registry-manifest.js";
 import { nextVersion, type RegistryStore } from "../platform/store/registry.js";
 import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { TeamStore } from "../platform/store/teams.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
+import { assertInstanceSlug } from "./admin.js";
 import { isBuiltinSlug } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
-import { requireApprovedManifest } from "./plugins.js";
+import type { JsonObject } from "./shared.js";
+import { requiredSecretNames, requireApprovedManifest } from "./plugins.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { suggestedToolClass } from "./policy.js";
 
@@ -173,6 +170,7 @@ export async function createOrgMcp(
   if (!SLUG.test(kind)) {
     throw ApiError.badRequest("kind must be an integration slug");
   }
+  assertInstanceSlug(slug, kind);
   if ((await deps.integrations.getByName(orgId, slug)) !== null) {
     throw ApiError.conflict("already_configured", `integration ${slug} already has a configuration`);
   }
@@ -180,22 +178,38 @@ export async function createOrgMcp(
   const description = str(body, "description");
   const summary = singleLineDescription(str(body, "summary") || description || `${title} MCP server`);
   const connection = parseConnection(body);
-  const discovered = await listServerTools(orgId, connection);
-  const selection = parseSelection(body, discovered);
-
   const secretNames = connection.secrets.map(([n]) => n);
   const headerOf = new Map(Object.entries(connection.templates).map(([h, t]) => [t.slice(1, -1), h]));
-  let manifest: Record<string, unknown>;
+  // One of the two branches below assigns it: an instance of an existing
+  // kind reads the kind's approved manifest, a new kind writes its own.
+  let manifest!: Record<string, unknown>;
   if (kind !== slug) {
     try {
       manifest = (await requireApprovedManifest(deps, orgId, kind)) as Record<string, unknown>;
     } catch (error) {
       throw ApiError.notFound(`unknown integration kind ${kind}: ${(error as Error).message}`);
     }
-  } else {
-    if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
-      throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
+    // One credential contract per kind: the Turn resolves the kind
+    // manifest's required secrets, so an instance must carry exactly those.
+    // A different header set would store secrets nothing resolves, and the
+    // instance would be skipped at Turn time with no visible cause.
+    const declared = requiredSecretNames(manifest as JsonObject);
+    const submitted = new Set(secretNames);
+    const missing = declared.filter((n) => !submitted.has(n));
+    const extra = secretNames.filter((n) => !declared.includes(n));
+    if (missing.length > 0 || extra.length > 0) {
+      throw ApiError.badRequest(
+        `${kind} takes the header${declared.length === 1 ? "" : "s"} ${declared.join(", ") || "(none)"}` +
+          `${missing.length > 0 ? `; missing ${missing.join(", ")}` : ""}` +
+          `${extra.length > 0 ? `; unexpected ${extra.join(", ")}` : ""}`,
+      );
     }
+  }
+
+  const discovered = await listServerTools(orgId, connection);
+  const selection = parseSelection(body, discovered);
+
+  if (kind === slug) {
     if (isBuiltinSlug(slug)) {
       throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
     }

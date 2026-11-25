@@ -1466,13 +1466,95 @@ describe("several instances of one integration kind", () => {
     expect(holders).not.toContain("multi-mcp-eu");
   });
 
+  it("leaves an agent's tool allowlist untouched when an instance is renamed", async () => {
+    // An Agent reaches an Integration by row id; its allowlist holds built-in
+    // and Trait tools only, and several of those contain underscores.
+    const agentId = crypto.randomUUID();
+    const owner = await e.env.db.query("SELECT id FROM users WHERE org_id = $1 AND role = 'admin' LIMIT 1", [
+      e.orgId,
+    ]);
+    const tools = ["web_search", "read_file", "multi-mcp_echo"];
+    await e.env.db.query(
+      "INSERT INTO agents (id, org_id, owner_user_id, name, model, tools_mode, tools) " +
+        "VALUES ($1, $2, $3, 'Renamed under', 'trace-model', 'selected', $4::jsonb)",
+      [agentId, e.orgId, owner.rows[0]!.id, JSON.stringify(tools)],
+    );
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp",
+    ]);
+    const renamed = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "multi-mcp-main",
+    });
+    expect(renamed.statusCode).toBe(200);
+    const stored = await e.env.db.query("SELECT tools FROM agents WHERE id = $1", [agentId]);
+    expect(stored.rows[0]!.tools).toEqual(tools);
+  });
+
+  it("refuses a rename onto a slug another instance holds", async () => {
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp-main",
+    ]);
+    const clash = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "multi-mcp-us",
+    });
+    expect(clash.statusCode).toBe(409);
+    expect(JSON.parse(clash.body).error.code).toBe("already_configured");
+  });
+
+  it("refuses a reserved page segment as an instance slug, on create and on rename", async () => {
+    const created = await call("POST", "/api/v1/admin/integrations", e.adminToken, {
+      kind: "multi-mcp",
+      name: "catalog",
+      url: authUrl(),
+      headers,
+    });
+    expect(created.statusCode).toBe(409);
+
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp-main",
+    ]);
+    const renamed = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "sources",
+    });
+    expect(renamed.statusCode).toBe(409);
+  });
+
+  it("refuses an instance whose headers do not match the kind's credential contract", async () => {
+    const other = await call("POST", "/api/v1/admin/integrations/mcp", e.adminToken, {
+      slug: "multi-mcp-apac",
+      kind: "multi-mcp",
+      url: authUrl(),
+      headers: [{ name: "X-Api-Key", value: "s3cret" }],
+    });
+    expect(other.statusCode).toBe(400);
+    expect(JSON.parse(other.body).error.message).toContain("authorization");
+  });
+
+  it("names each instance's tools after its own slug", async () => {
+    const listed = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
+      items: { id: string; name: string }[];
+    };
+    const toolsOf = async (name: string): Promise<string[]> => {
+      const id = listed.items.find((i) => i.name === name)!.id;
+      const body = JSON.parse((await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken)).body) as {
+        tools: { tool: string }[];
+      };
+      return body.tools.map((t) => t.tool);
+    };
+    expect(await toolsOf("multi-mcp-main")).toContain("multi-mcp-main_echo");
+    expect(await toolsOf("multi-mcp-us")).toContain("multi-mcp-us_echo");
+  });
+
   it("refuses an instance slug another instance of the kind already holds", async () => {
     const dup = await call(
       "POST",
       "/api/v1/admin/integrations/mcp",
       e.adminToken,
       {
-        slug: "multi-mcp",
+        slug: "multi-mcp-main",
         kind: "multi-mcp",
         url: authUrl(),
         headers,

@@ -108,11 +108,12 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
         }
         const plugins = await Promise.all(
           index.plugins.map(async (p) => {
-            // Installed means the org has the integration row; an approved
-            // bundle left behind by a removed integration installs again.
+            // Installed means the org has an instance of the kind; an
+            // approved bundle left behind by a removed integration installs
+            // again. The catalog slug is the kind, never an instance slug.
             const [approved, row] = await Promise.all([
               gateway.registry.approvedBundle(admin.org_id, "integration", p.slug),
-              gateway.integrations.getByName(admin.org_id, p.slug),
+              gateway.integrations.firstOfKind(admin.org_id, p.slug),
             ]);
             const latest = p.versions[0]!;
             const installed = row === null ? null : (approved?.[0] ?? null);
@@ -218,7 +219,7 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
       const preview = await previewCatalogBundle(catalogDeps, admin.org_id, catalog, version, bundleSha256);
       const [approved, row] = await Promise.all([
         gateway.registry.approvedBundle(admin.org_id, "integration", slug),
-        gateway.integrations.getByName(admin.org_id, slug),
+        gateway.integrations.firstOfKind(admin.org_id, slug),
       ]);
       body = {
         catalog: { id: catalog.id, name: index.name || catalog.name, label: describeSource(catalog.source) },

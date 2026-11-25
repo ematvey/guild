@@ -5,10 +5,11 @@
 
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
+import { RESERVED_INTEGRATION_SLUGS } from "../platform/registry-manifest.js";
 import { toolClassOf } from "../platform/domain/tool-class.js";
 import type { IntegrationInstance, IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import { BUILTIN_MCP, builtinByName, builtinMcpByName } from "./loader.js";
+import { BUILTIN_MCP, builtinByName, builtinMcpByName, isBuiltinSlug } from "./loader.js";
 import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
@@ -298,6 +299,23 @@ export async function integrationShop(
 /** An instance slug: the row key, the secret key and the tool namespace. */
 export const INSTANCE_SLUG = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
+/** The one rule for an instance slug, shared by every create and rename
+ *  path. The shape keeps it addressable; the page segments `catalog`,
+ *  `connect` and `sources` are routes of the Integrations view, so an
+ *  instance may not take them; and a slug equal to a built-in kind would
+ *  block that kind from ever being configured under its own name. */
+export function assertInstanceSlug(name: string, kind: string): void {
+  if (!INSTANCE_SLUG.test(name)) {
+    throw ApiError.badRequest("slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
+  }
+  if (RESERVED_INTEGRATION_SLUGS.includes(name)) {
+    throw ApiError.conflict("slug_taken", `${name} is reserved; pick another slug`);
+  }
+  if (name !== kind && isBuiltinSlug(name)) {
+    throw ApiError.conflict("slug_taken", `${name} is the name of a built-in integration`);
+  }
+}
+
 function bodyString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === "string" ? value.trim() : "";
@@ -315,10 +333,8 @@ export async function createIntegration(
   const kind = bodyString(body, "kind") || bodyString(body, "name");
   const name = bodyString(body, "name") || kind;
   const label = bodyString(body, "label");
-  if (!INSTANCE_SLUG.test(kind)) throw ApiError.badRequest(`unknown integration ${kind}`);
-  if (!INSTANCE_SLUG.test(name)) {
-    throw ApiError.badRequest("name must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
-  }
+  if (!INSTANCE_SLUG.test(kind)) throw ApiError.badRequest("kind is required and must be an integration slug");
+  assertInstanceSlug(name, kind);
   // Known kinds only: a compiled-in connector, or an installed registry
   // bundle (a code plugin or one whose manifest declares an MCP server).
   const manifest = await latestIntegrationManifest(gateway, orgId, kind);
@@ -341,11 +357,11 @@ export async function renameIntegration(
 ): Promise<{ name: string; label: string }> {
   const existing = await gateway.integrations.get(orgId, id);
   if (existing === null) throw ApiError.notFound("unknown integration");
-  const name = bodyString(body, "name") || existing.name;
+  const submitted = body["name"] === undefined ? null : bodyString(body, "name");
+  if (submitted === "") throw ApiError.badRequest("slug must not be empty");
+  const name = submitted ?? existing.name;
   const label = body["label"] === undefined ? existing.label : bodyString(body, "label");
-  if (!INSTANCE_SLUG.test(name)) {
-    throw ApiError.badRequest("name must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
-  }
+  if (name !== existing.name) assertInstanceSlug(name, existing.kind);
   const stored = await gateway.integrations.rename(orgId, id, name, label);
   return { name: stored.name, label: stored.label };
 }

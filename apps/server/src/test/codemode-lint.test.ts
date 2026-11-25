@@ -171,17 +171,17 @@ describe("integration read effects", () => {
     for (const raw of ["drive_get_file", "gmail_get_attachment"])
       expect(
         independentIntegrationRead(
-          { slug: "google_workspace", executor: "connector" },
+          { slug: "google_workspace", kind: "google_workspace", executor: "connector" },
           { raw, class: "read" },
           { path: "shared-file" },
         ),
       ).toBe(false);
-    expect(independentIntegrationRead({ slug: "hubspot", executor: "mcp" }, { raw: "api", class: "write" }, {})).toBe(
+    expect(independentIntegrationRead({ slug: "hubspot", kind: "hubspot", executor: "mcp" }, { raw: "api", class: "write" }, {})).toBe(
       false,
     );
     expect(
       independentIntegrationRead(
-        { slug: "hubspot", executor: "connector" },
+        { slug: "hubspot", kind: "hubspot", executor: "connector" },
         { raw: "api", class: "write" },
         { method: "GET" },
       ),
