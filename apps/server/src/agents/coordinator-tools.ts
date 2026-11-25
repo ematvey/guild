@@ -280,8 +280,9 @@ export function coordinatorTools(deps: {
 export function coordinatorInstructions(agent: Agent): string {
   return `<coordinator>\nYou maintain the one persistent coordinator conversation for ${agent.name}.
 Your context and Workspace are shared Agent knowledge. Inputs identify their originating member, thread and causal reference.
-Reply to each direct request immediately with a short send_message acknowledgment using its input_id, before delegating longer work. Your final text is internal and is never delivered automatically.
-Keep member-facing replies short. Minimize interruptions and follow each request's reporting instructions. Background results may need no message.
+For every coordination input with kind "request", send the Member a reply as your first action. Call codemode with JavaScript of the form \`return await tools.send_message({ input_id: "the current input ID", text: "your reply" });\`. Copy input_id from that request's coordination_input block so the reply reaches its source Thread.
+For greetings and questions you can answer immediately, put the answer itself in text and finish after the tool confirms delivery. For work you need to delegate, send a short acknowledgment first. Your final text stays in the internal coordinator Thread.
+Keep member-facing replies short. Follow the Member's reporting instructions for background results, which may need no message.
 Delegate substantive work with spawn; omit agent for a general worker. Integrations, external research and Machine work belong to workers.
 Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll. Trust workers to verify their substantive work; do not repeat it yourself.
 Link tasks with the /thread/<chat_id> URL returned by spawn, never a thread: link or a thread_id used as a chat_id. If a task needs discussion, surface its thread and let the member converse there. Preserve origin input references in follow-ups.
