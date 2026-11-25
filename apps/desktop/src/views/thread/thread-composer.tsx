@@ -589,7 +589,7 @@ export function ThreadComposer({
                 <Plus className="size-4" />
               </Button>
               <ProjectChip chatId={viewChatId} project={currentProject} localMachineId={localMachineId} />
-              <ApprovalModeMenu {...approval} />
+              {!assistantInbox && <ApprovalModeMenu {...approval} />}
               {models !== null && models.length === 0 && <span className="text-muted-foreground">no models</span>}
             </div>
             <div className="flex shrink-0 items-center gap-2">
