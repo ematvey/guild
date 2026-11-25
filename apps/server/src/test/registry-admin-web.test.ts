@@ -321,7 +321,8 @@ describe("GitHub releases", () => {
         updater_signature: "signed-artifact",
       }));
     });
-    const metadata = { version, tag, repository: "alice/guild", artifacts };
+    const sourceCommit = "a".repeat(40);
+    const metadata = { version, tag, repository: "alice/guild", commit: "b".repeat(40), artifacts };
     const release = {
       tag_name: tag,
       draft: false,
@@ -369,7 +370,14 @@ describe("GitHub releases", () => {
       e.env.config.serverVersion = "0.7.0";
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
       e.env.config.serverVersion = version;
-      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag });
+      e.env.config.serverCommit = sourceCommit;
+      const pairing = { tag, source_commit: sourceCommit };
+      const mismatched = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
+      expect(mismatched.statusCode).toBe(400);
+      expect(mismatched.body).toContain("client release source commit does not match this server");
+      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+      metadata.commit = sourceCommit;
+      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
       expect(accepted.statusCode).toBe(200);
       expect(json(accepted)).toEqual({ version, artifacts: 6 });
       expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(200);

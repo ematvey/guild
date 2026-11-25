@@ -107,6 +107,9 @@ hand-written from it in `packages/wire`, the Rust types in
 and sizes are checked before the server imports their metadata and approves the
 version atomically. Success returns `{"version":"0.6.127","artifacts":6}`.
 Preview tags require `GUILD_RELEASE_CHANNEL=develop`; the default is `stable`.
+For deployment pairing, also send `source_commit` from `GET /api/v1/health`.
+The tag version and source commit must match the running build, and
+`release.json` must record the same commit.
 
 `GET /api/v1/updates/latest.json` remains public and returns the approved complete
 Tauri manifest. Imported artifacts use GitHub download URLs. The authenticated

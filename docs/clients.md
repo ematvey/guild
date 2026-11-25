@@ -241,8 +241,10 @@ TOKEN="$TOKEN" node scripts/release.mjs publish-running "$BASE" "$version"
 
 The command reads the running version from health, checks that it matches the
 intended deployment, and asks the server to import `client-v<running-version>`
-from its configured GitHub repository. If that release is missing or fails
-validation, the command fails and the existing approval stays in place.
+from its configured GitHub repository. Before approval, the server checks
+that the release metadata records the same source commit as its image. A
+missing release or a version or commit mismatch leaves the existing approval
+in place.
 
 Verify the updater manifest as described below. For a develop preview, update
 the running pin after verification succeeds, then remove the pending pin.
@@ -432,8 +434,7 @@ meaning.
 ### 8.4 iOS constraints that change the deployment, not the client
 
 - **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The
-  cluster serves the public host over HTTPS through the tunnel; an iOS client
-  needs that certificate to stay valid.
+  public server origin needs a valid HTTPS certificate.
 - **No iOS build on the Linux host.** `tauri ios build` needs Xcode,
   CocoaPods, and a provisioning profile. The whole release story in §4 is
   "no Mac required" — that stops at iOS. A Mac or a cloud Mac is a new

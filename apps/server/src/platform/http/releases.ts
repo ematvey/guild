@@ -16,7 +16,12 @@ async function githubJson(url: string): Promise<unknown> {
 
 /** Release metadata is accepted only from the configured public repository;
  * each artifact must match GitHub's own digest and size. */
-async function githubArtifacts(repository: string, tag: string, previews: boolean): Promise<GithubReleaseArtifact[]> {
+async function githubArtifacts(
+  repository: string,
+  tag: string,
+  previews: boolean,
+  expectedCommit?: string,
+): Promise<GithubReleaseArtifact[]> {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository))
     throw ApiError.badRequest("configure GUILD_RELEASE_REPOSITORY as owner/repository");
   if (!/^client-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-dev\.[1-9]\d*)?$/.test(tag))
@@ -45,6 +50,7 @@ async function githubArtifacts(repository: string, tag: string, previews: boolea
   }
   const metadata = (await githubJson(`${base}/release.json`)) as {
     version?: string;
+    commit?: string;
     repository?: string;
     tag?: string;
     artifacts?: { platform: string; filename: string; size_bytes: number; sha256: string; updater_signature: string }[];
@@ -57,6 +63,9 @@ async function githubArtifacts(repository: string, tag: string, previews: boolea
     metadata.artifacts.length !== 6
   ) {
     throw ApiError.badRequest("invalid GitHub release metadata");
+  }
+  if (expectedCommit !== undefined && metadata.commit !== expectedCommit) {
+    throw ApiError.badRequest("client release source commit does not match this server");
   }
   const result: GithubReleaseArtifact[] = [];
   for (const platform of ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"]) {
@@ -197,12 +206,22 @@ export function registerReleaseRoutes(app: FastifyInstance, gateway: GatewayCtx,
   app.post("/api/v1/admin/releases/github", async (req, reply) => {
     await requireAdminUser(ctx, req);
     if (ctx.config.releaseRepository === null) throw ApiError.badRequest("GUILD_RELEASE_REPOSITORY is not configured");
-    const body = req.body as { tag?: unknown } | null;
+    const body = req.body as { tag?: unknown; source_commit?: unknown } | null;
     if (typeof body?.tag !== "string") throw ApiError.badRequest("tag is required");
+    const sourceCommit = body.source_commit;
+    if (sourceCommit !== undefined) {
+      if (typeof sourceCommit !== "string" || !/^[a-f0-9]{40}$/.test(sourceCommit) || sourceCommit !== ctx.config.serverCommit) {
+        throw ApiError.badRequest("deployment source commit does not match this server");
+      }
+      if (body.tag !== `client-v${ctx.config.serverVersion}`) {
+        throw ApiError.badRequest("deployment release version does not match this server");
+      }
+    }
     const artifacts = await githubArtifacts(
       ctx.config.releaseRepository,
       body.tag,
       ctx.config.releaseChannel === "develop",
+      sourceCommit,
     );
     if (versionGt(artifacts[0]!.version, ctx.config.serverVersion)) {
       throw ApiError.badRequest("release is newer than this server");

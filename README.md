@@ -39,7 +39,9 @@ load it into the cluster, then `helm upgrade --install guild` with your
 values. `deploy/kubernetes/README.md` is the full procedure.
 
 ```bash
-docker build -f Dockerfile.server-ts -t guild-server-ts:<commit> .
+commit="$(git rev-parse HEAD)"
+docker build -f Dockerfile.server-ts --build-arg "GUILD_BUILD_COMMIT=$commit" \
+  -t "guild-server-ts:$commit" .
 # load the image into the cluster, then install or upgrade the chart
 curl -s https://guild.example.com/api/v1/health     # {"status":"ok"}
 ```
