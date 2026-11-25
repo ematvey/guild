@@ -102,7 +102,7 @@ describe("run page", () => {
     expect(api.getRun).toHaveBeenCalledTimes(1);
   });
 
-  it("clears a revoked run and drops telemetry that was already in flight", async () => {
+  it("clears a revoked run, drops late telemetry, and reseeds when access returns", async () => {
     const step = { kind: "assistant", detail: "Private transcript text" } as const;
     api.getRun.mockResolvedValue({ run: { ...running, steps: [step] }, thread: null });
     let finishTrace!: (value: unknown) => void;
@@ -111,7 +111,8 @@ describe("run page", () => {
         finishTrace = resolve;
       }),
     );
-    render(<RunDetailPage runId="r1" view="transcript" role="admin" onNavigate={() => {}} />);
+    const onNavigate = vi.fn();
+    render(<RunDetailPage runId="r1" view="transcript" role="admin" onNavigate={onNavigate} />);
     expect(await screen.findByText(step.detail)).toBeTruthy();
     act(() => applyActivityRun({ type: "activity_run_unavailable", run_id: "r1" }));
     expect(screen.getByText("This run is unavailable.")).toBeTruthy();
@@ -121,6 +122,18 @@ describe("run page", () => {
     );
     expect(screen.queryByText("Private telemetry")).toBeNull();
     expect(screen.queryByText("Running")).toBeNull();
+
+    api.getRun.mockResolvedValue({ run: running, thread: { chat_id: "c1", parent_chat_id: null } });
+    api.getTrace.mockResolvedValue({
+      trace: traceFromRun(running),
+      spans: [span("s1", "Restored telemetry")],
+      children: [],
+    });
+    act(() => applyActivityRun({ type: "activity_run", run: running, counts: null, steps: [step] }));
+    await waitFor(() => expect(api.getTrace).toHaveBeenCalledTimes(2));
+    fireEvent.click(await screen.findByRole("button", { name: "Thread" }));
+    expect(onNavigate).toHaveBeenCalledWith({ view: "chat", chatId: "c1" });
+    expect(screen.queryByText("This run is unavailable.")).toBeNull();
   });
 
   it("loads recorded telemetry for a background Run while preserving Thread navigation", async () => {

@@ -270,6 +270,25 @@ describe("agent and skill state frames", () => {
         await stack.env.db.query("UPDATE users SET role = 'admin' WHERE id = $1", [stack.adminId]);
       }
       await waitFrame(admin, (frame) => isRun(frame, internalRun) && Array.isArray(frame.steps));
+      admin.send(JSON.stringify({ type: "sync", run_id: ordinaryRun }));
+      await waitFrame(admin, (frame) => isRun(frame, ordinaryRun) && Array.isArray(frame.steps));
+
+      // Commit a role change with its NOTIFY missing, then invoke the same
+      // resync callback a recovered LISTEN connection calls.
+      const db = await stack.env.db.connect();
+      try {
+        await db.query("BEGIN");
+        await db.query("ALTER TABLE users DISABLE TRIGGER users_profile_notify");
+        await db.query("UPDATE users SET role = 'member' WHERE id = $1", [stack.adminId]);
+        await db.query("ALTER TABLE users ENABLE TRIGGER users_profile_notify");
+        await db.query("COMMIT");
+        stack.env.app.platform.feed["resync"]();
+        await waitFrame(admin, (frame) => frame.type === "activity_run_unavailable" && frame.run_id === ordinaryRun);
+      } finally {
+        await db.query("ROLLBACK");
+        db.release();
+        await stack.env.db.query("UPDATE users SET role = 'admin' WHERE id = $1", [stack.adminId]);
+      }
     } finally {
       admin.end();
       idleAdmin.end();

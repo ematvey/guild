@@ -231,10 +231,8 @@ export class IntegrationStore {
     return res.rows[0] === undefined ? null : row(res.rows[0]);
   }
 
-  async list(orgId: string): Promise<IntegrationRow[]> {
-    const res = await this.pool.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 ORDER BY name`, [
-      orgId,
-    ]);
+  async list(orgId: string, db: PlatformPool | PoolClient = this.pool): Promise<IntegrationRow[]> {
+    const res = await db.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 ORDER BY name`, [orgId]);
     return res.rows.map((r: Record<string, unknown>) => row(r));
   }
 

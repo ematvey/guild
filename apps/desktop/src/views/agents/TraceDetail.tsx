@@ -155,6 +155,9 @@ export function RunDetailPage({
     if (restoring) {
       access.current = { runId, unavailable: false };
       setError(null);
+      // The Run frame restores durable steps. Reseed thread navigation and
+      // optional telemetry, which are only served by the authorized detail reads.
+      setTick((current) => current + 1);
     }
     const finishes = runFinishes(shownStatus.current, pushed);
     const update = { ...pushedRun.current, ...pushed, ...(steps === undefined ? {} : { steps }) };
