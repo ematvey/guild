@@ -9,38 +9,13 @@ version: image, rollout, bootstrap, client publication.
 
 ## Build and roll
 
-```bash
-docker build -f Dockerfile.server-ts \
-  --build-arg GUILD_BUILD_VERSION=<version> \
-  -t guild-server-ts:<commit> .
-docker save guild-server-ts:<commit> | sudo k3s ctr images import -
-kubectl -n guild-dev set image deploy/guild server=guild-server-ts:<commit>
-kubectl -n guild-dev rollout status deploy/guild --timeout=10m
-```
-
-Health check: `curl -s -H 'Host: <public host>' http://127.0.0.1:30080/api/v1/health`
-→ `{"status":"ok","version":"..."}`. The image serves the web frontend; a
-local `vite build` never reaches it (`docs/deploy-nuances.md` §2).
+Follow the [server build and Helm rollout procedure](../docs/deploy-nuances.md#1-build-and-deploy-the-server).
+The server image includes the web frontend.
 
 ## Publish desktop clients
 
-The server build does not build or publish desktop installers. After a new
-deployment, run the client release separately for the version in
-`apps/desktop/src-tauri/tauri.conf.json`. Set the public server URL so a
-fresh install opens with this deployment selected:
-
-```bash
-BASE=https://guild.example.com \
-TOKEN=<admin-session-token> \
-VERSION=<desktop-version> \
-VITE_DEFAULT_SERVER_URL=https://guild.example.com \
-  scripts/release-clients.sh
-```
-
-This builds and uploads Windows, Linux, and macOS installers and updater
-artifacts. Check the authenticated `/api/v1/releases` list for six artifacts
-and `/api/v1/updates/latest.json` for the new version and all four platforms.
-See `docs/clients.md` for toolchain requirements and signing details.
+Use the [deployment release pairing procedure](../docs/clients.md#pairing-a-deployment-with-a-desktop-release)
+to publish the exact matching desktop release on the installation.
 
 ## First-run bootstrap
 
@@ -88,5 +63,5 @@ cargo run -p guild-app-server -- chat --model gpt-4o-mini "hello"
 ## Teardown
 
 ```bash
-helm -n guild-dev uninstall guild
+helm uninstall guild --kube-context "$context" --namespace "$namespace"
 ```

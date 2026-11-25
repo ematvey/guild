@@ -1,97 +1,65 @@
 # Guild — deploy nuances
 
-Everything non-obvious about building, serving, and shipping Guild on the
-k3s cluster on this host. Companion to `docs/clients.md` (client
-distribution details) and `deploy/kubernetes/README.md` (chart install and
-upgrade).
+Build, deploy, and verify Guild on Kubernetes. See [desktop client releases](clients.md)
+and the [Helm install guide](../deploy/kubernetes/README.md).
 
----
+## 0. Backing services
 
-## 0. Host services (default operating mode)
-
-Guild prod AND tests use shared **host-level** services — nobody runs
-private copies by default. Each service belongs to the host, not to this
-project:
-
-| Service | Endpoint | Notes |
-|---|---|---|
-| Postgres 17 | `127.0.0.1:5432` | Guild database and role: `guild` |
-| ClickHouse | `0.0.0.0:8123` (HTTP) | Guild database: `guild` |
-| S3-compatible storage | `0.0.0.0:9950` (S3 API), `:9951` (console) | Guild bucket: `guild` |
-| Faro collector (Alloy + Loki) | `0.0.0.0:12347` (`/collect`) | No auth; per-app rate limiting |
-
-Service data directories, admin credentials, and the S3 root pair live
-outside this repo, in the host's service configuration.
+The installation supplies PostgreSQL, ClickHouse, and S3-compatible storage.
+Use the installation's values and Secrets to configure service endpoints and
+credentials as described in the Helm install guide.
 
 Guild proxies browser telemetry through the server: `POST /faro/collect`
-forwards to `GUILD_FARO_URL` (default the collector above; empty disables).
+forwards to `GUILD_FARO_URL` (an empty value disables forwarding).
 The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
 absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
 The value rides the `workspace_identity` frame, so every client starts or
 stops collecting live. There is no per-device toggle; About shows the state
 read-only.
 
-- Each project gets its own **database/bucket** on the shared servers
-  (Guild: db `guild`, bucket `guild`).
-- Guild tests hit the same servers with per-run isolated DBs/buckets
-  (`test_*` / `t*` names; stale `test_*` databases are reaped on first use).
-  Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`,
-  `GUILD_TEST_S3_URL` (+ `_USER`/`_PASSWORD`/`_ACCESS_KEY_ID`
-  /`_SECRET_ACCESS_KEY`). There are no testcontainers.
-- The server pod reaches these ports by the host's LAN address; they are
-  part of the cluster's `guild-server` Secret.
-- Tests that talk to these services read their credentials from the
-  environment, then from the gitignored `test.env` at the repo root
-  (`GUILD_S3_SECRET_ACCESS_KEY`, `GUILD_CLICKHOUSE_USER`,
-  `GUILD_CLICKHOUSE_PASSWORD`).
+Tests use isolated databases and buckets on the configured test services.
+Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`, and
+`GUILD_TEST_S3_URL`. Supply test credentials through the environment or the
+gitignored `test.env` at the repository root.
 
 ---
 
-## 1. The cluster installation
+## 1. Build and deploy the server
 
-Guild runs on the k3s cluster on this host. One installation, no second
-stack.
-
-| Part | Value |
-|---|---|
-| Namespace | `guild-dev` |
-| Deployment | `guild`, container `server` |
-| Image | `guild-server-ts:<source commit>`, `imagePullPolicy: Never` |
-| Public entry | NodePort `30080`, tunneled at the dev public host |
-| Configuration | the `guild-server` Secret in the namespace |
-
-- The Cloudflare tunnel rule in `/etc/cloudflared/config.yml` points the
-  public host at `http://127.0.0.1:30080`.
-- The Secret carries `GUILD_DATABASE_URL`, `GUILD_CLICKHOUSE_URL`,
-  `GUILD_S3_URL`, `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`,
-  `GUILD_INTERNAL_KEY`, `GUILD_SANDBOX_RUNNER_TOKEN` and the release
-  settings. Change configuration there, not in a file in this repo.
-- The pod reaches the host services of §0 by the host's LAN address.
-- The chart and its install procedure live in `deploy/kubernetes/README.md`;
-  that document is the source of truth for the cluster.
-
-### Deploy a build
+Set `version` to the product version for a stable release or to the intended
+preview version for a develop installation. Set `image` to an immutable image
+reference that identifies this build. From the repository root, build the image.
 
 ```bash
-# 1. build the image from the checkout, stamped with the version it serves
 docker build -f Dockerfile.server-ts \
-  --build-arg GUILD_BUILD_VERSION=<version> \
-  -t guild-server-ts:<commit> .
-
-# 2. load it into the cluster's containerd (the deployment never pulls)
-docker save guild-server-ts:<commit> | sudo k3s ctr images import -
-
-# 3. point the deployment at it and wait
-kubectl -n guild-dev set image deploy/guild server=guild-server-ts:<commit>
-kubectl -n guild-dev rollout status deploy/guild --timeout=10m
-
-# 4. check what is served
-curl -s -H 'Host: <public host>' http://127.0.0.1:30080/api/v1/health
+  --build-arg "GUILD_BUILD_VERSION=${version:?Set the server version}" \
+  -t "${image:?Set the server image reference}" .
 ```
 
-The Docker build stamps `GUILD_BUILD_VERSION` into the server package.
-Health, WebSocket identity and release eligibility all read that baked
-version. The source manifests keep the stable product version.
+Publish the image to the installation's registry, or load it onto the eligible
+nodes when the installation uses preloaded images. Set `images.server` to the
+image reference in the installation's managed Helm values. For a first
+installation, follow the [Helm setup guide](../deploy/kubernetes/README.md#apply-and-verify).
+For an existing installation, set `chart`, `context`, `namespace`, and
+`values` to the chart, kube context, release namespace, and maintained values
+file. Set `BASE` to the deployed origin.
+
+```bash
+helm upgrade guild "$chart" --kube-context "$context" \
+  --namespace "$namespace" -f "$values" --wait --timeout 10m
+```
+
+Verify the reported version at the deployed origin.
+
+```bash
+curl -fsS "$BASE/api/v1/health" \
+  | jq -e --arg version "$version" '.status == "ok" and .version == $version'
+```
+
+Health, WebSocket identity, and release eligibility use the version baked into
+the image. When deploying a paired desktop release, use the
+[release pairing procedure](clients.md#pairing-a-deployment-with-a-desktop-release).
+For a published preview, create its pending pin before the Helm upgrade.
 
 ---
 
@@ -108,14 +76,10 @@ the image (`GUILD_WEB_DIST` default; `apps/server/src/http/web.ts`):
 - If the image has no dist, pages answer with the 503 hint ("chat app not
   built") and the API still works.
 
-### Shipping a frontend change (the canonical recipe)
+### Shipping a frontend change
 
-```bash
-docker build -f Dockerfile.server-ts -t guild-server-ts:<commit> .
-docker save guild-server-ts:<commit> | sudo k3s ctr images import -
-kubectl -n guild-dev set image deploy/guild server=guild-server-ts:<commit>
-kubectl -n guild-dev rollout status deploy/guild --timeout=10m
-```
+Use the [version-stamped server build and Helm rollout](#1-build-and-deploy-the-server)
+for frontend and backend changes.
 
 - The image's `webui` stage runs `npm ci --workspace apps/desktop` + `vite
   build` (it also needs `packages/ui/src` and `packages/wire/src`). Changing
@@ -129,14 +93,10 @@ kubectl -n guild-dev rollout status deploy/guild --timeout=10m
 ### Verify the new bundle actually went live
 
 ```bash
-curl -s -H 'Host: <public host>' http://127.0.0.1:30080/thread/x \
-  | grep -oE 'index-[A-Za-z0-9_-]+\.js'
-curl -s -H 'Host: <public host>' http://127.0.0.1:30080/api/v1/health
+curl -fsS "$BASE/thread/x" | grep -oE 'index-[A-Za-z0-9_-]+\.js'
 ```
 
-A changed asset hash = new bundle. Optionally
-`kubectl -n guild-dev exec deploy/guild -- ls /app/apps/desktop/dist/assets | head`
-to inspect the served bundle directly.
+Compare the served asset hash with the bundle in the new image.
 
 ---
 
@@ -158,7 +118,7 @@ Notes:
   `package.json`/`package-lock.json` + its apps only — **adding a
   dependency requires the lockfile update to flow through** (lockfile is
   COPYed in every stage).
-- Build context is the repo root (`context: ../..`), so anything new the
+- Build context is the repo root, so anything new the
   build needs must be COPYed explicitly.
 
 ---
@@ -213,14 +173,9 @@ Notes:
 
 ## 7. Running long rebuilds detached
 
-`docker build -f Dockerfile.server-ts` can run long (npm + tsc). Use the
-`big-job` skill (systemd-run transient unit, journal output). Two traps:
-
-- **No shell operators after `systemd-run --`** — `a && b` becomes literal
-  args. Wrap: `-- bash -lc 'cd ~/guild && docker build -f
-  Dockerfile.server-ts -t guild-server-ts:<commit> .'`.
-- Always pass an explicit working directory (systemd-run inherits the
-  caller's cwd otherwise).
+Run the stamped build from §1 in a detached systemd transient unit with an
+explicit working directory. Follow the unit's journal and check its exit status
+before deploying the image.
 
 ---
 
@@ -236,8 +191,7 @@ Notes:
   `<session.base_url>/api/v1/updates/latest.json` and overrides the plugin's
   configured list at runtime, so one client build follows whichever stack it
   paired with. The `endpoints` entry in `tauri.conf.json` is a placeholder
-  the runtime replaces. `dangerousInsecureTransportProtocol: true` (plain
-  HTTP is intentional for this deployment). `createUpdaterArtifacts: true`.
+  the runtime replaces. `createUpdaterArtifacts: true`.
 - Two publisher scripts, both **idempotent** (they delete+republish an
   existing version/platform artifact) and both verify the server's sha256
   against the local file:
@@ -262,19 +216,7 @@ Notes:
 ## 9. Quick recipes
 
 ```bash
-# ship a frontend or backend change: build, import, roll (see §1)
-docker build -f Dockerfile.server-ts --build-arg GUILD_BUILD_VERSION=<version> \
-  -t guild-server-ts:<commit> .
-docker save guild-server-ts:<commit> | sudo k3s ctr images import -
-kubectl -n guild-dev set image deploy/guild server=guild-server-ts:<commit>
-kubectl -n guild-dev rollout status deploy/guild --timeout=10m
-
-# what's actually being served?
-curl -s -H 'Host: <public host>' http://127.0.0.1:30080/thread/x \
-  | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'
-
-# logs
-kubectl -n guild-dev logs deploy/guild -f
+kubectl --context "$context" -n "$namespace" logs deploy/guild -f
 ```
 
 ## Daemon watch-items
@@ -332,8 +274,7 @@ except synchronization from master. Local and branch releases stamp a temporary
 next-patch `-dev.<build-number>` version with `--build` in a disposable checkout.
 See `docs/clients.md` §4 for publication and per-stack approval.
 
-A develop preview reaches the cluster as a server image stamped with the
-preview version (§1), and the release is approved on that installation after
-health reports the stamped version. Daily GitHub cleanup preserves the newest
+The desktop release paired with a deployment matches the version reported by
+the running server. Daily GitHub cleanup preserves the newest
 ten previews, all previews under fourteen days old, and installation pins; see
 `docs/clients.md` §4. Stable releases are retained.

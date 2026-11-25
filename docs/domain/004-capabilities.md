@@ -214,7 +214,9 @@ Every installer, listing and updater candidate is capped at the running server
 version. An installation persists its own stable/develop preference across
 sign-out and pairing changes. Native offers bind to the paired server, channel
 and observed server version and are revalidated before installation.
-The approved version and all artifact rows become visible together. The updater
+Deployment release pairing imports the published tag for the exact version
+reported by the running server. The approved version and all artifact rows
+become visible together. The updater
 manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
 only on GitHub.
 

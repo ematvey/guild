@@ -625,7 +625,7 @@ async function main() {
       process.exitCode = verifyReleaseCommit(args[0] ?? "HEAD", process.env.RELEASE_SIGNING_PUBLIC_KEY) ? 0 : 1;
       return;
     case "pin":
-      await pinRelease(repositoryName(), args[0], args[1]);
+      await pinRelease(repositoryName(), args[0], args[1], args.includes("--pending"));
       return;
     case "unpin":
       await unpinRelease(repositoryName(), args[0], args.includes("--pending"));
@@ -662,6 +662,29 @@ async function main() {
     case "assemble":
       assemble(...args);
       return;
+    case "publish-running": {
+      const [base, expectedVersion] = args;
+      const token = process.env.TOKEN;
+      assert(base && (STABLE.test(expectedVersion) || PREVIEW.test(expectedVersion)) && token,
+        "usage: TOKEN=<admin session token> node scripts/release.mjs publish-running <origin> <version>");
+      const origin = new URL(base).origin;
+      const health = await fetch(new URL("/api/v1/health", origin), { redirect: "error" });
+      assert(health.ok, `server health returned HTTP ${health.status}`);
+      const { status, version } = await health.json();
+      assert(status === "ok" && version === expectedVersion,
+        `expected healthy server at ${expectedVersion}, got ${status} at ${version}`);
+
+      const tag = `client-v${version}`;
+      const response = await fetch(new URL("/api/v1/admin/releases/github", origin), {
+        method: "POST",
+        redirect: "error",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      assert(response.ok, `importing ${tag} returned HTTP ${response.status}: ${await response.text()}`);
+      console.log(`Published ${tag} on ${origin}`);
+      return;
+    }
     case "publish":
       await publishGithub(path.resolve(args[0]));
       return;
@@ -669,8 +692,9 @@ async function main() {
       configure();
       return;
     default:
+      if (command && command !== "--help" && command !== "-h") process.exitCode = 1;
       console.log(
-        "Usage: node scripts/release.mjs configure | version | preview [build-number] | pin <installation> <tag> | unpin <installation> [--pending] | prune [--apply] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
+        "Usage: node scripts/release.mjs configure | version | preview [build-number] | pin <installation> <tag> [--pending] | unpin <installation> [--pending] | prune [--apply] | publish <directory> | publish-running <origin> <version> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
       );
   }
 }

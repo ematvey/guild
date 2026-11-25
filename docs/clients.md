@@ -216,11 +216,41 @@ CI builds use a generic client: the server address is editable at pairing, and
 the stored paired server controls updates. The same artifacts can serve several
 stacks. Signing and packaging do not publish to a Guild database.
 
-Deploy the matching server from the same source commit: build the server
-image with `--build-arg GUILD_BUILD_VERSION=<preview version>` and roll the
-installation (`docs/deploy-nuances.md` §1). The committed version files stay
-stable. Once the server reports the stamped version, approve the release on
-that installation.
+### Pairing a deployment with a desktop release
+
+Use the same source commit and version for the server image and the published
+client artifacts. Set `BASE` to the installation's deployed origin, `version`
+to the version stamped into the image, and `TOKEN` to an admin session token
+for that installation. Configure the server with `GUILD_RELEASE_REPOSITORY`
+and the appropriate `GUILD_RELEASE_CHANNEL`.
+
+For a develop preview, set `installation` to the installation's pin name and
+create a pending pin before rolling the server. Run one rollout at a time per
+installation.
+
+```bash
+node scripts/release.mjs pin "$installation" "client-v$version" --pending
+```
+
+[Build and roll the stamped image through Helm](deploy-nuances.md#1-build-and-deploy-the-server).
+After the rollout, import the exact release for the running server.
+
+```bash
+TOKEN="$TOKEN" node scripts/release.mjs publish-running "$BASE" "$version"
+```
+
+The command reads the running version from health, checks that it matches the
+intended deployment, and asks the server to import `client-v<running-version>`
+from its configured GitHub repository. If that release is missing or fails
+validation, the command fails and the existing approval stays in place.
+
+Verify the updater manifest as described below. For a develop preview, update
+the running pin after verification succeeds, then remove the pending pin.
+
+```bash
+node scripts/release.mjs pin "$installation" "client-v$version" &&
+  node scripts/release.mjs unpin "$installation" --pending
+```
 
 ### Approving a release on a server
 
@@ -260,7 +290,7 @@ records the published develop release tag. Installation names use letters,
 numbers and underscores and are case-insensitive. Deployment pins its target
 under `guild-pin-<name>-pending-<id>` before changing the server, preserves the previous
 running pin, then updates the running pin and removes the pending pin after
-health matches. A failed deployment leaves its pending pin for retry or removal.
+the matching release is approved and its updater manifest is verified. A failed deployment leaves its pending pin for retry or removal.
 Other stacks pin their approved release before it ages out. The cleanup cannot
 discover independently hosted servers.
 

@@ -61,7 +61,7 @@ only what the repo cannot tell you.
   the contract is `apps/desktop/src/views/skills/skills-route.ts`.
 - **Local iterations use local tools.** Run builds and checks on the
   development host. For app changes, build the server image and roll the
-  `guild-dev` deployment (`docs/deploy-nuances.md` §1). Run the build
+  dev installation through Helm (`docs/deploy-nuances.md` §1). Run the build
   detached and verify the served bundle. Run GitHub Actions or other CI only
   when the user explicitly requests CI or a release.
 - **Signed desktop releases require an explicit request.** For a requested dev
@@ -81,11 +81,9 @@ only what the repo cannot tell you.
 - **Sessions run this repo concurrently.** Check `git log` / `git status`
   for fresh commits before and after editing; pull/rebase rather than
   clobber.
-- **Never touch prod while developing.** Dev tasks act on the cluster
-  installation only (namespace `guild-dev`, db `guild` — including its
-  release registry; publish client releases to it so the dev-paired desktop
-  sees them). The prod installation is only touched when the user explicitly
-  asks for a prod deploy/release.
+- **Never touch prod while developing.** Use the dev installation
+  and its release registry for development. Deploy or release to prod only
+  when the user explicitly requests it.
 - **Type sizes come from the theme scale.** `packages/ui/src/theme.css`
   declares the only steps (`text-3xs` … `text-2xl`). Views use those names;
   no raw `text-[Npx]`/`text-[Nrem]` sizes. Resize text by editing the token.

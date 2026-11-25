@@ -47,7 +47,7 @@ curl -s https://guild.example.com/api/v1/health     # {"status":"ok"}
 Create the first admin, then add a provider key and a model route:
 
 ```bash
-curl -s -X POST localhost:8080/api/v1/auth/bootstrap \
+curl -s -X POST https://guild.example.com/api/v1/auth/bootstrap \
   -H 'content-type: application/json' \
   -d '{"email":"admin@example.org","password":"<password>"}'
 ```
