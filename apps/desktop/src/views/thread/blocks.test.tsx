@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Markdown from "react-markdown";
 import {
   CompactionCard,
-  HoverStamp,
+  MessageStamp,
   ReasoningFrame,
   ThreadProgress,
   ThreadSkeleton,
@@ -46,26 +46,32 @@ describe("chat markdown", () => {
   });
 });
 
-describe("HoverStamp", () => {
+describe("MessageStamp", () => {
   it("renders nothing without a stamp", () => {
-    expect(renderToStaticMarkup(<HoverStamp />)).toBe("");
-    expect(renderToStaticMarkup(<HoverStamp ts="not-a-date" />)).toBe("");
+    expect(renderToStaticMarkup(<MessageStamp />)).toBe("");
+    expect(renderToStaticMarkup(<MessageStamp ts="not-a-date" />)).toBe("");
   });
 
   it("renders the formatted time", () => {
-    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} />);
+    const html = renderToStaticMarkup(<MessageStamp ts={new Date().toISOString()} />);
     expect(html).toMatch(/\d{1,2}:\d{2}/);
     expect(html).not.toContain("Copy message");
   });
 
+  it("shows the time without a hover", () => {
+    const html = renderToStaticMarkup(<MessageStamp ts={new Date().toISOString()} />);
+    expect(html).not.toContain("opacity-0");
+    expect(html).not.toContain("group-hover");
+  });
+
   it("puts the copy button before the time", () => {
-    const html = renderToStaticMarkup(<HoverStamp ts={new Date().toISOString()} copyText="hi" />);
+    const html = renderToStaticMarkup(<MessageStamp ts={new Date().toISOString()} copyText="hi" />);
     expect(html).toContain('aria-label="Copy message"');
     expect(html.indexOf("Copy message")).toBeLessThan(html.search(/\d{1,2}:\d{2}/));
   });
 
   it("renders the copy button without a stamp", () => {
-    expect(renderToStaticMarkup(<HoverStamp copyText="hi" />)).toContain("Copy message");
+    expect(renderToStaticMarkup(<MessageStamp copyText="hi" />)).toContain("Copy message");
   });
 });
 

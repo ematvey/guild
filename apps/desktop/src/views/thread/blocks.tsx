@@ -136,8 +136,8 @@ export function prettyStamp(iso: string): string {
   return text;
 }
 
-/// The message footer reserves space for the timestamp on hover.
-export function HoverStamp({ ts, copyText }: { ts?: string; copyText?: string }) {
+/// The message footer: an always-visible timestamp and copy button.
+export function MessageStamp({ ts, copyText }: { ts?: string; copyText?: string }) {
   const text = ts ? prettyStamp(ts) : "";
   const canCopy = copyText !== undefined && copyText !== "";
   const [copied, setCopied] = useState(false);
@@ -164,11 +164,7 @@ export function HoverStamp({ ts, copyText }: { ts?: string; copyText?: string })
           {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
         </button>
       )}
-      {text && (
-        <span className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-          {text}
-        </span>
-      )}
+      {text && <span>{text}</span>}
     </div>
   );
 }
