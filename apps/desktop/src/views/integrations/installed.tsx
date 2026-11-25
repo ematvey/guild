@@ -7,6 +7,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ArrowUpCircle, CircleAlert, ExternalLink, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,6 +20,7 @@ import {
 } from "@guild/ui/components/alert-dialog";
 import { useCachedGet } from "../settings/use-cached-api";
 import {
+  createIntegration,
   deleteIntegration,
   installCatalogPlugin,
   setTraitBinding,
@@ -28,7 +30,14 @@ import {
 import type { ShopItem, TraitRow, UsageSummaryRow } from "./integrations-api";
 import type { InstalledTab } from "./integrations-route";
 import { ExternalLinkText, Logo, SOURCE_LABELS, categoryLabel, linkHost, traitLabel } from "./brand";
-import { installedStatus, statusLine, type AvailableUpdate, type InstalledStatus } from "./model";
+import {
+  displayName,
+  INSTANCE_SLUG,
+  installedStatus,
+  statusLine,
+  type AvailableUpdate,
+  type InstalledStatus,
+} from "./model";
 import { ConfigurationTab } from "./configuration";
 import { ToolsTab } from "./tools";
 import { AccessTab } from "./access";
@@ -55,7 +64,7 @@ function EnableSwitch({ item, onChanged }: { item: ShopItem; onChanged: () => vo
     setBusy(true);
     try {
       await updateIntegration(item.id!, { enabled: !item.enabled });
-      toast.success(item.enabled ? "Turned off" : "Turned on", { description: item.title });
+      toast.success(item.enabled ? "Turned off" : "Turned on", { description: displayName(item) });
       onChanged();
     } catch (e) {
       toast.error(item.enabled ? "Could not turn it off" : "Could not turn it on", { description: message(e) });
@@ -68,7 +77,7 @@ function EnableSwitch({ item, onChanged }: { item: ShopItem; onChanged: () => vo
       type="button"
       role="switch"
       aria-checked={item.enabled}
-      aria-label={item.enabled ? `Turn ${item.title} off` : `Turn ${item.title} on`}
+      aria-label={item.enabled ? `Turn ${displayName(item)} off` : `Turn ${displayName(item)} on`}
       disabled={busy}
       onClick={toggle}
       className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
@@ -140,6 +149,9 @@ function DetailsList({ item, update }: { item: ShopItem; update: AvailableUpdate
           {update && <span className="ml-2 text-xs text-muted-foreground">{update.latest} available</span>}
         </Detail>
       )}
+      <Detail label="Slug">
+        <span className="font-mono text-xs">{item.name}</span>
+      </Detail>
       <Detail label="Publisher">{item.publisher || "—"}</Detail>
       {item.categories.length > 0 && <Detail label="Category">{item.categories.map(categoryLabel).join(", ")}</Detail>}
       {item.docs_url && (
@@ -294,19 +306,42 @@ function About({
   update,
   onChanged,
   onRemoved,
+  onCreated,
 }: {
   item: ShopItem;
   update: AvailableUpdate | undefined;
   onChanged: () => void;
   onRemoved: () => void;
+  /** Opens a freshly created instance of the same kind. */
+  onCreated: (name: string) => void;
 }) {
   const [confirm, setConfirm] = useState(false);
-  const [busy, setBusy] = useState<"remove" | "update" | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ name: "", label: "" });
+  const [busy, setBusy] = useState<"remove" | "update" | "add" | null>(null);
+  const addInstance = async () => {
+    setBusy("add");
+    try {
+      const created = await createIntegration<{ name: string }>({
+        kind: item.kind,
+        name: draft.name.trim(),
+        label: draft.label.trim(),
+      });
+      toast.success("Instance added", { description: draft.label.trim() || created.name });
+      setAdding(false);
+      setDraft({ name: "", label: "" });
+      onCreated(created.name);
+    } catch (e) {
+      toast.error("Could not add the instance", { description: message(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
   const remove = async () => {
     setBusy("remove");
     try {
       await deleteIntegration(item.id!);
-      toast.success("Removed", { description: item.title });
+      toast.success("Removed", { description: displayName(item) });
       onRemoved();
     } catch (e) {
       toast.error("Could not remove it", { description: message(e) });
@@ -317,8 +352,8 @@ function About({
     if (!update) return;
     setBusy("update");
     try {
-      await installCatalogPlugin(update.catalogId, item.name, update.latest);
-      toast.success(`Updated to ${update.latest}`, { description: item.title });
+      await installCatalogPlugin(update.catalogId, item.kind, update.latest);
+      toast.success(`Updated to ${update.latest}`, { description: displayName(item) });
       onChanged();
     } catch (e) {
       toast.error("Could not update", { description: message(e) });
@@ -354,20 +389,29 @@ function About({
         )}
         <DetailsList item={item} update={update} />
         <section>
+          <h3 className="text-sm font-medium">Another instance</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Adds a second configuration of {item.title} with its own name, credentials and tools.
+          </p>
+          <Button variant="outline" className="mt-3" onClick={() => setAdding(true)}>
+            Add another instance
+          </Button>
+        </section>
+        <section>
           <h3 className="text-sm font-medium">Remove</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             Deletes its configuration and stored credentials. Its tools leave every chat. You can install it again
             later.
           </p>
           <Button variant="outline" className="mt-3 text-destructive" onClick={() => setConfirm(true)}>
-            <Trash2 className="size-4" /> Remove {item.title}
+            <Trash2 className="size-4" /> Remove {displayName(item)}
           </Button>
         </section>
       </aside>
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {item.title}?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {displayName(item)}?</AlertDialogTitle>
             <AlertDialogDescription>
               Its configuration and stored credentials are deleted and its tools leave every chat. This cannot be
               undone.
@@ -385,6 +429,53 @@ function About({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={adding} onOpenChange={setAdding}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add another {item.title}</AlertDialogTitle>
+            <AlertDialogDescription>
+              A new instance of the same integration. It gets its own slug, credentials, tools and audience; chats see
+              its tools under the new name.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Name</span>
+              <Input
+                className="mt-1.5"
+                value={draft.label}
+                placeholder={`${item.title} EU`}
+                onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Slug</span>
+              <Input
+                className="mt-1.5 font-mono text-xs"
+                value={draft.name}
+                maxLength={48}
+                placeholder={`${item.kind}_eu`}
+                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+              />
+              <span className="mt-1 block text-xs text-muted-foreground">
+                Lowercase letters, digits, dashes and underscores. Tool names start with it.
+              </span>
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy !== null || !INSTANCE_SLUG.test(draft.name.trim())}
+              onClick={(e) => {
+                e.preventDefault();
+                void addInstance();
+              }}
+            >
+              {busy === "add" ? "Adding…" : "Add instance"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -397,6 +488,8 @@ export function InstalledDetail({
   onTab,
   onChanged,
   onRemoved,
+  onCreated,
+  onRenamed,
   onOpenAgent,
 }: {
   item: ShopItem;
@@ -408,15 +501,23 @@ export function InstalledDetail({
   onOpenAgent: (agentId: string) => void;
   onChanged: () => void;
   onRemoved: () => void;
+  /** Opens a newly created instance of the same kind. */
+  onCreated: (name: string) => void;
+  /** Replaces this page with the instance's new address after a rename. */
+  onRenamed: (name: string) => void;
 }) {
   const status = installedStatus(item, usage);
   const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
   return (
     <div>
       <header className="flex flex-wrap items-start gap-5">
-        <Logo svg={item.logo} title={item.title} size="size-12" />
+        <Logo svg={item.logo} title={displayName(item)} size="size-12" />
         <div className="min-w-0 flex-1">
-          <p className="max-w-prose text-sm text-muted-foreground">{item.summary}</p>
+          <h1 className="text-lg font-semibold">{displayName(item)}</h1>
+          {item.label !== "" && item.label !== item.title && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{item.title}</p>
+          )}
+          <p className="mt-2 max-w-prose text-sm text-muted-foreground">{item.summary}</p>
           <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
             <StatusDot status={status} />
             {statusLine(status)}
@@ -435,7 +536,7 @@ export function InstalledDetail({
       </header>
       <div
         role="tablist"
-        aria-label={`${item.title} sections`}
+        aria-label={`${displayName(item)} sections`}
         className="mt-8 flex gap-1 overflow-x-auto border-b border-border"
       >
         {TABS.map(([id, label]) => (
@@ -457,12 +558,20 @@ export function InstalledDetail({
       <div className="pt-8">
         {tab === "overview" && <Overview item={item} status={status} update={update} onTab={onTab} />}
         {tab === "configuration" && (
-          <ConfigurationTab key={JSON.stringify([item.id, item.config])} item={item} onSaved={onChanged} />
+          <ConfigurationTab
+            key={JSON.stringify([item.id, item.config])}
+            item={item}
+            onSaved={(name) => (name !== item.name ? onRenamed(name) : onChanged())}
+          />
         )}
-        {tab === "access" && <AccessTab id={item.id!} slug={item.name} title={item.title} onOpenAgent={onOpenAgent} />}
+        {tab === "access" && (
+          <AccessTab id={item.id!} slug={item.name} title={displayName(item)} onOpenAgent={onOpenAgent} />
+        )}
         {tab === "tools" && <ToolsTab id={item.id!} isMcp={isMcp} />}
         {tab === "usage" && <UsageTab id={item.id!} />}
-        {tab === "about" && <About item={item} update={update} onChanged={onChanged} onRemoved={onRemoved} />}
+        {tab === "about" && (
+          <About item={item} update={update} onChanged={onChanged} onRemoved={onRemoved} onCreated={onCreated} />
+        )}
       </div>
     </div>
   );

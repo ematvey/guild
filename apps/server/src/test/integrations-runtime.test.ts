@@ -578,6 +578,44 @@ function jwtPayload(assertion: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<string, unknown>;
 }
 
+// ---------- one kind, several instances ----------
+
+describe("an instance of a connector kind", () => {
+  it("resolves the connector by kind, not by the instance slug", async () => {
+    // A second instance of a built-in connector carries a slug of its own;
+    // the connector is the kind's. Before the split, the call resolved the
+    // connector by the slug and failed with `unknown integration`.
+    const source = {
+      ...NO_REGISTRY,
+      integrationSecrets: {
+        names: async () => [] as string[],
+        resolve: async (_org: string, _slug: string, names: string[]) =>
+          names.map((n) => [n, ""] as [string, string]),
+      },
+      masterKey: () => Buffer.alloc(32, 7),
+    };
+    const turn: IntegrationTurn = {
+      executor: "connector",
+      slug: "google-workspace-eu",
+      kind: "google_workspace",
+      description: "d",
+      guide: null,
+      tools: [],
+      rowConfig: googleConfig(),
+      secretNames: [],
+      identityKey: "google_workspace",
+    };
+    await expect(
+      callPlugin(source, turn, "gmail_search", { query: "x" }, {
+        orgId: "org-test",
+        callerId: "caller-test",
+        callId: "call-test",
+        actingAs: null,
+      }),
+    ).rejects.toThrow("no member identity");
+  });
+});
+
 // ---------- google_workspace execute ----------
 
 describe("google_workspace execute (mock backend)", () => {
@@ -1672,6 +1710,7 @@ describe("MCP tools/call (stub peer)", () => {
     const turn: IntegrationTurn = {
       executor: "mcp",
       slug: "test-mcp",
+      kind: "test-mcp",
       description: "test",
       guide: null,
       tools: [{ spec, class: "read", raw: "echo" }],

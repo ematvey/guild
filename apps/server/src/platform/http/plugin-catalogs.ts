@@ -108,11 +108,12 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
         }
         const plugins = await Promise.all(
           index.plugins.map(async (p) => {
-            // Installed means the org has the integration row; an approved
-            // bundle left behind by a removed integration installs again.
+            // Installed means the org has an instance of the kind; an
+            // approved bundle left behind by a removed integration installs
+            // again. The catalog slug is the kind, never an instance slug.
             const [approved, row] = await Promise.all([
               gateway.registry.approvedBundle(admin.org_id, "integration", p.slug),
-              gateway.integrations.getByName(admin.org_id, p.slug),
+              gateway.integrations.firstOfKind(admin.org_id, p.slug),
             ]);
             const latest = p.versions[0]!;
             const installed = row === null ? null : (approved?.[0] ?? null);
@@ -218,7 +219,7 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
       const preview = await previewCatalogBundle(catalogDeps, admin.org_id, catalog, version, bundleSha256);
       const [approved, row] = await Promise.all([
         gateway.registry.approvedBundle(admin.org_id, "integration", slug),
-        gateway.integrations.getByName(admin.org_id, slug),
+        gateway.integrations.firstOfKind(admin.org_id, slug),
       ]);
       body = {
         catalog: { id: catalog.id, name: index.name || catalog.name, label: describeSource(catalog.source) },
@@ -277,11 +278,17 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
       gateway.integrations.list(admin.org_id),
       readTraitBindings(identity.orgKv, admin.org_id),
     ]);
-    const enabled = new Set(rows.filter((r) => r.enabled).map((r) => r.name));
+    // A provider is an instance: a Trait binding names the slug the Turn
+    // resolves under. A kind the org has not configured keeps one disabled
+    // entry under its own name, so the admin can see what could answer.
     const traits = traitNames().map((name) => {
-      const providers = connectors
-        .filter((c) => c.traits[name] !== undefined)
-        .map((c) => ({ slug: c.name, title: c.title, enabled: enabled.has(c.name) }));
+      const providers: { slug: string; title: string; enabled: boolean }[] = [];
+      for (const c of connectors) {
+        if (c.traits[name] === undefined) continue;
+        const instances = rows.filter((r) => r.kind === c.name);
+        if (instances.length === 0) providers.push({ slug: c.name, title: c.title, enabled: false });
+        else for (const r of instances) providers.push({ slug: r.name, title: r.label || c.title, enabled: r.enabled });
+      }
       const firstEnabled = providers.find((p) => p.enabled)?.slug ?? null;
       const bound = bindings[name] ?? null;
       const active = bound !== null && providers.some((p) => p.slug === bound && p.enabled) ? bound : firstEnabled;
@@ -298,10 +305,17 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
     const body = requireJsonBody(req);
     const provider = typeof body["provider"] === "string" && body["provider"] !== "" ? body["provider"] : null;
     if (provider !== null) {
-      const connectors = await orgConnectors(gateway, admin.org_id);
-      if (!connectors.some((c) => c.name === provider && c.traits[trait] !== undefined)) {
-        throw ApiError.badRequest(`${provider} does not provide ${trait}`);
-      }
+      const [connectors, rows] = await Promise.all([
+        orgConnectors(gateway, admin.org_id),
+        gateway.integrations.list(admin.org_id),
+      ]);
+      const declares =
+        rows.some(
+          (r) => r.name === provider && connectors.some((c) => c.name === r.kind && c.traits[trait] !== undefined),
+        ) ||
+        (connectors.some((c) => c.name === provider && c.traits[trait] !== undefined) &&
+          !rows.some((r) => r.kind === provider));
+      if (!declares) throw ApiError.badRequest(`${provider} does not provide ${trait}`);
     }
     const bindings = await writeTraitBinding(identity.orgKv, admin.org_id, trait, provider);
     sendJson(reply, { bindings });

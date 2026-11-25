@@ -5,10 +5,11 @@
 
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
+import { RESERVED_INTEGRATION_SLUGS } from "../platform/registry-manifest.js";
 import { toolClassOf } from "../platform/domain/tool-class.js";
-import type { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
+import type { IntegrationInstance, IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import { BUILTIN_MCP, builtinByName, builtinMcpByName } from "./loader.js";
+import { BUILTIN_MCP, builtinByName, builtinMcpByName, isBuiltinSlug } from "./loader.js";
 import { connectorFor, orgConnectors } from "./connectors.js";
 import { isCodeManifest } from "./code-plugins.js";
 import type { ObjectStore } from "../platform/s3.js";
@@ -62,12 +63,12 @@ async function saveManifest(
   }
 }
 
-/** One shop entry: the plugin's storefront metadata plus its install state
- *  for this org. The list is one array — the shop shows every integration,
- *  installed or not. */
+/** One shop entry: the plugin's storefront metadata plus one instance's
+ *  install state. A kind with no instance is one entry with
+ *  `configured: false` — the card that starts the first instance. */
 function shopEntry(
   base: {
-    name: string;
+    kind: string;
     title: string;
     version: string;
     publisher: string;
@@ -87,11 +88,13 @@ function shopEntry(
     /** The tools the manifest declares (an MCP server's are served live). */
     tools: { name: string; class: string; description: string }[];
   },
-  row: { id: string; org_id: string; config: unknown; enabled: boolean } | null,
+  row: { id: string; org_id: string; name: string; label: string; config: unknown; enabled: boolean } | null,
   storedSecrets: string[],
 ): Record<string, unknown> {
   return {
     ...base,
+    name: row?.name ?? base.kind,
+    label: row?.label ?? "",
     missing: row === null ? [] : missingRequired(base.settings, row.config, storedSecrets),
     configured: row !== null,
     id: row?.id ?? null,
@@ -99,6 +102,22 @@ function shopEntry(
     config: row?.config ?? {},
     enabled: row?.enabled ?? false,
   };
+}
+
+/** One entry per instance of a kind, or the single not-yet-configured
+ *  entry when the org runs none. */
+async function shopEntriesForKind(
+  gateway: IntegrationAdminDeps,
+  orgId: string,
+  base: Parameters<typeof shopEntry>[0],
+  rows: { id: string; org_id: string; name: string; label: string; config: unknown; enabled: boolean }[],
+): Promise<Record<string, unknown>[]> {
+  if (rows.length === 0) return [shopEntry(base, null, [])];
+  const out: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    out.push(shopEntry(base, row, await gateway.integrationSecrets.names(orgId, row.name)));
+  }
+  return out;
 }
 
 /** The storefront files of an MCP item's approved bundle (logo.svg,
@@ -165,18 +184,24 @@ export async function integrationShop(
   orgId: string,
 ): Promise<Record<string, unknown>[]> {
   const rows = await gateway.integrations.list(orgId);
+  const rowsByKind = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = rowsByKind.get(r.kind) ?? [];
+    list.push(r);
+    rowsByKind.set(r.kind, list);
+  }
   const items: Record<string, unknown>[] = [];
-  const rowByName = new Map(rows.map((r) => [r.name, r]));
   for (const connector of await orgConnectors(gateway, orgId)) {
-    const row = rowByName.get(connector.name) ?? null;
-    // A registry bundle of the same slug shadows the compiled-in kind.
-    const manifest = row === null ? null : await latestIntegrationManifest(gateway, orgId, connector.name);
+    // A registry MCP bundle of the same kind shadows the compiled-in one.
+    const manifest = await latestIntegrationManifest(gateway, orgId, connector.name);
     const mcpClaimed = manifest !== null && manifest["mcp"] !== null && manifest["mcp"] !== undefined;
     if (mcpClaimed) continue;
     items.push(
-      shopEntry(
+      ...(await shopEntriesForKind(
+        gateway,
+        orgId,
         {
-          name: connector.name,
+          kind: connector.name,
           title: connector.title,
           version: connector.version,
           publisher: connector.publisher,
@@ -192,19 +217,19 @@ export async function integrationShop(
           readme: connector.readme,
           tools: connector.tools.map((t) => ({ name: t.name, class: t.class, description: t.description })),
         },
-        row,
-        row === null ? [] : await gateway.integrationSecrets.names(orgId, connector.name),
-      ),
+        rowsByKind.get(connector.name) ?? [],
+      )),
     );
   }
   for (const builtin of BUILTIN_MCP) {
     const m = builtin.manifest;
     const auth = m["auth"] as { secret_names: string[] };
-    const row = rowByName.get(builtin.name) ?? null;
     items.push(
-      shopEntry(
+      ...(await shopEntriesForKind(
+        gateway,
+        orgId,
         {
-          name: builtin.name,
+          kind: builtin.name,
           title: m["title"] as string,
           version: m["version"] as string,
           publisher: m["publisher"] as string,
@@ -220,9 +245,8 @@ export async function integrationShop(
           readme: builtin.readme,
           tools: [],
         },
-        row,
-        row === null ? [] : await gateway.integrationSecrets.names(orgId, builtin.name),
-      ),
+        rowsByKind.get(builtin.name) ?? [],
+      )),
     );
   }
   for (const item of await gateway.registry.listItems(orgId, "integration")) {
@@ -236,9 +260,11 @@ export async function integrationShop(
       ? (manifest["categories"] as unknown[]).filter((c): c is string => typeof c === "string" && c !== "mcp")
       : [];
     items.push(
-      shopEntry(
+      ...(await shopEntriesForKind(
+        gateway,
+        orgId,
         {
-          name: item.slug,
+          kind: item.slug,
           title: typeof manifest["title"] === "string" ? (manifest["title"] as string) : item.slug,
           version: typeof manifest["version"] === "string" ? (manifest["version"] as string) : "",
           publisher: typeof manifest["publisher"] === "string" ? (manifest["publisher"] as string) : "Registry",
@@ -250,7 +276,8 @@ export async function integrationShop(
                 : "",
           description: typeof manifest["description"] === "string" ? (manifest["description"] as string) : "",
           docs_url: typeof manifest["docs_url"] === "string" ? (manifest["docs_url"] as string) : null,
-          logo: typeof manifest["logo"] === "string" && manifest["logo"] !== "" ? (manifest["logo"] as string) : files.logo,
+          logo:
+            typeof manifest["logo"] === "string" && manifest["logo"] !== "" ? (manifest["logo"] as string) : files.logo,
           categories: ["mcp", ...declared],
           traits: {},
           secret_names: secretNames,
@@ -262,32 +289,81 @@ export async function integrationShop(
               : files.readme,
           tools: [],
         },
-        rowByName.get(item.slug) ?? null,
-        rowByName.has(item.slug) ? await gateway.integrationSecrets.names(orgId, item.slug) : [],
-      ),
+        rowsByKind.get(item.slug) ?? [],
+      )),
     );
   }
   return items;
 }
 
-/** Creates a configuration row for a not-yet-configured connector: a
- *  compiled-in kind or an installed registry v2 MCP plugin. */
+/** An instance slug: the row key, the secret key and the tool namespace. */
+export const INSTANCE_SLUG = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+
+/** The one rule for an instance slug, shared by every create and rename
+ *  path. The shape keeps it addressable; the page segments `catalog`,
+ *  `connect` and `sources` are routes of the Integrations view, so an
+ *  instance may not take them; and a slug equal to a built-in kind would
+ *  block that kind from ever being configured under its own name. */
+export function assertInstanceSlug(name: string, kind: string): void {
+  if (!INSTANCE_SLUG.test(name)) {
+    throw ApiError.badRequest("slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
+  }
+  if (RESERVED_INTEGRATION_SLUGS.includes(name)) {
+    throw ApiError.conflict("slug_taken", `${name} is reserved; pick another slug`);
+  }
+  if (name !== kind && isBuiltinSlug(name)) {
+    throw ApiError.conflict("slug_taken", `${name} is the name of a built-in integration`);
+  }
+}
+
+function bodyString(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Creates one instance of a kind: a compiled-in connector, an installed
+ *  code plugin, or a registry MCP server. `kind` names the catalog item;
+ *  `name` is the instance slug (default: the kind) and `label` its display
+ *  name. */
 export async function createIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
-  name: string,
   body: Record<string, unknown>,
-): Promise<void> {
-  const rows = await gateway.integrations.list(orgId);
-  if (rows.some((r) => r.name === name)) {
+): Promise<IntegrationInstance> {
+  const kind = bodyString(body, "kind") || bodyString(body, "name");
+  const name = bodyString(body, "name") || kind;
+  const label = bodyString(body, "label");
+  if (!INSTANCE_SLUG.test(kind)) throw ApiError.badRequest("kind is required and must be an integration slug");
+  assertInstanceSlug(name, kind);
+  // Known kinds only: a compiled-in connector, or an installed registry
+  // bundle (a code plugin or one whose manifest declares an MCP server).
+  const manifest = await latestIntegrationManifest(gateway, orgId, kind);
+  const known = builtinByName(kind) !== undefined || manifest?.["mcp"] != null || isCodeManifest(manifest);
+  if (!known) throw ApiError.notFound(`unknown integration ${kind}`);
+  if ((await gateway.integrations.getByName(orgId, name)) !== null) {
     throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
   }
-  // Known connectors only: a compiled-in kind, or an installed registry v2
-  // bundle whose manifest declares an MCP server.
-  const manifest = await latestIntegrationManifest(gateway, orgId, name);
-  const known = builtinByName(name) !== undefined || manifest?.["mcp"] != null || isCodeManifest(manifest);
-  if (!known) throw ApiError.notFound(`unknown integration ${name}`);
-  await saveIntegration(gateway, orgId, name, null, body);
+  const instance = { name, kind, label };
+  await saveIntegration(gateway, orgId, instance, null, body);
+  return instance;
+}
+
+/** Renames one instance: its slug, its display name, or both. */
+export async function renameIntegration(
+  gateway: IntegrationAdminDeps,
+  orgId: string,
+  id: string,
+  body: Record<string, unknown>,
+): Promise<{ name: string; label: string }> {
+  const existing = await gateway.integrations.get(orgId, id);
+  if (existing === null) throw ApiError.notFound("unknown integration");
+  const submitted = body["name"] === undefined ? null : bodyString(body, "name");
+  if (submitted === "") throw ApiError.badRequest("slug must not be empty");
+  const name = submitted ?? existing.name;
+  const label = body["label"] === undefined ? existing.label : bodyString(body, "label");
+  if (name !== existing.name) assertInstanceSlug(name, existing.kind);
+  const stored = await gateway.integrations.rename(orgId, id, name, label);
+  return { name: stored.name, label: stored.label };
 }
 
 /** The full, unfiltered tool list of one integration row with each tool's
@@ -306,9 +382,9 @@ export async function integrationTools(
   const rowConfig = (integrationRow.config ?? {}) as Record<string, unknown>;
   const mcpUrl = readMcpUrl(rowConfig);
   if (mcpUrl === null) {
-    const connector = await connectorOrError(gateway, orgId, integrationRow.name);
+    const connector = await connectorOrError(gateway, orgId, integrationRow.kind);
     if (connector === undefined) {
-      throw ApiError.notFound(`unknown integration kind ${integrationRow.name}`);
+      throw ApiError.notFound(`unknown integration kind ${integrationRow.kind}`);
     }
     let specs;
     try {
@@ -317,13 +393,7 @@ export async function integrationTools(
       throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
     }
     const tools = specs.map((spec) =>
-      curatedToolJson(
-        spec.name,
-        integrationRow.name,
-        toolClassOf(connector, spec.name),
-        spec.description,
-        rowConfig,
-      ),
+      curatedToolJson(spec.name, integrationRow.name, toolClassOf(connector, spec.name), spec.description, rowConfig),
     );
     return { resolved: true, kind: "connector", tools };
   }
@@ -336,7 +406,7 @@ export async function integrationTools(
   }
   let manifest: Record<string, unknown>;
   try {
-    manifest = await requireApprovedManifest(gateway, orgId, integrationRow.name);
+    manifest = await requireApprovedManifest(gateway, orgId, integrationRow.kind);
   } catch (error) {
     throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
   }
@@ -361,13 +431,7 @@ export async function integrationTools(
     throw ApiError.badRequest(`MCP tools/list failed: ${(error as Error).message}`);
   }
   const tools = listed.map((t) =>
-    curatedToolJson(
-      t.name,
-      integrationRow.name,
-      mcpToolClass(rowConfig, manifest, t),
-      t.description,
-      rowConfig,
-    ),
+    curatedToolJson(t.name, integrationRow.name, mcpToolClass(rowConfig, manifest, t), t.description, rowConfig),
   );
   return { resolved: true, kind: "mcp", tools };
 }
@@ -446,13 +510,13 @@ async function mcpTestConnection(
 export async function saveIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
-  name: string,
+  instance: IntegrationInstance,
   existing: { config: unknown; enabled: boolean } | null,
   body: Record<string, unknown>,
 ): Promise<void> {
   const master = gateway.masterKey();
   const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
-  // A create-stub (POST with just a name) registers the row disabled and
+  // A create-stub (POST with just a kind) registers the row disabled and
   // empty: the completeness check and connection test apply to every real
   // save of settings or credentials.
   const isStubCreate =
@@ -461,7 +525,7 @@ export async function saveIntegration(
     // An MCP plugin from the registry seeds its stub with the manifest's
     // mcp/auth blocks (as registry install does): the settings editor can
     // then complete and enable it — an empty stub can never enable.
-    const manifest = await saveManifest(gateway, orgId, name);
+    const manifest = await saveManifest(gateway, orgId, instance.kind);
     const config: Record<string, unknown> =
       manifest !== null && manifest["mcp"] != null
         ? {
@@ -469,10 +533,10 @@ export async function saveIntegration(
             auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" },
           }
         : {};
-    await gateway.integrations.upsert(orgId, name, config, false);
+    await gateway.integrations.upsertInstance(orgId, instance, config, false);
     return;
   }
-  const registryManifestValue = await saveManifest(gateway, orgId, name);
+  const registryManifestValue = await saveManifest(gateway, orgId, instance.kind);
   const v2Claimed =
     (registryManifestValue !== null && registryManifestValue["mcp"] != null) || readMcpUrl(existingConfig) !== null;
   // Newly entered credential values: only non-empty strings are writes; an
@@ -509,8 +573,8 @@ export async function saveIntegration(
     if (declared.length > 0 || submitted.length > 0) {
       let secrets = await gateway.integrationSecrets.resolve(
         orgId,
-        name,
-        await gateway.integrationSecrets.names(orgId, name),
+        instance.name,
+        await gateway.integrationSecrets.names(orgId, instance.name),
         master,
       );
       for (const [k, v] of submitted) {
@@ -528,7 +592,7 @@ export async function saveIntegration(
     await gateway.integrations.saveWithSecrets(
       gateway.integrationSecrets,
       orgId,
-      name,
+      instance,
       config,
       enabled,
       submitted,
@@ -536,8 +600,8 @@ export async function saveIntegration(
     );
     return;
   }
-  const connector = await connectorOrError(gateway, orgId, name);
-  if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
+  const connector = await connectorOrError(gateway, orgId, instance.kind);
+  if (connector === undefined) throw ApiError.notFound(`unknown integration ${instance.kind}`);
   const config = body["config"] !== undefined ? body["config"] : (existing?.config ?? {});
   // Per-tool curation is admin state with a single writer — the PUT tools
   // endpoint. A settings save never changes it: the client-sent tools map (a
@@ -583,8 +647,8 @@ export async function saveIntegration(
   const declared = schemaFields.filter((f) => f.kind === "secret").map((f) => f.name);
   let secrets = await gateway.integrationSecrets.resolve(
     orgId,
-    name,
-    await gateway.integrationSecrets.names(orgId, name),
+    instance.name,
+    await gateway.integrationSecrets.names(orgId, instance.name),
     master,
   );
   for (const [k, v] of submitted) {
@@ -605,7 +669,7 @@ export async function saveIntegration(
   await gateway.integrations.saveWithSecrets(
     gateway.integrationSecrets,
     orgId,
-    name,
+    instance,
     config,
     enabled,
     submitted,
@@ -640,7 +704,7 @@ export interface IntegrationTestDraft {
 export async function testIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
-  name: string,
+  instance: { name: string; kind: string },
   existing: { config: unknown },
   draft: IntegrationTestDraft = {},
 ): Promise<number> {
@@ -648,8 +712,8 @@ export async function testIntegration(
   const stored = (existing.config ?? {}) as Record<string, unknown>;
   let secrets = await gateway.integrationSecrets.resolve(
     orgId,
-    name,
-    await gateway.integrationSecrets.names(orgId, name),
+    instance.name,
+    await gateway.integrationSecrets.names(orgId, instance.name),
     gateway.masterKey(),
   );
   for (const [k, v] of Object.entries(draft.secrets ?? {})) {
@@ -657,7 +721,7 @@ export async function testIntegration(
     secrets = secrets.filter(([n]) => n !== k);
     secrets.push([k, v]);
   }
-  const manifest = await saveManifest(gateway, orgId, name);
+  const manifest = await saveManifest(gateway, orgId, instance.kind);
   const isMcp = (manifest !== null && manifest["mcp"] != null) || readMcpUrl(stored) !== null;
   if (isMcp) {
     const config: Record<string, unknown> = { ...stored };
@@ -667,14 +731,17 @@ export async function testIntegration(
     if (mcpUrl === null) throw ApiError.badRequest("no MCP server URL is configured");
     const missing = requiredSecretNames(manifest ?? {}).filter((n) => !secrets.some(([s]) => s === n));
     if (missing.length > 0) {
-      throw ApiError.conflict("missing_secrets", `missing secrets: ${secretLabels(manifest ?? {}, missing).join(", ")}`);
+      throw ApiError.conflict(
+        "missing_secrets",
+        `missing secrets: ${secretLabels(manifest ?? {}, missing).join(", ")}`,
+      );
     }
     await mcpTestConnection(config, mcpUrl, secrets, orgId);
     return Date.now() - started;
   }
   const config = draft.config ?? stored;
-  const connector = await connectorOrError(gateway, orgId, name);
-  if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
+  const connector = await connectorOrError(gateway, orgId, instance.kind);
+  if (connector === undefined) throw ApiError.notFound(`unknown integration ${instance.kind}`);
   const missing = connector.fields
     .filter((f) => f.kind === "secret" && f.required && !secrets.some(([n]) => n === f.name))
     .map((f) => f.label ?? f.name);

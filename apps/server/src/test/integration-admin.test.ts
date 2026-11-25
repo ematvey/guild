@@ -270,7 +270,7 @@ async function seedIntegration(
   secrets: Record<string, string> = {},
 ): Promise<string> {
   const res = await e.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, $2, $3, $4, 'org') " +
+    "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, $2, $2, $3, $4, 'org') " +
       "ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config, enabled = EXCLUDED.enabled " +
       "RETURNING id",
     [e.orgId, name, JSON.stringify(config ?? {}), enabled],
@@ -736,7 +736,7 @@ describe("admin integration save path", () => {
       },
     );
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true, name: "gitlab" });
     expect(connectorHits.some((h) => h.startsWith("/api/v4/user"))).toBe(true);
     const row = (
       await e.env.db.query(
@@ -1388,6 +1388,179 @@ describe("org MCP servers added from the admin UI", () => {
       }
     ).tools;
     expect(listedTools.find((t) => t.name === "web_search")!.class).toBe("write");
+  });
+});
+
+describe("several instances of one integration kind", () => {
+  const authUrl = (): string =>
+    `http://127.0.0.1:${(mcpServer.address() as AddressInfo).port}/auth-mcp`;
+  const headers = [{ name: "Authorization", value: "Bearer s3cret" }];
+
+  it("adds a second instance of an approved MCP kind, lists both, and renames one", async () => {
+    const first = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      { slug: "multi-mcp", title: "Multi MCP", url: authUrl(), headers },
+    );
+    expect(first.statusCode).toBe(200);
+
+    const second = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      {
+        slug: "multi-mcp-eu",
+        kind: "multi-mcp",
+        label: "Multi MCP EU",
+        url: authUrl(),
+        headers,
+      },
+    );
+    expect(second.statusCode).toBe(200);
+    const secondId = JSON.parse(second.body).id as string;
+
+    const listed = async (): Promise<
+      { name: string; kind: string; label: string; configured: boolean }[]
+    > =>
+      (
+        JSON.parse(
+          (await call("GET", "/api/v1/admin/integrations", e.adminToken)).body,
+        ) as {
+          items: {
+            name: string;
+            kind: string;
+            label: string;
+            configured: boolean;
+          }[];
+        }
+      ).items;
+    const both = (await listed()).filter((i) => i.kind === "multi-mcp");
+    expect(both.map((i) => i.name).sort()).toEqual([
+      "multi-mcp",
+      "multi-mcp-eu",
+    ]);
+    expect(both.every((i) => i.configured)).toBe(true);
+    expect(both.find((i) => i.name === "multi-mcp-eu")!.label).toBe(
+      "Multi MCP EU",
+    );
+
+    // The slug is the secret key and the tool namespace: renaming moves
+    // both.
+    const renamed = await call(
+      "PUT",
+      `/api/v1/admin/integrations/${secondId}`,
+      e.adminToken,
+      { name: "multi-mcp-us", label: "Multi MCP US" },
+    );
+    expect(renamed.statusCode).toBe(200);
+    const after = (await listed()).find((i) => i.name === "multi-mcp-us")!;
+    expect(after).toMatchObject({ kind: "multi-mcp", label: "Multi MCP US" });
+    expect((await listed()).some((i) => i.name === "multi-mcp-eu")).toBe(false);
+    const secrets = await e.env.db.query(
+      "SELECT integration FROM integration_secrets WHERE org_id = $1 ORDER BY integration",
+      [e.orgId],
+    );
+    const holders = secrets.rows.map((r) => r.integration as string);
+    expect(holders).toContain("multi-mcp-us");
+    expect(holders).not.toContain("multi-mcp-eu");
+  });
+
+  it("leaves an agent's tool allowlist untouched when an instance is renamed", async () => {
+    // An Agent reaches an Integration by row id; its allowlist holds built-in
+    // and Trait tools only, and several of those contain underscores.
+    const agentId = crypto.randomUUID();
+    const owner = await e.env.db.query("SELECT id FROM users WHERE org_id = $1 AND role = 'admin' LIMIT 1", [
+      e.orgId,
+    ]);
+    const tools = ["web_search", "read_file", "multi-mcp_echo"];
+    await e.env.db.query(
+      "INSERT INTO agents (id, org_id, owner_user_id, name, model, tools_mode, tools) " +
+        "VALUES ($1, $2, $3, 'Renamed under', 'trace-model', 'selected', $4::jsonb)",
+      [agentId, e.orgId, owner.rows[0]!.id, JSON.stringify(tools)],
+    );
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp",
+    ]);
+    const renamed = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "multi-mcp-main",
+    });
+    expect(renamed.statusCode).toBe(200);
+    const stored = await e.env.db.query("SELECT tools FROM agents WHERE id = $1", [agentId]);
+    expect(stored.rows[0]!.tools).toEqual(tools);
+  });
+
+  it("refuses a rename onto a slug another instance holds", async () => {
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp-main",
+    ]);
+    const clash = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "multi-mcp-us",
+    });
+    expect(clash.statusCode).toBe(409);
+    expect(JSON.parse(clash.body).error.code).toBe("already_configured");
+  });
+
+  it("refuses a reserved page segment as an instance slug, on create and on rename", async () => {
+    const created = await call("POST", "/api/v1/admin/integrations", e.adminToken, {
+      kind: "multi-mcp",
+      name: "catalog",
+      url: authUrl(),
+      headers,
+    });
+    expect(created.statusCode).toBe(409);
+
+    const row = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = $2", [
+      e.orgId,
+      "multi-mcp-main",
+    ]);
+    const renamed = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "sources",
+    });
+    expect(renamed.statusCode).toBe(409);
+  });
+
+  it("refuses an instance whose headers do not match the kind's credential contract", async () => {
+    const other = await call("POST", "/api/v1/admin/integrations/mcp", e.adminToken, {
+      slug: "multi-mcp-apac",
+      kind: "multi-mcp",
+      url: authUrl(),
+      headers: [{ name: "X-Api-Key", value: "s3cret" }],
+    });
+    expect(other.statusCode).toBe(400);
+    expect(JSON.parse(other.body).error.message).toContain("authorization");
+  });
+
+  it("names each instance's tools after its own slug", async () => {
+    const listed = JSON.parse((await call("GET", "/api/v1/admin/integrations", e.adminToken)).body) as {
+      items: { id: string; name: string }[];
+    };
+    const toolsOf = async (name: string): Promise<string[]> => {
+      const id = listed.items.find((i) => i.name === name)!.id;
+      const body = JSON.parse((await call("GET", `/api/v1/admin/integrations/${id}/tools`, e.adminToken)).body) as {
+        tools: { tool: string }[];
+      };
+      return body.tools.map((t) => t.tool);
+    };
+    expect(await toolsOf("multi-mcp-main")).toContain("multi-mcp-main_echo");
+    expect(await toolsOf("multi-mcp-us")).toContain("multi-mcp-us_echo");
+  });
+
+  it("refuses an instance slug another instance of the kind already holds", async () => {
+    const dup = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      {
+        slug: "multi-mcp-main",
+        kind: "multi-mcp",
+        url: authUrl(),
+        headers,
+      },
+    );
+    expect(dup.statusCode).toBe(409);
   });
 });
 

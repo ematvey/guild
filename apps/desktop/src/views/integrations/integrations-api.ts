@@ -29,7 +29,12 @@ export interface DeclaredTool {
 /** One integration the server can serve: its storefront metadata, plus
  *  this org's row when it is installed. */
 export interface ShopItem {
+  /** The instance slug: the row key, the secret key and the tool prefix. */
   name: string;
+  /** The catalog item this row instantiates. */
+  kind: string;
+  /** The admin's name for this instance; empty means the item's title. */
+  label: string;
   title: string;
   version: string;
   publisher: string;

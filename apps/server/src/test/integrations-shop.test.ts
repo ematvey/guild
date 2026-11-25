@@ -15,10 +15,13 @@ import { posthogExecute } from "../integrations/posthog/execute.js";
 const SECRETS: [string, string][] = [["token", "glsa_test"]];
 
 function gateway(rows: { name: string; config: unknown; enabled: boolean }[], bindings: Record<string, string> = {}) {
+  // A row names an instance of the kind of the same slug unless it says
+  // otherwise: these suites exercise one instance per kind.
+  const instances = rows.map((r) => ({ ...r, kind: r.name, label: "" }));
   return {
     objects: { get: async () => Buffer.alloc(0) },
     orgKv: { get: async (_org: string, key: string) => (key === TRAIT_BINDINGS_KEY ? JSON.stringify(bindings) : null) },
-    integrations: { listEnabled: async () => rows },
+    integrations: { listEnabled: async () => instances },
     integrationSecrets: {
       names: async () => [],
       resolve: async () => SECRETS,

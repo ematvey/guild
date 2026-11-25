@@ -14,6 +14,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { useCachedGet } from "../settings/use-cached-api";
 import { integrationSecretsPath, updateIntegration } from "../../lib/api/settings";
 import { testIntegration, type FieldSpec, type ShopItem, type TestDraft, type TestResult } from "./integrations-api";
+import { INSTANCE_SLUG } from "./model";
 import { Note } from "./prose";
 
 interface SecretEntry {
@@ -209,19 +210,31 @@ export function TestConnectionButton({
   );
 }
 
-export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: () => void }) {
+export function ConfigurationTab({
+  item,
+  onSaved,
+}: {
+  item: ShopItem;
+  /** Called with the stored slug after a save: a rename changes the URL. */
+  onSaved: (name: string) => void;
+}) {
   const id = item.id!;
   const fields = item.settings?.fields ?? [];
   const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
   const [initial] = useState(() => initialDraft(fields, item.config, isMcp));
   const [form, setForm] = useState(initial);
+  const [identity, setIdentity] = useState({ name: item.name, label: item.label });
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(integrationSecretsPath(id));
   const stored = secretsRes.data?.secrets ?? null;
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(initial) || Object.values(secretDraft).some((v) => v !== "");
+  const identityDirty = identity.name !== item.name || identity.label !== item.label;
+  const dirty =
+    JSON.stringify(form) !== JSON.stringify(initial) ||
+    Object.values(secretDraft).some((v) => v !== "") ||
+    identityDirty;
   // A save error names the field that failed; the next keystroke may fix it,
   // so editing clears the message instead of leaving a stale verdict.
   const patchDraft = (name: string, value: unknown) => {
@@ -251,15 +264,24 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
 
   const save = async () => {
     if (busy || !dirty) return;
+    const slug = identity.name.trim();
+    if (identityDirty && !INSTANCE_SLUG.test(slug)) {
+      setError("The slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const config = buildIntegrationConfig(fields, item.config, form, isMcp);
       const secrets = Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== ""));
-      await updateIntegration(id, { config, secrets });
-      toast.success("Changes saved", { description: item.title });
+      const stored = await updateIntegration(id, {
+        config,
+        secrets,
+        ...(identityDirty ? { name: identity.name.trim(), label: identity.label.trim() } : {}),
+      });
+      toast.success("Changes saved", { description: stored.label || item.title });
       setSecretDraft({});
-      onSaved();
+      onSaved(stored.name);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -270,6 +292,39 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
 
   return (
     <div className="pb-28">
+      <Section
+        title="Name"
+        description="What this instance is called in the panel, and the slug its tool names start with."
+      >
+        <FieldRow id="instance-label" label="Name" required={false} hint="Shown in the integrations panel.">
+          <Input
+            id="instance-label"
+            value={identity.label}
+            placeholder={item.title}
+            onChange={(e) => {
+              setError(null);
+              setIdentity((v) => ({ ...v, label: e.target.value }));
+            }}
+          />
+        </FieldRow>
+        <FieldRow
+          id="instance-name"
+          label="Slug"
+          required={false}
+          hint="Lowercase letters, digits, dashes and underscores. Tools are named <slug>_<tool>; renaming moves them."
+        >
+          <Input
+            id="instance-name"
+            className="font-mono text-xs"
+            maxLength={48}
+            value={identity.name}
+            onChange={(e) => {
+              setError(null);
+              setIdentity((v) => ({ ...v, name: e.target.value.trim().toLowerCase() }));
+            }}
+          />
+        </FieldRow>
+      </Section>
       {settingFields.length > 0 && (
         <Section title="Settings">
           {settingFields.map((f) => {
@@ -412,6 +467,7 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
             onClick={() => {
               setForm(initial);
               setSecretDraft({});
+              setIdentity({ name: item.name, label: item.label });
               setError(null);
             }}
           >

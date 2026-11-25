@@ -189,10 +189,11 @@
     },
     {
       "id": "integration",
-      "definition": "A third-party service the org connects, with its encrypted secret and tools.",
+      "definition": "A third-party service the org connects: one instance of a catalog kind, with its own slug, label, encrypted secrets and tools.",
       "canonical": "apps/server/src/platform/store/integrations.ts",
       "types": [
         "IntegrationRow",
+        "IntegrationInstance",
         "SecretRow"
       ],
       "aliases": [

@@ -121,7 +121,7 @@ The later documents explain the terms not introduced above. The **In code** colu
 | Attachment | A file on a message | `attachments` |
 | Child result | A child Thread's Turn end, delivered to its parent | `child_result` event |
 | Model route | One model name mapped to a provider, key, price and quota | `model_routes` |
-| Integration | A third-party service the Org connects | `integrations` |
+| Integration | A third-party service the Org connects: one instance of a kind, with its own credentials, tools and audience | `integrations` |
 | Skill | A published instruction bundle | registry item of kind `skill` |
 | Member socket | A client's one WebSocket to the server | `/api/v1/ws` |
 | Frame | One message on a socket | `ServerFrame` / `WsServerMsg` |

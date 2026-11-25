@@ -151,7 +151,7 @@ beforeAll(async () => {
   const { masterKeyBytes, encryptSecret } = await import("../platform/crypto.js");
   const master = masterKeyBytes(stack.env.config.masterKeyHex);
   await stack.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'atlassian', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+    "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'atlassian', 'atlassian', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
     [orgId, JSON.stringify({ site: vendorBase, email: "bot@example.test" })],
   );
   await stack.env.db.query(
@@ -159,7 +159,7 @@ beforeAll(async () => {
     [orgId, encryptSecret(master, "atlassian-token")],
   );
   await stack.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+    "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'slack', 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
     [
       orgId,
       JSON.stringify({
@@ -176,7 +176,7 @@ beforeAll(async () => {
     [orgId, encryptSecret(master, "xoxb-1")],
   );
   await stack.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'hubspot', $2, true, 'org')",
+    "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'hubspot', 'hubspot', $2, true, 'org')",
     [orgId, JSON.stringify({ base_url: vendorBase })],
   );
   await stack.env.db.query(
