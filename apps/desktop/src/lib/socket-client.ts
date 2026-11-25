@@ -79,6 +79,7 @@ export interface SocketHandlers {
   onActivityConversation?: (message: Extract<ServerFrame, { type: "activity_conversation" }>) => void;
   onActivityRun?: (message: Extract<ServerFrame, { type: "activity_run" | "activity_run_unavailable" }>) => void;
   /** The member's open threads with one agent. */
+  onAgentCoordination?: (message: Extract<ServerFrame, { type: "agent_coordination" }>) => void;
   onAgentThreads?: (agent_id: string, threads: AgentThread[]) => void;
   /** One agent's routines with their newest runs. */
   onAgentRoutines?: (agent_id: string, routines: AgentRoutine[]) => void;
@@ -208,6 +209,9 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
     case "activity_run_unavailable":
       handlers.onActivityRun?.(message);
       return;
+    case "agent_coordination":
+      handlers.onAgentCoordination?.(message);
+      break;
     case "agent_threads":
       handlers.onAgentThreads?.(message.agent_id, message.threads);
       return;

@@ -296,6 +296,10 @@ pub enum WsServerMsg {
         agent_id: Uuid,
         threads: Vec<serde_json::Value>,
     },
+    AgentCoordination {
+        agent_id: Uuid,
+        snapshot: serde_json::Value,
+    },
     /// One agent's routines with their newest runs. Daemons tag-peek and
     /// ignore it.
     AgentRoutines {

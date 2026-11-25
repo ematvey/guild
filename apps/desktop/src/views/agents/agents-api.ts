@@ -10,6 +10,7 @@ import type {
   AgentRunStep,
   ConversationRow as WireConversationRow,
   ConversationSnapshot,
+  CoordinationSnapshot,
 } from "@guild/wire/rest";
 import { request, requestResponse } from "../../lib/api/request";
 
@@ -144,6 +145,22 @@ export async function exportAgent(id: string): Promise<unknown> {
 
 export async function deleteAgent(id: string): Promise<void> {
   await request<void>("DELETE", agentBase(id));
+}
+
+export function readCoordination(agentId: string): Promise<CoordinationSnapshot> {
+  return request("GET", `${agentBase(agentId)}/coordination`);
+}
+
+export async function pauseCoordination(agentId: string, paused: boolean): Promise<void> {
+  await request("PUT", `${agentBase(agentId)}/coordination/pause`, { paused });
+}
+
+export async function reevaluateCoordination(agentId: string, inputId: string): Promise<void> {
+  await request("POST", `${agentBase(agentId)}/coordination/${encodeURIComponent(inputId)}/reevaluate`);
+}
+
+export async function retryCoordination(agentId: string, inputId: string): Promise<void> {
+  await request("POST", `${agentBase(agentId)}/work/${encodeURIComponent(inputId)}/retry`);
 }
 
 export async function listAgentThreads(id: string): Promise<AgentThread[]> {

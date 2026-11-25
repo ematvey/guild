@@ -1,5 +1,9 @@
+import {
+  captureCoordinationSource, coordinationSnapshot, reevaluateSourceCandidate,
+  retryCoordinationWork, setCoordinationPaused,
+} from "../../agents/store/coordination.js";
 import { runStepsWire } from "../../agents/store/runs.js";
-import { ensureCoordinationThread, coordinationSettings } from "../../agents/coordination.js";
+import { ensureCoordinationThread, coordinationAdmission, coordinationSettings } from "../../agents/coordination.js";
 // Agent HTTP surface: CRUD and lifecycle, thread index, read-only files,
 // runs/activity, the inbox and conversation search. Every route resolves the
 // caller through the session and checks agent visibility/role before it
@@ -442,6 +446,72 @@ export function registerAgentRoutes(
     refuseDeletingAgent(agent);
     const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
     return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
+  });
+
+  app.post("/api/v1/agents/:id/sources/:source/events", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    requireActiveAgent(agent);
+    if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is disabled");
+    const source = (req.params as { source: string }).source;
+    const admission = coordinationAdmission(agent);
+    if (!admission.sources.includes(source)) throw ApiError.forbidden("This Agent does not accept events from that source");
+    const body = jsonBody(req);
+    const key = requiredString(body, "event_id");
+    const content = requiredString(body, "content");
+    if (key.length > 256 || content.length > 16000) throw ApiError.badRequest("The source event is too long");
+    const wake = admission.mode !== "off" && admission.rules.length > 0;
+    const inbox = wake ? await ensureCoordinationThread(store, agent, user.id, "inbox") : null;
+    const row = (await captureCoordinationSource<{ id: string; decision: string | null }>(infra.pool, [
+      agentId, user.id, inbox?.id ?? null, content, source, key, JSON.stringify(admission.policy), wake,
+      admission.mode === "off" ? "Inferred admission is off" : "No admission rules are configured",
+    ])).rows[0]!;
+    return sendJson(reply, { input_id: row.id, decision: row.decision });
+  });
+
+  app.get("/api/v1/agents/:id/coordination", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "use");
+    return sendJson(reply, await coordinationSnapshot(infra.pool, agentId, user.id, readsWholeOrg(user)));
+  });
+
+  app.put("/api/v1/agents/:id/coordination/pause", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await store.requireAccess(user, agentId, "manage");
+    const paused = booleanField(jsonBody(req), "paused");
+    if (paused === undefined) throw ApiError.badRequest("paused is required");
+    await setCoordinationPaused(infra.pool, [agentId, paused]);
+    return sendJson(reply, { paused });
+  });
+
+  app.post("/api/v1/agents/:id/coordination/:inputId/reevaluate", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const inputId = parseUuidParam(req, "inputId");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    requireActiveAgent(agent);
+    const admission = coordinationAdmission(agent);
+    if (!coordinationSettings(agent).enabled || admission.mode === "off" || admission.rules.length === 0) {
+      throw ApiError.badRequest("Inferred admission with at least one rule is required");
+    }
+    const inbox = await ensureCoordinationThread(store, agent, user.id, "inbox");
+    const result = await reevaluateSourceCandidate(infra.pool, [inputId, agentId, user.id, JSON.stringify(admission.policy), inbox.id]);
+    if (result.rowCount !== 1) throw ApiError.conflict("event_not_reevaluable", "This event is not available for re-evaluation");
+    return sendJson(reply, { queued: true });
+  });
+
+  app.post("/api/v1/agents/:id/work/:inputId/retry", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const inputId = parseUuidParam(req, "inputId");
+    const { agent } = await store.requireAccess(user, agentId, "use");
+    refuseDeletingAgent(agent);
+    const result = await retryCoordinationWork(infra.pool, [inputId, agentId, user.id]);
+    if (result.rowCount !== 1) throw ApiError.conflict("work_not_retryable", "This work is not available to retry");
+    return sendJson(reply, { queued: true });
   });
 
   /** Agents on the wire, with their Integration warnings. */

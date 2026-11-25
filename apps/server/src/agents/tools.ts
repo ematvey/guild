@@ -4,7 +4,7 @@
 // the thread-history tools' exposure.
 
 import { Type } from "typebox";
-import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
+import { defineTool, LiveDoc, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { IdentityStore } from "../platform/store/identity.js";
@@ -15,6 +15,16 @@ import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
+import { isUuid } from "../platform/time.js";
+import { inputRequestIds } from "../storage/postgres/queries.js";
+import {
+  followCoordinationThread,
+  handBackWorkFollowup,
+  listFollowedCoordinationThreads,
+  readWorkFollowups,
+  recordCoordinationWorkReport,
+  unfollowCoordinationThread,
+} from "./store/coordination.js";
 import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -29,6 +39,7 @@ export interface AgentToolDeps {
   userId: string;
   identity: Pick<IdentityStore, "getUser">;
   coordinatorManaged: boolean;
+  acceptedWork?: boolean;
   /** The chat this turn runs in. A thread the agent opens records it as its
    *  origin, so the agent can read the run behind a delivered message. */
   chatId?: string;
@@ -283,6 +294,108 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
       },
     }),
   ];
+
+  if (deps.acceptedWork && deps.subagents !== undefined) {
+    const worker = deps.subagents;
+    tools.push(
+      defineTool({
+        name: "report_work",
+        description:
+          "Record the state of the accepted work. Use blocked with one question when you need a Member decision, " +
+          "ready when the result is available, and waiting when you are waiting for an input or event.",
+        parameters: Type.Object({
+          state: Type.Union([
+            Type.Literal("progress"), Type.Literal("ready"), Type.Literal("waiting"),
+            Type.Literal("blocked"), Type.Literal("failed"),
+          ]),
+          summary: Type.String({ minLength: 1, maxLength: 2000 }),
+          question: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+        }),
+        replay: "safe",
+        callers: ["tools"],
+        execute: async ({ state, summary, question }) => {
+          const text = summary.trim();
+          if (text === "") return textErr("A report requires a summary");
+          if (question !== undefined && (state !== "blocked" || question.trim() === "")) {
+            return textErr("A question requires a blocked report");
+          }
+          const run = await worker.parentRun();
+          const saved = await recordCoordinationWorkReport(deps.pool, [
+            worker.threadId, run.id, state, text, question?.trim() ?? null,
+          ]);
+          return saved.rowCount === 1
+            ? { output: [{ type: "text", text: "Work report recorded." }] }
+            : textErr("No active Run for this accepted work");
+        },
+      }),
+      defineTool({
+        name: "hand_back",
+        description: "Return an active Member follow-up outside the accepted scope to the coordinator.",
+        parameters: Type.Object({
+          reason: Type.String({ minLength: 1, maxLength: 1000 }),
+          message_id: Type.Optional(Type.String()),
+        }),
+        replay: "safe",
+        callers: ["tools"],
+        execute: async ({ reason, message_id }, api, context) => {
+          const run = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+          const requestIds = await inputRequestIds(deps.pool, run?.inputs.map(Number) ?? []);
+          const { rows } = await readWorkFollowups<{ source_event_id: string }>(deps.pool, [
+            worker.threadId, requestIds.filter(isUuid),
+          ]);
+          const selected = message_id === undefined
+            ? (rows.length === 1 ? rows[0] : undefined)
+            : rows.find((row) => row.source_event_id === message_id);
+          if (selected === undefined) {
+            return textErr(rows.length === 0
+              ? "No active Member follow-up can be handed back"
+              : "Choose an active message_id: " + rows.map((row) => row.source_event_id).join(", "));
+          }
+          if (reason.trim() === "") return textErr("A handback requires a reason");
+          const handedBack = await handBackWorkFollowup(deps.pool, [
+            worker.threadId, selected.source_event_id, reason.trim(),
+          ]);
+          return { output: [{ type: "text", text: handedBack.rowCount === 1 ? "Follow-up returned to the coordinator." : "Follow-up already handed back." }] };
+        },
+      }),
+    );
+  }
+
+  if (allowed.has("conversation_read") && deps.acceptedWork && deps.subagents !== undefined) {
+    const workerThreadId = deps.subagents.threadId;
+    tools.push(defineTool({
+      name: "followed_threads",
+      description: "List, follow or unfollow this worker's related Member Threads for context. " +
+        "Use conversation_read to read a followed Thread. Following a Thread grants no authority and does not start a Run.",
+      parameters: Type.Object({
+        action: Type.Union([Type.Literal("list"), Type.Literal("follow"), Type.Literal("unfollow")]),
+        thread_id: Type.Optional(Type.String()),
+      }),
+      structuredOutputSchema: Type.Object({
+        threads: Type.Array(Type.Object({ thread_id: Type.String(), title: Type.Union([Type.String(), Type.Null()]) })),
+      }),
+      replay: "safe",
+      callers: ["tools"],
+      outputLimits: { maxBytes: 16 * 1024 },
+      execute: async ({ action, thread_id }) => {
+        const requester = await deps.identity.getUser(deps.userId);
+        await deps.store.requireAccess(requester, deps.agent.id, "use");
+        if (action !== "list") {
+          if (thread_id === undefined || !isUuid(thread_id)) return textErr("A valid thread_id is required");
+          if (action === "follow") {
+            await followCoordinationThread(deps.pool, workerThreadId, thread_id);
+          } else {
+            await unfollowCoordinationThread(deps.pool, workerThreadId, thread_id);
+          }
+        }
+        const { rows } = await listFollowedCoordinationThreads(deps.pool, workerThreadId);
+        if (action === "follow" && !rows.some((row) => row.thread_id === thread_id)) {
+          return textErr("This Thread is unavailable for following");
+        }
+        return { structuredOutput: structured({ threads: rows }) };
+      },
+    }));
+  }
 
   if (allowed.has("send_message")) {
     tools.push(

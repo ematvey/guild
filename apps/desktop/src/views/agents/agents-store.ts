@@ -8,11 +8,11 @@
 // pushed list replaces the slice, and a pushed run is held until the seed
 // lands and merged over it.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
-import type { AttachableIntegration } from "@guild/wire/rest";
+import type { AttachableIntegration, CoordinationSnapshot } from "@guild/wire/rest";
 import type { ServerFrame } from "@guild/wire/types";
-import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
+import { listAgentRuns, listAgentThreads, listRoutines, readCoordination } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
 import { createStore } from "../../lib/store";
 
@@ -27,6 +27,7 @@ interface AgentState {
   runs: Record<string, AgentRun[]>;
   threads: Record<string, AgentThread[]>;
   routines: Record<string, AgentRoutine[]>;
+  coordination: Record<string, CoordinationSnapshot>;
   /** Why a slice's seed failed, by `slice:agentId`. */
   errors: Record<string, string>;
   /** Bumps on every reconnect and sign-out: the seeding hooks run again,
@@ -40,6 +41,7 @@ const EMPTY: AgentState = {
   runs: {},
   threads: {},
   routines: {},
+  coordination: {},
   errors: {},
   epoch: 0,
 };
@@ -123,6 +125,35 @@ export function applyAgentRun(run: AgentRun): void {
   for (const listener of runListeners) listener(run);
 }
 
+export function applyAgentCoordination(frame: Extract<ServerFrame, { type: "agent_coordination" }>): void {
+  agentStore.update((state) => ({
+    ...state, coordination: { ...state.coordination, [frame.agent_id]: frame.snapshot },
+  }));
+}
+
+export function useAgentCoordination(agentId: string) {
+  const snapshot = agentStore.use((state) => state.coordination[agentId]);
+  const epoch = agentStore.use((state) => state.epoch);
+  const [failure, setFailure] = useState<{ epoch: number; agentId: string; message: string } | null>(null);
+  const error = failure?.epoch === epoch && failure.agentId === agentId ? failure.message : null;
+  const needed = snapshot === undefined && error === null;
+  useEffect(() => {
+    if (!needed) return;
+    let live = true;
+    void readCoordination(agentId).then(
+      (loaded) => {
+        if (!live || agentStore.get().epoch !== epoch || agentStore.get().coordination[agentId]) return;
+        applyAgentCoordination({ type: "agent_coordination", agent_id: agentId, snapshot: loaded });
+      },
+      (err: unknown) => {
+        if (live) setFailure({ epoch, agentId, message: err instanceof Error ? err.message : "Could not load coordination." });
+      },
+    );
+    return () => { live = false; };
+  }, [agentId, epoch, needed]);
+  return { snapshot, error, retry: () => setFailure(null) };
+}
+
 /** Replaces one agent's thread list (the `agent_threads` frame). */
 export function applyAgentThreads(agentId: string, threads: AgentThread[]): void {
   agentStore.update((state) => ({ ...state, threads: { ...state.threads, [agentId]: threads } }));
@@ -143,7 +174,7 @@ function dropSeeds(): void {
  *  connect push replaces it. */
 export function resetAgentSlices(): void {
   dropSeeds();
-  agentStore.update((state) => ({ ...state, runs: {}, threads: {}, routines: {}, errors: {}, epoch: ++epochCounter }));
+  agentStore.update((state) => ({ ...state, runs: {}, threads: {}, routines: {}, coordination: {}, errors: {}, epoch: ++epochCounter }));
 }
 
 /** Drops everything; sign-out runs it so one user's agents never reach

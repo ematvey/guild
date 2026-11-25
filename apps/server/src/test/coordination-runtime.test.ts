@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
@@ -227,22 +227,47 @@ describe("configured coordinator conversation", () => {
     stack.mock.setResponses([
       {
         body: call("codemode", {
-          code: `return await tools.send_message(${JSON.stringify({ input_id: input.id, text: "I’ll check the project and report only problems." })});`,
+          code: `await tools.reply(${JSON.stringify({ input_id: input.id, text: "I’ll check the project and report only problems." })}); return await tools.reply(${JSON.stringify({ input_id: input.id, text: "Duplicate direct reply" })});`,
         }),
       },
       { body: final("INTERNAL ONLY") },
     ]);
+    const writeEntry = app.platform.runtime.writeEntry.bind(app.platform.runtime);
+    let receiptLost = false;
+    const lostReceipt = vi.spyOn(app.platform.runtime, "writeEntry").mockImplementation(async (chatId, entry) => {
+      await writeEntry(chatId, entry);
+      if (chatId === inbox.chat_id && !receiptLost) {
+        receiptLost = true;
+        throw new Error("lost reply receipt");
+      }
+    });
+    try {
+      await app.platform.coordination.tick();
+      await waitFor(async () => {
+        await app.platform.coordination.tick();
+        return receiptLost;
+      }, 20000);
+      expect(
+        (await stack.env.db.query(
+          "SELECT reply_delivered_at FROM agent_coordination_inputs WHERE id=$1",
+          [input.id],
+        )).rows[0]?.reply_delivered_at,
+      ).toBeNull();
+    } finally {
+      lostReceipt.mockRestore();
+    }
+    await stack.env.db.query("UPDATE agent_coordination_inputs SET reply_due_at=now() WHERE id=$1", [input.id]);
     await app.platform.coordination.tick();
-    await waitFor(
-      async () =>
-        (
-          await stack.env.db.query(
-            "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
-            [inbox.chat_id],
-          )
-        ).rowCount! > 0,
-      20000,
-    );
+    expect(
+      (await stack.env.db.query(
+        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND reply_delivered_at IS NOT NULL AND reply_text IS NULL",
+        [input.id],
+      )).rowCount,
+    ).toBe(1);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
+      [inbox.chat_id],
+    )).rowCount === 1, 10000);
     await waitFor(
       async () =>
         (
@@ -279,25 +304,50 @@ describe("configured coordinator conversation", () => {
     stack.mock.setResponses([
       {
         body: call("codemode", {
-          code: `return await tools.send_message(${JSON.stringify({ input_id: next.id, text: "Second acknowledgment delivered." })});`,
+          code: `return await tools.reply(${JSON.stringify({ input_id: next.id, text: "Second acknowledgment delivered." })});`,
         }),
       },
       { body: final("INTERNAL ONLY") },
     ]);
     await app.platform.coordination.tick();
-    await waitFor(
-      async () =>
-        (
-          await stack.env.db.query(
-            "SELECT 1 FROM thread_events WHERE chat_id=$1 AND payload::text LIKE '%Second acknowledgment delivered%'",
-            [inbox.chat_id],
-          )
-        ).rowCount! > 0,
-      20000,
-    );
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (
+        await stack.env.db.query("SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND reply_delivered_at IS NOT NULL", [next.id])
+      ).rowCount === 1;
+    }, 20000);
+    const unanswered = randomUUID();
+    stack.mock.setResponses([{ body: final("PRIVATE DRAFT FOR UNANSWERED REQUEST") }]);
+    const missed = await app.inject({
+      method: "POST",
+      url: `/api/v1/agents/${inbox.agent_id}/threads/${inbox.thread_id}/turns`,
+      headers,
+      payload: { message: "Check the failure path.", user_message_id: unanswered },
+    });
+    expect(missed.statusCode).toBeLessThan(300);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (
+        await stack.env.db.query(
+          "SELECT 1 FROM agent_coordination_inputs WHERE source_event_id=$1 AND reply_missing AND reply_delivered_at IS NOT NULL",
+          [unanswered],
+        )
+      ).rowCount === 1;
+    }, 20000);
+    await waitFor(async () => (
+      await stack.env.db.query(
+        "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%send a reply to this request%'",
+        [inbox.chat_id],
+      )
+    ).rowCount === 1, 10000);
     const rows = await stack.env.db.query<{ payload: unknown }>("SELECT payload FROM thread_events WHERE chat_id=$1", [
       inbox.chat_id,
     ]);
+    expect(JSON.stringify(rows.rows)).toContain("report only problems");
+    expect(JSON.stringify(rows.rows)).toContain("Second acknowledgment delivered.");
+    expect(JSON.stringify(rows.rows)).not.toContain("Duplicate direct reply");
+    expect(JSON.stringify(rows.rows)).toContain("I couldn’t send a reply");
+    expect(JSON.stringify(rows.rows)).not.toContain("PRIVATE DRAFT FOR UNANSWERED REQUEST");
     expect(JSON.stringify(rows.rows)).not.toContain("INTERNAL ONLY");
     const visibleRequest = await stack.env.db.query(
       "SELECT id FROM thread_events WHERE chat_id=$1 AND type='user_message' AND payload->>'content'=$2",
@@ -403,4 +453,301 @@ describe("configured coordinator conversation", () => {
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);
   }, 30000);
+
+  it("reserves one scoped worker and acknowledgment for an accepted request", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/api/v1/agents", headers,
+      payload: { name: "Acceptance Assistant", model: "coordination-test", tools: ["conversation_read"], resources: { assistant: { enabled: true } } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const agentId = created.json().agent.id as string;
+    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: agentId } });
+    expect(opened.statusCode, opened.body).toBe(200);
+    const inbox = opened.json() as { chat_id: string; thread_id: string };
+    const source = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads`, headers, payload: { title: "Related project context" },
+    });
+    expect(source.statusCode, source.body).toBe(200);
+    const relatedThreadId = source.json().thread.id as string;
+    const sourceEventId = randomUUID();
+    const submitted = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
+      payload: { message: "Review this project.", user_message_id: sourceEventId },
+    });
+    expect(submitted.statusCode, submitted.body).toBeLessThan(300);
+    let inputId: string | undefined;
+    await waitFor(async () => {
+      inputId = (await stack.env.db.query<{ id: string }>(
+        "SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [sourceEventId],
+      )).rows[0]?.id;
+      return inputId !== undefined;
+    }, 10000);
+    const accepted = { input_id: inputId, acknowledgment: "I’ll review the project.", task: "Read and summarize the project." };
+    stack.mock.setResponses([
+      { body: call("codemode", {
+        code: `await tools.accept_work(${JSON.stringify(accepted)}); return await tools.accept_work(${JSON.stringify({ ...accepted, task: "Duplicate scope" })});`,
+      }) },
+      { body: final("Internal acceptance notes.") },
+    ]);
+    await app.platform.coordination.tick();
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.accepted_parent_run_id
+       WHERE i.id=$1 AND r.finished_at IS NOT NULL`,
+      [inputId],
+    )).rowCount === 1, 10000);
+    stack.mock.setResponses([
+      { body: call("codemode", { code: `try { await tools.followed_threads({action:"follow",thread_id:${JSON.stringify(inbox.thread_id)}}); } catch {} await tools.followed_threads({action:"follow",thread_id:${JSON.stringify(relatedThreadId)}}); return await tools.report_work({state:"blocked",summary:"Need project access",question:"Can you grant access?"});` }) },
+      { body: final("Worker review is blocked.") },
+      { body: final("Internal child report.") },
+    ]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id
+         WHERE i.id=$1 AND i.reply_delivered_at IS NOT NULL AND r.work_report_state='blocked'`,
+        [inputId],
+      )).rowCount === 1;
+    }, 20000);
+    const acceptance = await stack.env.db.query(
+      `SELECT i.accepted_scope,i.launched_run_id,r.id AS work_report_run_id,r.work_report_question
+       FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id WHERE i.id=$1`, [inputId],
+    );
+    expect(acceptance.rows[0]).toMatchObject({
+      accepted_scope: accepted.task,
+      work_report_run_id: acceptance.rows[0]?.launched_run_id,
+      work_report_question: "Can you grant access?",
+    });
+    const children = await stack.env.db.query(
+      "SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id WHERE t.source_input_id=$1", [inputId],
+    );
+    expect(children.rows.map((row) => row.id)).toEqual([acceptance.rows[0]?.launched_run_id]);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%review the project%'",
+      [inbox.chat_id],
+    )).rowCount === 1, 10000);
+    await waitFor(() => stack.mock.requests.some(({ body }) => {
+      const request = JSON.stringify(body);
+      return request.includes("<worker_origin>") && request.includes("Can you grant access?");
+    }), 10000);
+    const originalRun = acceptance.rows[0]?.launched_run_id as string;
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM agent_runs WHERE id=$1 AND finished_at IS NOT NULL", [originalRun],
+    )).rowCount === 1, 10000);
+    const retryUrl = `/api/v1/agents/${agentId}/work/${inputId}/retry`;
+    const retry = await app.inject({ method: "POST", url: retryUrl, headers });
+    expect(retry.statusCode, retry.body).toBe(200);
+    const duplicate = await app.inject({ method: "POST", url: retryUrl, headers });
+    expect(duplicate.statusCode).toBe(409);
+    stack.mock.setResponses([{ body: final("Worker retry completed.") }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launch_attempt=2 AND launched_run_id<>$2",
+        [inputId, originalRun],
+      )).rowCount === 1;
+    }, 10000);
+    const attempts = await stack.env.db.query(
+      `SELECT r.id,r.thread_id,r.work_report_state FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.source_input_id=$1 ORDER BY r.created_at,r.id`, [inputId],
+    );
+    expect(attempts.rows).toHaveLength(2);
+    expect(new Set(attempts.rows.map((row) => row.thread_id)).size).toBe(1);
+    expect(attempts.rows[0]).toMatchObject({ id: originalRun, work_report_state: "blocked" });
+    await waitFor(() => stack.mock.requests.some(({ body }) => {
+      const request = JSON.stringify(body);
+      return request.includes("<worker_origin>") && request.includes("Worker retry completed.");
+    }), 10000);
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+    )).rowCount === 0, 10000);
+    const workerThreadId = attempts.rows[0]?.thread_id as string;
+    const followed = await stack.env.db.query(
+      "SELECT source_thread_id FROM agent_coordination_followed_threads WHERE worker_thread_id=$1", [workerThreadId],
+    );
+    expect(followed.rows).toEqual([{ source_thread_id: relatedThreadId }]);
+    const workerChatId = (await stack.env.db.query(
+      "SELECT chat_id FROM agent_threads WHERE id=$1", [workerThreadId],
+    )).rows[0]?.chat_id as string;
+    const attachedMessage = randomUUID();
+    const attachment = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
+      payload: { message: `Continue the analysis in /thread/${workerChatId}`, user_message_id: attachedMessage },
+    });
+    expect(attachment.statusCode, attachment.body).toBeLessThan(300);
+    let attachmentId: string;
+    await waitFor(async () => {
+      attachmentId = (await stack.env.db.query(
+        "SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [attachedMessage],
+      )).rows[0]?.id as string;
+      return attachmentId !== undefined;
+    }, 10000);
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      const content = JSON.stringify(last?.content);
+      if (last?.role === "user" && content?.includes(`<inbox_delivery>Send your visible reply now by calling reply with input_id ${attachmentId}`)) {
+        return call("codemode", { code: `return await tools.attach_work(${JSON.stringify({
+          input_id: attachmentId, chat_id: workerChatId, acknowledgment: "Continuing in the same worker chat.",
+        })});` });
+      }
+      if (last?.role === "user" && content?.includes("Follow-up from the Member in the originating Assistant inbox.")) {
+        return call("codemode", { code: 'return await tools.hand_back({reason:"Original scope complete"});' });
+      }
+      return final("Routing checked.");
+    } }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id
+         WHERE i.id=$1 AND i.reply_delivered_at IS NOT NULL AND r.thread_id=$2 AND r.finished_at IS NOT NULL`,
+        [attachmentId, workerThreadId],
+      )).rowCount === 1;
+    }, 10000);
+    const returned = await stack.env.db.query(
+      `SELECT source_thread_id FROM agent_coordination_inputs WHERE source_event_id=$1
+       AND kind='request' AND handback_reason='Original scope complete'`, [attachmentId!],
+    );
+    expect(returned.rows).toEqual([{ source_thread_id: inbox.thread_id }]);
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+    )).rowCount === 0, 10000);
+    const followup = randomUUID();
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      return last?.role === "user" && JSON.stringify(last.content).includes("Look into a different project.")
+        ? call("codemode", { code: 'return await tools.hand_back({reason:"Different project"});' })
+        : final("I returned this request for routing.");
+    } }]);
+    const posted = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${workerThreadId}/turns`, headers,
+      payload: { message: "Look into a different project.", user_message_id: followup },
+    });
+    expect(posted.statusCode, posted.body).toBeLessThan(300);
+    let handedBack: string | undefined;
+    await waitFor(async () => {
+      handedBack = (await stack.env.db.query<{ id: string }>(
+        `SELECT id FROM agent_coordination_inputs
+         WHERE source_event_id=$1 AND source_thread_id=$2 AND kind='request' AND handback_reason='Different project'`,
+        [followup, workerThreadId],
+      )).rows[0]?.id;
+      return handedBack !== undefined;
+    }, 10000);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM agent_runs WHERE thread_id=$1 AND finished_at IS NULL", [workerThreadId],
+    )).rowCount === 0, 10000);
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      return last?.role === "user" && JSON.stringify(last.content).includes(handedBack!)
+        ? call("codemode", { code: `return await tools.reply(${JSON.stringify({ input_id: handedBack, text: "I can route the other project separately." })});` })
+        : final("Internal handback review.");
+    } }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%can route the other project%'",
+        [workerChatId],
+      )).rowCount === 1;
+    }, 10000);
+  }, 45000);
+
+
+  it("records source admission decisions and launches inferred work only in auto mode", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    for (const mode of ["off", "observe", "auto"] as const) {
+      const created = await app.inject({
+        method: "POST", url: "/api/v1/agents", headers,
+        payload: {
+          name: `Source admission ${mode}`, model: "coordination-test",
+          resources: { assistant: { enabled: true, admission: {
+            mode, sources: ["project"], rules: { review: "Review project status without external side effects." },
+          } } },
+        },
+      });
+      expect(created.statusCode, created.body).toBe(200);
+      const agentId = created.json().agent.id as string;
+      const url = `/api/v1/agents/${agentId}/sources/project/events`;
+      const payload = { event_id: "event-1", content: "The project status changed." };
+      const submitted = await app.inject({ method: "POST", url, headers, payload });
+      expect(submitted.statusCode, submitted.body).toBe(200);
+      const inputId = submitted.json().input_id as string;
+      const duplicate = await app.inject({ method: "POST", url, headers, payload: { ...payload, content: "Different content" } });
+      expect(duplicate.json().input_id).toBe(inputId);
+      const denied = await app.inject({ method: "POST", url: url.replace("/project/", "/unconfigured/"), headers, payload });
+      expect(denied.statusCode).toBe(403);
+      if (mode === "off") {
+        expect(submitted.json().decision).toBe("ignored");
+      } else {
+        const args = JSON.stringify({
+          input_id: inputId, decision: "accept", rule: "review", reason: "Project status changed", task: "Review project status.",
+        });
+        stack.mock.setResponses([{ body: async () => {
+          const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+          const last = messages?.at(-1);
+          return last?.role === "user" && JSON.stringify(last.content).includes(inputId)
+            ? call("codemode", {
+              code: `try { await tools.schedule_wake({input_id:${JSON.stringify(inputId)},at:"2099-01-01T00:00:00Z",reason:"Bypass admission"}); } catch {} return await tools.evaluate_event(${args});`,
+            })
+            : final("Evaluation finished.");
+        } }]);
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND decision=$2",
+            [inputId, mode === "observe" ? "would_accept" : "accepted"],
+          )).rowCount === 1;
+        }, 10000);
+      }
+      if (mode === "auto") {
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launched_run_id IS NOT NULL", [inputId],
+          )).rowCount === 1;
+        }, 10000);
+      }
+      const evidence = await stack.env.db.query(
+        `SELECT content,decision,matched_rule,launched_run_id IS NOT NULL AS launched,
+           (SELECT count(*)::int FROM agent_coordination_inputs WHERE agent_id=$2 AND kind='wake') AS wakes
+         FROM agent_coordination_inputs WHERE id=$1`, [inputId, agentId],
+      );
+      expect(evidence.rows[0]).toEqual({
+        content: payload.content, decision: { off: "ignored", observe: "would_accept", auto: "accepted" }[mode],
+        matched_rule: mode === "off" ? null : "review", launched: mode === "auto", wakes: 0,
+      });
+      if (mode === "observe") {
+        await waitFor(async () => (await stack.env.db.query(
+          `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+           WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+        )).rowCount === 0, 10000);
+        const coordinationUrl = `/api/v1/agents/${agentId}/coordination`;
+        const paused = await app.inject({ method: "PUT", url: coordinationUrl + "/pause", headers, payload: { paused: true } });
+        expect(paused.statusCode).toBe(200);
+        const reevaluated = await app.inject({ method: "POST", url: coordinationUrl + `/${inputId}/reevaluate`, headers });
+        expect(reevaluated.statusCode, reevaluated.body).toBe(200);
+        await app.platform.coordination.tick();
+        const snapshot = await app.inject({ method: "GET", url: coordinationUrl, headers });
+        expect(snapshot.json()).toMatchObject({ paused: true, outcomes: [{ id: inputId, decision: null, delivered_at: null }] });
+        const resumed = await app.inject({ method: "PUT", url: coordinationUrl + "/pause", headers, payload: { paused: false } });
+        expect(resumed.statusCode).toBe(200);
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND evaluation_request_id IS NOT NULL AND decision='would_accept'",
+            [inputId],
+          )).rowCount === 1;
+        }, 10000);
+      }
+      await waitFor(async () => (await stack.env.db.query(
+        `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+      )).rowCount === 0, 10000);
+    }
+  }, 40000);
 });

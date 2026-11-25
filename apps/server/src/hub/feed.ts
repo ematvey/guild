@@ -280,6 +280,7 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_agent_runs: (payload) => this.agentState.run(payload),
     guild_agent_routines: (payload) => this.agentState.routines(payload),
     guild_agent_threads: (payload) => this.agentState.threads(payload),
+    guild_agent_coordination: (payload) => this.agentState.coordination(payload, this.ctx.pool),
     guild_skills: (payload) => this.agentState.skills(payload),
     guild_apps: (payload) => this.agentState.apps(payload),
   };

@@ -35,6 +35,7 @@ import {
   applyIntegrationAccess,
   applyAgentRoutines,
   applyAgentRun,
+  applyAgentCoordination,
   applyAgentThreads,
   resetAgentSlices,
 } from "../../agents/agents-store";
@@ -235,6 +236,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       onAgentRun: applyAgentRun,
       onActivityRun: applyActivityRun,
       onActivityConversation: applyActivityConversation,
+      onAgentCoordination: applyAgentCoordination,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),

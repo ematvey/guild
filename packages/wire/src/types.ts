@@ -14,6 +14,7 @@ import type {
   AgentRoutine,
   AgentRun,
   ConversationSnapshot,
+  CoordinationSnapshot,
   AgentRunStep,
   AgentThread,
   Chat,
@@ -199,6 +200,7 @@ export type ServerFrame =
     }
   | { type: "activity_run_unavailable"; run_id: Uuid }
   | { type: "activity_conversation"; chat_id: Uuid; detail: ConversationSnapshot | null }
+  | { type: "agent_coordination"; agent_id: Uuid; snapshot: CoordinationSnapshot }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
   | { type: "skill_catalog"; items: SkillCatalogItem[]; installs: SkillInstall[] }
