@@ -68,6 +68,8 @@ only what the repo cannot tell you.
   release, publish a prerelease from the working branch, approve it on the dev
   stack, and verify all four platforms in its updater manifest
   (`docs/clients.md` §4).
+- **Title stable release PRs `Release X.Y.Z`.** Use the intended stable
+  version. The master release workflow reads and validates the merged PR title.
 - **Committed versions change only in the master release workflow.**
   `scripts/bump-version.sh` updates the synchronized product version on `master`.
   Branch/local builds use `scripts/release.mjs preview` to stamp a temporary

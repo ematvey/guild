@@ -152,11 +152,14 @@ asset digests and sizes match the local files. Published versions are not replac
 
 ### Stable releases
 
-Every push to `master` starts **Release clients**, which selects the next patch
-version, runs `scripts/bump-version.sh`, creates an SSH-signed version commit,
-and builds and publishes the stable GitHub Release. A verified signed version
-commit does not trigger another release. A rerun reuses its version commit;
-manual dispatch accepts an optional stable version override.
+Title a promotion PR to `master` `Release X.Y.Z` using the target stable
+version. The merge starts **Release clients**, which reads the title of the PR
+associated with that commit and validates that its version is a stable semver
+triple greater than the current version. The workflow runs
+`scripts/bump-version.sh`, creates an SSH-signed version commit, and builds and
+publishes the stable GitHub Release. A verified signed version commit skips
+release preparation. A rerun reuses its version commit. Manual dispatch on
+`master` accepts an explicit stable version and defaults to the next patch.
 
 After publication, the workflow opens a version-only PR to `develop` and merges it
 after the required Version policy check. The synchronization edits
