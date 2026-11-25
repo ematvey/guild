@@ -580,7 +580,8 @@
             "$ref": "#/$defs/CoordinationOutcome"
           },
           "maxItems": 100
-        }
+        },
+        "unavailable": { "type": "boolean" }
       }
     },
     "CoordinationOutcome": {

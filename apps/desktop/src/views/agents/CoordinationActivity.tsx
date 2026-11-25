@@ -17,18 +17,28 @@ function outcomeStatus(input: CoordinationOutcome): string {
   return input.kind === "candidate" ? "Awaiting evaluation" : "Awaiting reply";
 }
 
-export function CoordinationActivity({ agent, onOpenChat }: { agent: Agent; onOpenChat?: (chatId: string) => void }) {
+type Props = { agent: Agent; onOpenChat?: (chatId: string) => void; onResync?: () => void };
+
+export function CoordinationActivity({ agent, onOpenChat, onResync }: Props) {
   const resources = agent.resources;
   const assistant = resources && typeof resources === "object" && !Array.isArray(resources) ? (resources as Record<string, unknown>).assistant : null;
   const enabled = assistant && typeof assistant === "object" && !Array.isArray(assistant) ? (assistant as Record<string, unknown>).enabled : null;
   if (!(typeof enabled === "boolean" ? enabled : agent.is_personal)) return null;
-  return <CoordinationPanel key={agent.id} agent={agent} onOpenChat={onOpenChat} />;
+  return <CoordinationPanel key={agent.id} agent={agent} onOpenChat={onOpenChat} onResync={onResync} />;
 }
 
-function CoordinationPanel({ agent, onOpenChat }: { agent: Agent; onOpenChat?: (chatId: string) => void }) {
+function CoordinationPanel({ agent, onOpenChat, onResync }: Props) {
   const snapshot = useAgentCoordination(agent.id);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  if (snapshot?.unavailable) return (
+    <section aria-label="Coordination" className="mb-5 space-y-2">
+      <h2 className="font-medium">Coordination</h2>
+      <p role="alert">Could not load coordination.</p>
+      {onResync && <button type="button" className="underline" onClick={onResync}>Retry</button>}
+    </section>
+  );
 
   async function act(action: () => Promise<void>) {
     setBusy(true);

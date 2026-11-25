@@ -102,7 +102,7 @@ export interface SocketHandlers {
 
 /** Optional server frames this client applies: one changed chat-list row
  *  instead of the whole list. */
-export const SOCKET_FEATURES = "chat_row";
+export const SOCKET_FEATURES = "chat_row,coordination_watch";
 
 /** Converts the current HTTP origin into the WebSocket origin. */
 

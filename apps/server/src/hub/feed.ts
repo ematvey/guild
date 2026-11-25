@@ -334,7 +334,7 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   async syncActivity(user: UserRow, sink: SocketSink): Promise<void> {
-    await this.agentState.syncCoordination(this.ctx.pool, user.org_id, user.id, sink);
+    await this.agentState.syncCoordination(this.ctx.pool, user.org_id, user.id, sink, true);
     if (sink.runView !== null) await this.agentState.syncRun(user.org_id, user.id, sink, sink.runView);
     if (sink.activityConversation !== null)
       await this.agentState.syncConversation(user, sink, sink.activityConversation);

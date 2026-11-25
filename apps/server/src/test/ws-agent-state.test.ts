@@ -145,8 +145,8 @@ describe("agent and skill state frames", () => {
       name: "Coordination activity", model: "GLM-Test-Model", visibility: "org",
       resources: { assistant: { enabled: true, admission: { mode: "off", sources: ["project"] } } },
     });
-    const [owner, admin, other] = await Promise.all(
-      [stack.memberToken, stack.adminToken, otherToken].map(memberSocket),
+    const [owner, admin, other, legacy] = await Promise.all(
+      [stack.memberToken, stack.adminToken, otherToken, stack.memberToken].map(memberSocket),
     );
     const root = `/api/v1/agents/${agent.id}`;
     const belongs = (frame: Frame) => frame.type === "agent_coordination" && frame.agent_id === agent.id;
@@ -166,6 +166,9 @@ describe("agent and skill state frames", () => {
       await expect(waitFrame(admin, hasOutcome)).resolves.toMatchObject({
         snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: false }] },
       });
+      await expect(waitFrame(legacy, hasOutcome)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, owned: true }] },
+      });
       expect(textFrames(other).some(hasOutcome)).toBe(false);
       await api(stack.memberToken, "PUT", root + "/coordination/pause", { paused: true });
       const paused = (f: Frame) => belongs(f) && (f.snapshot as { paused: boolean }).paused;
@@ -181,6 +184,7 @@ describe("agent and skill state frames", () => {
       owner.end();
       admin.end();
       other.end();
+      legacy.end();
     }
   });
 

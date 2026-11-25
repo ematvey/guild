@@ -36,6 +36,7 @@ export function AgentsPanel({
           viewer={viewer}
           onNavigate={onNavigate}
           onOpenChat={onOpenChat}
+          onResync={onRefreshConversation}
         />
       );
     case "activity":

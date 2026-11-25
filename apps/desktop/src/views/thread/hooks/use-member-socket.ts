@@ -209,9 +209,21 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
-    let coordinationAdmin = false;
+    let coordinationAdmin: boolean | null = null;
+    const pendingCoordination = new Map<string, Parameters<typeof applyAgentCoordination>[0]>();
+    const applyCoordination = (frame: Parameters<typeof applyAgentCoordination>[0]) => {
+      if (coordinationAdmin === null) {
+        pendingCoordination.set(frame.agent_id, frame);
+        return;
+      }
+      applyAgentCoordination(coordinationAdmin ? frame : {
+        ...frame, snapshot: { ...frame.snapshot, outcomes: frame.snapshot.outcomes.filter((outcome) => outcome.owned) },
+      });
+    };
     const connection = startSocket({
       onConnect: () => {
+        coordinationAdmin = null;
+        pendingCoordination.clear();
         syncingChatsRef.current.clear();
         // A read frame sent just before the old socket died may never have
         // been processed: forget the guard so the reconnect sync re-sends it.
@@ -237,15 +249,15 @@ export function useMemberSocket(deps: MemberSocketDeps) {
         coordinationAdmin = user.role === "admin";
         if (!coordinationAdmin) scrubAgentCoordination();
         applyMemberProfile(user);
+        for (const frame of pendingCoordination.values()) applyCoordination(frame);
+        pendingCoordination.clear();
       },
       onAgentList: applyAgentList,
       onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
       onActivityRun: applyActivityRun,
       onActivityConversation: applyActivityConversation,
-      onAgentCoordination: (frame) => applyAgentCoordination(coordinationAdmin ? frame : {
-        ...frame, snapshot: { ...frame.snapshot, outcomes: frame.snapshot.outcomes.filter((outcome) => outcome.owned) },
-      }),
+      onAgentCoordination: applyCoordination,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
