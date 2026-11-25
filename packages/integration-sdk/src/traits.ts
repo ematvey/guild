@@ -1,6 +1,5 @@
-// Trait tools are Guild-provided: one canonical name, description, and
-// argument schema per capability, independent of the integration that
-// implements it. The model sees "web search", not a vendor's search.
+// Traits define a capability ID, description, and argument schema.
+// The selected integration supplies the namespaced callable tool.
 
 export interface TraitSpec {
   name: string;
@@ -14,7 +13,7 @@ const TRAITS: Record<string, TraitSpec> = {
     description:
       "Search the public web and return the top results (title, url, snippet). " +
       "Use it for facts outside the workspace, current events, and finding a page " +
-      "to read with web_fetch.",
+      "to fetch in full.",
     parameters: {
       type: "object",
       properties: {
@@ -28,7 +27,7 @@ const TRAITS: Record<string, TraitSpec> = {
     name: "web_fetch",
     description:
       "Fetch one web page and return its readable content (title, description, " +
-      "main text). Use it after web_search to read a result in full.",
+      "main text). Use it to read a search result in full.",
     parameters: {
       type: "object",
       properties: {

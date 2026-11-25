@@ -32,7 +32,7 @@ The tool only reads.
 
 SearxNG uses one shared org setting (`org_secret`) and no credential; no member identity is sent. Search queries go to your instance, which forwards them to the engines it is configured to use.
 
-SearxNG provides the `web_search` trait: it can answer the shared web search tool. When several search providers are enabled, the org picks one.
+SearxNG provides the `web_search` trait: its callable tool is `searxng_web_search`. When several search providers are enabled, the org picks one.
 
 ## Troubleshooting
 

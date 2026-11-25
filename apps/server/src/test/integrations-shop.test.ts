@@ -84,14 +84,14 @@ describe("posthog", () => {
 });
 
 describe("trait tools", () => {
-  it("take the Guild-provided name and description", async () => {
+  it("keep the provider-prefixed name and use the Guild description", async () => {
     const turns = await resolveIntegrations(
       gateway([{ name: "searxng", config: { base_url: "http://searx.test" }, enabled: true }]),
       "org-1",
     );
     expect(turns).toHaveLength(1);
     const tool = turns[0]!.tools.find((t) => t.trait === "web_search")!;
-    expect(tool.spec.name).toBe("web_search");
+    expect(tool.spec.name).toBe("searxng_web_search");
     expect(tool.spec.description).toContain("Search the public web");
     expect(tool.raw).toBe("web_search");
   });
@@ -106,10 +106,10 @@ describe("trait tools", () => {
     );
     const searx = turns.find((t) => t.slug === "searxng")!;
     const firecrawl = turns.find((t) => t.slug === "firecrawl")!;
-    expect(searx.tools.map((t) => t.spec.name)).toContain("web_search");
+    expect(searx.tools.map((t) => t.spec.name)).toContain("searxng_web_search");
     // firecrawl keeps its own tools but loses the trait the earlier
     // integration provides.
-    expect(firecrawl.tools.map((t) => t.spec.name)).not.toContain("web_search");
+    expect(firecrawl.tools.map((t) => t.spec.name)).not.toContain("firecrawl_web_search");
     expect(firecrawl.tools.map((t) => t.spec.name)).toContain("firecrawl_map");
   });
 
@@ -126,8 +126,8 @@ describe("trait tools", () => {
     );
     const searx = turns.find((t) => t.slug === "searxng")!;
     const firecrawl = turns.find((t) => t.slug === "firecrawl")!;
-    expect(firecrawl.tools.map((t) => t.spec.name)).toContain("web_search");
-    expect(searx.tools.map((t) => t.spec.name)).not.toContain("web_search");
+    expect(firecrawl.tools.map((t) => t.spec.name)).toContain("firecrawl_web_search");
+    expect(searx.tools.map((t) => t.spec.name)).not.toContain("searxng_web_search");
   });
 
   it("fall back to catalog order when the bound provider is not enabled", async () => {
@@ -137,13 +137,13 @@ describe("trait tools", () => {
       }),
       "org-1",
     );
-    expect(turns[0]!.tools.map((t) => t.spec.name)).toContain("web_search");
+    expect(turns[0]!.tools.map((t) => t.spec.name)).toContain("searxng_web_search");
   });
 
   it("name the provider's raw tool for dispatch", async () => {
     const turns = await resolveIntegrations(gateway([{ name: "firecrawl", config: {}, enabled: true }]), "org-1");
     const trait = turns[0]!.tools.find((t) => t.trait === "web_fetch")!;
-    expect(trait.spec.name).toBe("web_fetch");
+    expect(trait.spec.name).toBe("firecrawl_web_fetch");
     expect(trait.raw).toBe("web_fetch");
   });
 });

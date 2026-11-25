@@ -12,6 +12,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { encryptSecret, masterKeyBytes } from "../platform/crypto.js";
 import type { GuildRuntime } from "../harness/runtime.js";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
@@ -207,6 +208,53 @@ describe("codemode over the chat loop", () => {
       const conversation = await runtimeHandle.harnessForTest()!.conversation(conversationId, BACKGROUND_CONTEXT);
       const agent = await conversation!.agent(BACKGROUND_CONTEXT);
       expect(agent.tools.some((tool) => tool.name === "codemode")).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "discovers and calls Firecrawl using the same provider-prefixed names",
+    async () => {
+      const firecrawl = createServer((request, response) => {
+        if (request.method !== "POST" || request.url !== "/v1/search") {
+          response.writeHead(404).end();
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [{ title: "Example result", url: "https://example.com" }] }));
+      });
+      await new Promise<void>((resolve) => firecrawl.listen(0, "127.0.0.1", resolve));
+      try {
+        const { port } = firecrawl.address() as AddressInfo;
+        await stack.env.db.query(
+          "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'firecrawl', $2, true, 'org')",
+          [stack.orgId, JSON.stringify({ base_url: `http://127.0.0.1:${port}` })],
+        );
+        await stack.env.db.query(
+          "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'firecrawl', 'api_key', $2)",
+          [stack.orgId, encryptSecret(masterKeyBytes(stack.env.config.masterKeyHex), "test-key")],
+        );
+        const chatId = await createChat("codemode-firecrawl");
+        const code = [
+          "const specs = JSON.parse(await tools.firecrawl_list_tools({}));",
+          "text(specs.map(({ name }) => name).sort());",
+          "return await tools.firecrawl_web_search({ query: 'example', count: 1 });",
+        ].join("\n");
+        scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+        await submitTurn(chatId, "Search the web");
+        await turnSettled(chatId);
+
+        const [result] = toolResults(await threadEvents(chatId));
+        const output = result?.event as { content: string; is_error: boolean };
+        expect(output.is_error, output.content).toBe(false);
+        expect(output.content).toMatch(/\["firecrawl_map",\s*"firecrawl_web_fetch",\s*"firecrawl_web_search"\]/);
+        expect(output.content).toContain("Example result");
+      } finally {
+        await stack.env.db.query("DELETE FROM integration_secrets WHERE org_id = $1 AND integration = 'firecrawl'", [stack.orgId]);
+        await stack.env.db.query("DELETE FROM integrations WHERE org_id = $1 AND name = 'firecrawl'", [stack.orgId]);
+        firecrawl.closeAllConnections();
+        await new Promise<void>((resolve) => firecrawl.close(() => resolve()));
+      }
     },
     TEST_TIMEOUT,
   );
