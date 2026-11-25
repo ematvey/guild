@@ -278,7 +278,7 @@ export class UserMcpRuntime {
    *  there is no org curation layer to force one); anything else is not a
    *  user-MCP tool (the generic policy applies). */
   async gateDecision(conversationId: number, callName: string): Promise<"skip" | undefined> {
-    const snapshot = await this.snapshotFor(conversationId);
+    const snapshot = this.snapshots.get(conversationId);
     if (snapshot === undefined) return undefined;
     if (!snapshot.tools.some((t) => userMcpToolName(t.serverName, t.toolName) === callName)) return undefined;
     return "skip";

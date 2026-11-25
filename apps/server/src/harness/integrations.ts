@@ -145,12 +145,20 @@ function parseAutoTool(
 function integrationTarget(
   turns: IntegrationTurn[],
   callName: string,
+  namespacedOnly = false,
 ): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
+  let alias: { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined;
   for (const turn of turns) {
-    const info = turn.tools.find((t) => toolMatches(turn.slug, t, callName));
+    const info = turn.tools.find((tool) => tool.spec.name === callName);
     if (info !== undefined) return { turn, info };
+    if (alias === undefined) {
+      const match = turn.tools.find((tool) =>
+        namespacedOnly ? `int_${tool.spec.name}` === callName : toolMatches(turn.slug, tool, callName),
+      );
+      if (match !== undefined) alias = { turn, info: match };
+    }
   }
-  return undefined;
+  return alias;
 }
 
 /** Whether a plugin tool answers a wire tool name: the declared name, the
@@ -203,7 +211,7 @@ export interface IntegrationGate {
     callName: string,
     signal?: AbortSignal,
     callId?: string,
-  ): Promise<IntegrationGateClassification>;
+  ): Promise<"skip" | "ask" | { policyTool: string } | undefined>;
   /** Performance lint only; an approval exemption does not establish a read. */
   isReadCall(conversationId: number, callName: string, args: Record<string, unknown>): boolean;
 }
@@ -221,10 +229,6 @@ export class IntegrationsRuntime {
   private readonly approvalClassifications = new Map<number, Map<string, IntegrationGateClassification>>();
   /** Declarations remain stable until the next explicit provisioning. */
   private readonly snapshots = new Map<number, TurnSnapshot>();
-  /** Every integration tool name this runtime has ever registered — the
-   *  cheap gate-classifier short-circuit for coding tools. */
-  private readonly knownToolNames = new Set<string>();
-
   private readonly access: IntegrationAccessStore;
 
   constructor(
@@ -285,13 +289,7 @@ export class IntegrationsRuntime {
       return { extensions: [], tools: [] };
     }
     const extension = this.installOrgExtension(orgId, turns, conversationId);
-    const tools: ToolRegistration[] = [];
-    for (const turn of turns) {
-      tools.push(this.listToolsTool(turn));
-      if (turn.guide !== null) tools.push(this.guideTool(turn));
-      for (const info of turn.tools) tools.push(this.integrationTool(info));
-    }
-    return { extensions: [extension], tools };
+    return { extensions: [extension], tools: extension.tools ?? [] };
   }
 
   private async scopeOf(chatId: string): Promise<IntegrationScope> {
@@ -358,7 +356,14 @@ export class IntegrationsRuntime {
       for (const info of turn.tools) {
         if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
         tools.push(this.integrationTool(info));
-        this.knownToolNames.add(info.spec.name);
+      }
+    }
+    const canonicalNames = new Set(tools.map((tool) => tool.name));
+    for (const turn of turns) {
+      for (const info of turn.tools) {
+        if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
+        const name = `int_${info.spec.name}`;
+        if (!canonicalNames.has(name)) tools.push(this.integrationTool(info, name));
       }
     }
     const runtime = this;
@@ -479,12 +484,12 @@ export class IntegrationsRuntime {
     });
   }
 
-  private integrationTool(info: IntegrationToolInfo): ToolRegistration {
+  private integrationTool(info: IntegrationToolInfo, name = info.spec.name): ToolRegistration {
     // Deferred: a plugin's tools stay callable from scripts but out of the
     // codemode section until the Turn reads them from `list_tools`, so an
     // integration nobody uses costs no prompt space.
     return IntegrationsRuntime.toolRegistration(
-      info.spec,
+      { ...info.spec, name },
       async (args, api, context) => {
         return this.executeToolCall(api, info.spec.name, args, context);
       },
@@ -534,27 +539,22 @@ export class IntegrationsRuntime {
    *  disclosure tools, read-class
    *  tools, and always_allow-curated tools flow without a gate; an
    *  `always_ask` curation or a write-class tool forces the card / follows
-   *  the chat's approval mode — org governance wins over the chat's
-   *  approval mode in both directions. `undefined` = not an integration
-   *  tool (the generic policy applies). */
+   *  the chat's approval mode. The canonical name keys account policy for
+   *  both wire names. `undefined` means the call has no Integration match. */
   async gateDecision(
     conversationId: number,
     callName: string,
     callId?: string,
-  ): Promise<IntegrationGateClassification> {
-    // Cheap path: a name this runtime never registered and no auto-tool
-    // shape cannot be an integration tool — coding tools pay no resolve.
-    // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
-    if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
-      return undefined;
-    }
+  ): Promise<"skip" | "ask" | { policyTool: string } | undefined> {
+    const declared = this.snapshots.get(conversationId);
+    // Only registered connector names can enter approval policy. Raw
+    // provider aliases can match unrelated Guild tools.
+    const canonicalName = integrationTarget(declared?.turns ?? [], callName, true)?.info.spec.name;
+    if (canonicalName === undefined) return undefined;
     const snapshot = await this.authorizedSnapshot(conversationId);
-    if (snapshot === undefined || snapshot.turns.length === 0) return undefined;
-    if (parseAutoTool(snapshot.turns, callName) !== undefined) return "skip";
-    const target = integrationTarget(snapshot.turns, callName);
-    if (target === undefined) return undefined;
-    const { turn, info } = target;
-    const decision = approvalClass(turn, info);
+    const target = integrationTarget(snapshot?.turns ?? [], canonicalName, true);
+    if (target?.info.spec.name !== canonicalName) return undefined;
+    const decision = approvalClass(target.turn, target.info);
     if (callId) {
       let classifications = this.approvalClassifications.get(conversationId);
       if (!classifications) {
@@ -563,7 +563,7 @@ export class IntegrationsRuntime {
       }
       classifications.set(callId, decision);
     }
-    return decision;
+    return decision === "policy" ? { policyTool: target.info.spec.name } : decision;
   }
 
   /** The admitted tool declaration supplies effects for the script lint.
@@ -598,8 +598,8 @@ export class IntegrationsRuntime {
       // Handled by the dedicated tools; unreachable here, but fail closed.
       return { content: `unknown server tool ${callName}`, isError: true };
     }
-    const target = integrationTarget(turns, callName);
-    if (target === undefined || snapshot === undefined) {
+    const target = integrationTarget(turns, callName, true);
+    if (target?.info.spec.name !== callName || snapshot === undefined) {
       return { content: `unknown server tool ${callName}`, isError: true };
     }
     const { turn, info } = target;
