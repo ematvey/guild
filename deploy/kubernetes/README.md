@@ -5,11 +5,13 @@ Substrate adapter, Actor workers, JuiceFS and workspace CSI on a cluster with
 Agent Substrate already installed. Helm, kubectl, and kubectl-ate are required.
 Keep the release name and namespace stable across upgrades.
 
-This reference supports one Guild installation per cluster. The CSI driver
-name, workspace host paths, and Actor worker selector are shared within a
-cluster. Use a dedicated production cluster, or migrate the existing release
-before installing in another namespace on the same cluster. Creating an empty
-`guild-prod` namespace alongside dev does not provide that isolation.
+Each installation has its own Kubernetes namespace, Substrate atespace, and
+`workspaceDriverName`. Set the driver name before the first install and keep
+it stable. It identifies the cluster-scoped registration, StorageClasses,
+node socket, and Actor worker selector. Separate application and workspace
+buckets serve each installation. When upgrading an existing installation
+whose driver is already registered as `workspace.csi.guild.dev`, set that
+exact name to preserve its StorageClasses and Actors.
 
 ## Prepare the cluster and images
 
@@ -19,7 +21,7 @@ before installing in another namespace on the same cluster. Creating an empty
    ValidatingAdmissionPolicy, privileged DaemonSets, FUSE, and bidirectional
    mount propagation. The checked-in policies expect the control plane in
    `ate-system` and CoreDNS in `kube-system`. Arrange node placement so Guild
-   and the Actor workers run on nodes with the JuiceFS and CSI DaemonSets.
+   and the Actor workers run on nodes with the workspace CSI DaemonSet.
 2. Build and publish the server (`Dockerfile.server-ts`), web fetch
    (`deploy/curl-fetch`), adapter (`deploy/kubernetes/substrate-adapter`), and
    CSI (`deploy/kubernetes/workspace-csi`) images. GitHub Actions builds and
@@ -27,18 +29,24 @@ before installing in another namespace on the same cluster. Creating an empty
    `ghcr.io/ematvey/guild-sandbox`, and attaches a `guild-helm-<commit>` artifact
    with the matching digest already set as the chart default. The package owner
    sets the GHCR package to Public for anonymous pulls.
-3. Copy `values.example.yaml`, set the four workload image references and the
-   Substrate atespace, and optionally configure Ingress. The chart uses the
+3. Copy `values.example.yaml`, set the four workload image references,
+   workspace driver name, and Substrate atespace, and optionally configure Ingress. The chart uses the
    ingress host's HTTPS URL for Guild's public API origin. Set `publicOrigin`
-   explicitly when Guild is served at a different external URL. The base manifests
-   expect PostgreSQL, ClickHouse, and RustFS at services named `postgres`,
-   `clickhouse`, and `rustfs` in the target namespace. Provision the databases,
-   S3 bucket, and formatted JuiceFS filesystem before deploying. To use
-   existing services, supply Deployment and DaemonSet overrides for the
-   connection settings and any host paths. Use Secret references for credentials.
-   The base mounts a `guild-data-dir` PVC at `/data`. Set
-   `storage.createDataClaim: false` when supplying a pre-created claim of the
-   same name or when a Deployment override provides another mount.
+   explicitly when Guild is served at a different external URL. The base server
+   expects Kubernetes Services named `postgres`, `clickhouse`, and `rustfs`
+   in the target namespace. Provision the backing services, databases, separate
+   S3 buckets, and formatted JuiceFS filesystem before deploying. Set
+   `storage.applicationBucket` to the application bucket. The JuiceFS
+   filesystem configuration identifies its own workspace bucket.
+4. For production, use a Kubernetes-managed ReadWriteMany JuiceFS PVC and set
+   `storage.workspaceClaim` to its name. Guild and the workspace bridge mount
+   the claim at their workspace roots. The chart uses the claim in place of
+   its JuiceFS mount DaemonSet. Choose a durable `storage.storageClass` for
+   `guild-data-dir` or set `storage.createDataClaim: false` and pre-create
+   that claim. To keep existing plain-chat and session workspace paths in
+   `/data`, set `storage.plainWorkspacesInData: true` and use a ReadWriteMany
+   data claim. The workspace bridge then shares the data claim. Its node
+   socket and Actor mount path remain part of Substrate's CSI plumbing.
 
 Organizations can override `images.actor` with their own
 `registry/repository@sha256:<digest>` image. The image must run Guild's sandbox
@@ -91,21 +99,22 @@ helm upgrade --install guild "$chart" --kube-context "$context" \
   --namespace "$namespace" -f "$values" --dry-run=server
 helm upgrade --install guild "$chart" --kube-context "$context" \
   --namespace "$namespace" -f "$values" --wait --timeout 10m
-kubectl --context "$context" -n "$namespace" rollout status daemonset/guild-juicefs daemonset/guild-workspace-csi
+kubectl --context "$context" -n "$namespace" rollout status daemonset/guild-workspace-csi
 kubectl --context "$context" -n "$namespace" get workerpool guild-actor-workers
 deploy/kubernetes/verify-default-dev.sh "$KUBECONFIG" https://guild.example.org "$namespace" "$context"
 deploy/kubernetes/verify-substrate-runner.sh "$KUBECONFIG" "$namespace" "$atespace" "$context"
 ```
 
+When using the chart’s JuiceFS DaemonSet, also verify its rollout.
 The worker pool is a Substrate custom resource. Verify its ready replica
 count matches `workerReplicas` separately from Helm's rollout wait. Pass the
 configured atespace as the third argument to the runner check when it differs
 from the namespace. The first verification script runs integration and chat
 probes against the configured Guild instance. Use test credentials and an
 approved test workspace when running it in production. The base CSI setup
-uses JuiceFS for both agent and plain-chat workspaces. If your CSI override
-uses a separate plain-chat root, pass its path as seen inside the Guild
-server as the fifth argument to `verify-default-dev.sh` (for example, `/data`).
+uses JuiceFS for both agent and plain-chat workspaces. If
+`storage.plainWorkspacesInData` is enabled, pass `/data` as the fifth
+argument to `verify-default-dev.sh`.
 
 To use existing backing services or site-specific node placement, set
 `workloadSpecs.<workload-name>` to the complete replacement Kubernetes

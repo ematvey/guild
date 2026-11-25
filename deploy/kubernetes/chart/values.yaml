@@ -9,6 +9,9 @@ images:
 
 # Required. Use the existing atespace when moving a deployment.
 atespace: ""
+
+# Required, cluster-wide and stable for this installation.
+workspaceDriverName: ""
 clusterDomain: cluster.local
 workerReplicas: 3
 
@@ -16,6 +19,11 @@ storage:
   createDataClaim: true
   size: 5Gi
   storageClass: ""
+  applicationBucket: guild
+  # An existing shared JuiceFS PVC. Empty uses the chart's JuiceFS DaemonSet.
+  workspaceClaim: ""
+  # Use the Guild data PVC for plain-chat and session workspace paths.
+  plainWorkspacesInData: false
 
 # Empty derives https://<ingress.host> when an ingress host is configured.
 publicOrigin: ""

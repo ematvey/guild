@@ -42,16 +42,26 @@ spec:
   {{- include "guild.workloadSpec" (list . "guild-workspace-csi" (include "guild.spec.guild-workspace-csi" .)) | nindent 2 }}
 
 {{- $endpoint := printf "tcp://guild-workspace-csi.%s.svc.%s:50051" .Release.Namespace .Values.clusterDomain }}
-{{- with lookup "ate.dev/v1" "CSIDriverConfig" "" "workspace.csi.guild.dev" }}
+{{- $driver := include "guild.workspaceDriver" . }}
+{{- if .Release.IsUpgrade }}
+  {{- with lookup "apps/v1" "DaemonSet" .Release.Namespace "guild-workspace-csi" }}
+    {{- range .spec.template.spec.volumes }}
+      {{- if and (eq .name "socket") (ne .hostPath.path (printf "/var/lib/kubelet/plugins/%s" $driver)) }}
+        {{- fail "workspaceDriverName cannot change on an existing Guild release" }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- with lookup "ate.dev/v1" "CSIDriverConfig" "" $driver }}
   {{- if ne .spec.controllerEndpoint $endpoint }}
-    {{- fail "workspace.csi.guild.dev already points at a different endpoint; use the one-time migration runbook or a separate cluster" }}
+    {{- fail (printf "%s already points at a different endpoint; use a distinct workspaceDriverName or perform an explicit transfer" $driver) }}
   {{- end }}
 {{- end }}
 ---
 apiVersion: ate.dev/v1
 kind: CSIDriverConfig
 metadata:
-  name: workspace.csi.guild.dev
+  name: {{ $driver | quote }}
 spec:
-  driverName: workspace.csi.guild.dev
+  driverName: {{ $driver | quote }}
   controllerEndpoint: {{ $endpoint | quote }}

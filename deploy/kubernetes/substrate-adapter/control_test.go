@@ -78,3 +78,29 @@ func TestSandboxImageReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceClassIsScopedToDeployment(t *testing.T) {
+	path := "agents/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002"
+	dev := controller{workspaceDriver: legacyWorkspaceDriver, workerSelector: "sandbox"}
+	prod := controller{workspaceDriver: "workspace.csi.guild.prod", workerSelector: "workspace.csi.guild.prod"}
+	if dev.workspaceClass(path) != resourceName(path) {
+		t.Fatal("existing dev StorageClasses must keep their names")
+	}
+	if prod.workspaceClass(path) == dev.workspaceClass(path) ||
+		prod.workspaceClass(path) == (controller{workspaceDriver: "workspace.csi.guild.stage"}).workspaceClass(path) {
+		t.Fatal("one workspace key produced the same StorageClass in different deployments")
+	}
+	template := &ate.ActorTemplate{
+		WorkerSelector: &ate.Selector{MatchLabels: map[string]string{"guild.dev/workload": prod.workerSelector}},
+		Volumes: []*ate.Volume{{Name: "workspace", External: &ate.ExternalVolumeSource{
+			Template: &ate.ExternalVolumeTemplate{StorageClassName: prod.workspaceClass(path)},
+		}}},
+	}
+	if !prod.usesWorkspace(template, prod.workspaceClass(path)) || dev.usesWorkspace(template, dev.workspaceClass(path)) {
+		t.Fatal("Actor reuse must match its workspace class and deployment worker selector")
+	}
+	template.WorkerSelector.MatchLabels["guild.dev/workload"] = dev.workerSelector
+	if prod.usesWorkspace(template, prod.workspaceClass(path)) {
+		t.Fatal("Actor reuse must not accept a worker selector from a different deployment")
+	}
+}

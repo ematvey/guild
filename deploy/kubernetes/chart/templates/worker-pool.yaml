@@ -5,7 +5,7 @@ metadata:
   name: guild-actor-workers
   namespace: {{ .Release.Namespace }}
   labels:
-    guild.dev/workload: sandbox
+    guild.dev/workload: {{ include "guild.workspaceWorkerSelector" . | quote }}
 spec:
   replicas: {{ .Values.workerReplicas }}
   workerImage: ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.1

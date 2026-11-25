@@ -1,4 +1,11 @@
 atespace: guild-prod
+workspaceDriverName: workspace.csi.guild.prod
+
+storage:
+  applicationBucket: guild-prod
+  workspaceClaim: guild-workspaces
+  storageClass: replace-with-durable-rwx-class
+  plainWorkspacesInData: true
 
 images:
   server: registry.example.org/guild/server:replace-with-build
