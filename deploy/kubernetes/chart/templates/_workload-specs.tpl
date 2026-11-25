@@ -250,11 +250,6 @@ template:
               secretKeyRef:
                 name: guild-server
                 key: GUILD_SANDBOX_RUNNER_TOKEN
-          - name: GUILD_ACTOR_IMAGE
-            valueFrom:
-              configMapKeyRef:
-                name: guild-actor-image
-                key: reference
         ports:
           - containerPort: 8090
         readinessProbe:

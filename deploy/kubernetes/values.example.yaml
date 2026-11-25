@@ -5,7 +5,7 @@ images:
   curl-fetch: registry.example.org/guild/curl-fetch:replace-with-build
   adapter: registry.example.org/guild/substrate-adapter:replace-with-build
   csi: registry.example.org/guild/workspace-csi:replace-with-build
-  actor: registry.example.org/guild/sandbox@sha256:0000000000000000000000000000000000000000000000000000000000000000 # Replace with the published digest.
+  # actor: registry.example.org/guild/sandbox@sha256:<published-digest>
 
 ingress:
   host: guild.example.org

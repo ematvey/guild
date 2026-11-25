@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: guild-actor-image
-  namespace: {{ .Release.Namespace }}
-data:
-  reference: {{ include "guild.image" (list . "actor") }}

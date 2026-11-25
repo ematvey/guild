@@ -1,0 +1,74 @@
+name: Publish Guild sandbox image
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - .github/workflows/publish-sandbox-image.yml
+      - Dockerfile.sandbox
+      - package.json
+      - package-lock.json
+      - apps/**
+      - packages/**
+      - deploy/kubernetes/chart/**
+      - deploy/kubernetes/values.example.yaml
+      - deploy/kubernetes/verify-actor-image.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'ematvey/guild' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_REPOSITORY: ghcr.io/ematvey/guild-sandbox
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.2
+      - name: Build and verify the Actor image
+        run: |
+          docker build -f Dockerfile.sandbox \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$IMAGE_REPOSITORY:$GITHUB_SHA" .
+          deploy/kubernetes/verify-actor-image.sh "$IMAGE_REPOSITORY:$GITHUB_SHA"
+      - name: Push the Actor image
+        id: image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export DOCKER_CONFIG
+          DOCKER_CONFIG=$(mktemp -d)
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag="$IMAGE_REPOSITORY:$GITHUB_SHA"
+          docker push "$tag"
+          reference=$(docker image inspect "$tag" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+            awk -v prefix="$IMAGE_REPOSITORY@" 'index($0, prefix) == 1 { print; exit }')
+          [[ "${reference#"$IMAGE_REPOSITORY@"}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+      - name: Package Helm chart with the published image
+        env:
+          ACTOR_IMAGE: ${{ steps.image.outputs.reference }}
+        run: |
+          chart="$RUNNER_TEMP/guild-chart"
+          cp -R deploy/kubernetes/chart "$chart"
+          sed -i "s|^  actor: \"\"$|  actor: \"$ACTOR_IMAGE\"|" "$chart/values.yaml"
+          grep -Fx "  actor: \"$ACTOR_IMAGE\"" "$chart/values.yaml"
+          helm lint --strict "$chart" -f deploy/kubernetes/values.example.yaml
+          helm package "$chart" --destination dist
+          printf 'Actor image: `%s`\n' "$ACTOR_IMAGE" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: guild-helm-${{ github.sha }}
+          path: dist/guild-*.tgz
+          if-no-files-found: error

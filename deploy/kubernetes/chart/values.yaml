@@ -3,6 +3,7 @@ images:
   curl-fetch: ""
   adapter: ""
   csi: ""
+  # CI packages the chart with the matching GHCR digest. Set this for source installs or custom images.
   actor: ""
   pullPolicy: IfNotPresent
 

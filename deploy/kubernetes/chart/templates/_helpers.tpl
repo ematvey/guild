@@ -1,9 +1,3 @@
-{{- define "guild.image" -}}
-{{- $root := index . 0 -}}
-{{- $name := index . 1 -}}
-{{- required (printf "images.%s is required" $name) (index $root.Values.images $name) | quote -}}
-{{- end -}}
-
 {{- define "guild.workloadSpec" -}}
 {{- $root := index . 0 -}}
 {{- $name := index . 1 -}}
@@ -17,11 +11,16 @@
   {{- if eq .name "adapter" -}}
     {{- $env := list -}}
     {{- range .env -}}
-      {{- if ne .name "GUILD_ATESPACE" -}}
+      {{- if not (has .name (list "GUILD_ATESPACE" "GUILD_ACTOR_IMAGE")) -}}
         {{- $env = append $env . -}}
       {{- end -}}
     {{- end -}}
-    {{- $_ := set . "env" (append $env (dict "name" "GUILD_ATESPACE" "value" (required "atespace is required" $root.Values.atespace))) -}}
+    {{- $actorImage := required "images.actor is required when installing from source" $root.Values.images.actor -}}
+    {{- if not (regexMatch "@sha256:[a-f0-9]{64}$" $actorImage) -}}
+      {{- fail "images.actor must be pinned to a sha256 digest" -}}
+    {{- end -}}
+    {{- $env = append $env (dict "name" "GUILD_ATESPACE" "value" (required "atespace is required" $root.Values.atespace)) -}}
+    {{- $_ := set . "env" (append $env (dict "name" "GUILD_ACTOR_IMAGE" "value" $actorImage)) -}}
   {{- end -}}
 {{- end -}}
 {{- toYaml $spec -}}

@@ -22,11 +22,12 @@ before installing in another namespace on the same cluster. Creating an empty
    and the Actor workers run on nodes with the JuiceFS and CSI DaemonSets.
 2. Build and publish the server (`Dockerfile.server-ts`), web fetch
    (`deploy/curl-fetch`), adapter (`deploy/kubernetes/substrate-adapter`), and
-   CSI (`deploy/kubernetes/workspace-csi`) images. Build the Actor image from
-   `Dockerfile.sandbox` and check it with `verify-actor-image.sh IMAGE`. Push it
-   to a registry reachable from the Substrate workers and use its
-   `registry/repository@sha256:…` digest in the Helm values.
-3. Copy `values.example.yaml`, set the image references and the Substrate
+   CSI (`deploy/kubernetes/workspace-csi`) images. GitHub Actions builds and
+   smoke-tests the Actor image from `Dockerfile.sandbox`, pushes it to
+   `ghcr.io/ematvey/guild-sandbox`, and attaches a `guild-helm-<commit>` artifact
+   with the matching digest already set as the chart default. The package owner
+   sets the GHCR package to Public for anonymous pulls.
+3. Copy `values.example.yaml`, set the four workload image references and the Substrate
    atespace explicitly, and optionally set
    the ingress host, class, annotations, and TLS Secret. The base app manifests
    expect PostgreSQL, ClickHouse, and RustFS at services named `postgres`,
@@ -36,6 +37,13 @@ before installing in another namespace on the same cluster. Creating an empty
    connection settings and any host paths. Use Secret references for credentials.
    The base mounts a `guild-data-dir` PVC at `/data`. Set
    `storage.createDataClaim: false` if your Deployment override supplies it another way.
+
+Organizations can override `images.actor` with their own
+`registry/repository@sha256:<digest>` image. The image must run Guild's sandbox
+RPC entry point and be pullable by Substrate. For a private registry, configure
+Substrate's image pull credentials. Set `images.actor` explicitly when
+installing directly from the chart source in the repository. Changing the
+digest rolls the adapter, and newly created Actors use the new image.
 
 ## Apply and verify
 
@@ -47,7 +55,7 @@ context=my-production-cluster
 namespace=guild-prod
 atespace=guild-prod
 values=/path/to/guild-prod-values.yaml
-chart=deploy/kubernetes/chart
+chart=/path/to/guild-0.1.0.tgz
 
 helm lint --strict "$chart" -f "$values"
 helm template guild "$chart" --namespace "$namespace" -f "$values"
