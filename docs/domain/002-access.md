@@ -17,7 +17,7 @@ Every credential is stamped with the Member's **auth generation** when it is iss
 | Pairing token | A one-time code that enrolls a desktop, which then holds a session | 30 minutes by default, 1–1440 |
 | Connect ticket | A single-use string spent on one socket connect | 30 seconds, in memory |
 
-Revoking a Member's credentials bumps their generation and revokes every session, API key and unused pairing token at once. It happens on an admin password reset and when the OIDC provider refuses the Member's stored refresh token. That recheck runs in the background on activity, at most once per interval. A provider outage changes nothing. A role change revokes nothing.
+Revoking a Member's credentials bumps their generation and revokes every session, API key and unused pairing token at once. It happens on an admin password reset and when the OIDC provider refuses the Member's stored refresh token. That recheck runs in the background on activity, at most once per interval. A provider outage changes nothing. A role change preserves credentials. The member socket clears a selected Activity Run when the new role no longer permits viewing it.
 
 ## Roles
 

@@ -21,7 +21,6 @@ import {
   createIntegration,
   integrationShop,
   integrationTools,
-  renameIntegration,
   saveIntegration,
   testIntegration,
   type IntegrationTestDraft,
@@ -428,25 +427,13 @@ export function registerAdminIntegrationRoutes(
     const body = requireJsonBody(req);
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
-    // Settings and credentials are validated and saved under the stored slug
-    // first: a save that fails leaves the instance's identity untouched. The
-    // rename then moves the secrets in its own transaction. A body that
-    // carries only the identity skips the save, so an incomplete instance
-    // can be named before its credentials exist.
-    const identityOnly = Object.keys(body).every((key) => key === "name" || key === "label");
-    if (!identityOnly) {
-      await saveIntegration(
-        gateway,
-        admin.org_id,
-        { name: existing.name, kind: existing.kind, label: existing.label },
-        existing,
-        body,
-      );
-    }
-    const renamed =
-      body["name"] !== undefined || body["label"] !== undefined
-        ? await renameIntegration(gateway, admin.org_id, id, body)
-        : { name: existing.name, label: existing.label };
+    const renamed = await saveIntegration(
+      gateway,
+      admin.org_id,
+      { name: existing.name, kind: existing.kind, label: existing.label },
+      existing,
+      body,
+    );
     if (renamed.name !== existing.name) {
       await identity.events.emit(admin.org_id, "integration.renamed", {
         from: existing.name,

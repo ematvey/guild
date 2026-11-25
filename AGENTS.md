@@ -106,6 +106,17 @@ only what the repo cannot tell you.
   domains (`example.com`, `example.org`, `example.test`).
   `scripts/check-identifiers.py` fails the gate on a listed identifier or on
   an email domain outside those.
+- **Each Guild deployment has its own workspace CSI driver identity.**
+  Set it in the installation's Helm values. Use the same identity in its
+  cluster-scoped CSI registration, adapter, StorageClass provisioner,
+  admission rules, CSI plugin, and node socket path. Keep the identity
+  stable across upgrades and use a distinct Substrate atespace per
+  deployment.
+- **Production backing services and persistent data are Kubernetes-managed.**
+  Run PostgreSQL, ClickHouse, object storage, and JuiceFS metadata services
+  in Kubernetes. Use Kubernetes-managed volumes for persistent data and
+  separate application and JuiceFS workspace buckets per deployment.
+  Reserve node mounts and sockets for CSI and runtime plumbing.
 - **One installation's data never enters this repository.** Addresses,
   cluster and host names, DSNs, credentials and the deployment manifests of
   a particular installation belong to that installation: its own repository

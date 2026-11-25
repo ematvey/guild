@@ -49,6 +49,7 @@ export const DEFERRED_UNTIL_SYNC: { readonly [T in ServerFrame["type"]]: boolean
   integration_access: false,
   agent_run: false,
   activity_run: false,
+  activity_run_unavailable: false,
   activity_conversation: false,
   agent_threads: false,
   agent_routines: false,

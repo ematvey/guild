@@ -248,6 +248,47 @@ describe("agent and skill state frames", () => {
       await owner.pingBarrier();
       expect(textFrames(owner).some((frame) => isRun(frame, internalRun))).toBe(false);
       expect(textFrames(admin).some((frame) => frame.type === "agent_run" && isRun(frame, ordinaryRun))).toBe(false);
+      const unavailable = (frame: Frame) => frame.type === "activity_run_unavailable" && frame.run_id === internalRun;
+      await stack.env.db.query("UPDATE users SET role = 'member' WHERE id = $1", [stack.adminId]);
+      try {
+        await waitFrame(admin, unavailable);
+        expect(textFrames(idleAdmin).some(unavailable)).toBe(false);
+        const reconnected = await memberSocket(stack.adminToken);
+        try {
+          reconnected.send(JSON.stringify({ type: "sync", run_id: internalRun }));
+          await waitFrame(reconnected, unavailable);
+          expect(textFrames(reconnected).some((frame) => isRun(frame, internalRun))).toBe(false);
+          reconnected.send(JSON.stringify({ type: "sync", run_id: ordinaryRun }));
+          await waitFrame(
+            reconnected,
+            (frame) => frame.type === "activity_run_unavailable" && frame.run_id === ordinaryRun,
+          );
+        } finally {
+          reconnected.end();
+        }
+      } finally {
+        await stack.env.db.query("UPDATE users SET role = 'admin' WHERE id = $1", [stack.adminId]);
+      }
+      await waitFrame(admin, (frame) => isRun(frame, internalRun) && Array.isArray(frame.steps));
+      admin.send(JSON.stringify({ type: "sync", run_id: ordinaryRun }));
+      await waitFrame(admin, (frame) => isRun(frame, ordinaryRun) && Array.isArray(frame.steps));
+
+      // Commit a role change with its NOTIFY missing, then invoke the same
+      // resync callback a recovered LISTEN connection calls.
+      const db = await stack.env.db.connect();
+      try {
+        await db.query("BEGIN");
+        await db.query("ALTER TABLE users DISABLE TRIGGER users_profile_notify");
+        await db.query("UPDATE users SET role = 'member' WHERE id = $1", [stack.adminId]);
+        await db.query("ALTER TABLE users ENABLE TRIGGER users_profile_notify");
+        await db.query("COMMIT");
+        stack.env.app.platform.feed["resync"]();
+        await waitFrame(admin, (frame) => frame.type === "activity_run_unavailable" && frame.run_id === ordinaryRun);
+      } finally {
+        await db.query("ROLLBACK");
+        db.release();
+        await stack.env.db.query("UPDATE users SET role = 'admin' WHERE id = $1", [stack.adminId]);
+      }
     } finally {
       admin.end();
       idleAdmin.end();
