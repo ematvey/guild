@@ -195,7 +195,7 @@ else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
   }
 });
 
-test("automatic stable releases select the next patch and trust only master release events", () => {
+test("manual stable releases default to the next patch and validation trusts only master release events", () => {
   assert.equal(nextStableVersion("1.2.9"), "1.2.10");
   assert.equal(nextStableVersion("1.2.9007199254740993"), "1.2.9007199254740994");
   assert.throws(() => nextStableVersion("1.2.3-dev.42"));
@@ -222,6 +222,53 @@ test("automatic stable releases select the next patch and trust only master rele
     }),
   );
 });
+test("master push uses the matching release PR title and validates a stable increase", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/release-clients.yml", import.meta.url), "utf8");
+  const start = workflow.indexOf('            if [ "$GITHUB_EVENT_NAME" = push ]; then');
+  const end = workflow.indexOf('            git config user.name', start);
+  assert(start >= 0 && end > start);
+  const selection = workflow.slice(start, end);
+  const commit = "a".repeat(40);
+  const matching = {
+    merged_at: "2026-01-01T00:00:00Z",
+    merge_commit_sha: commit,
+    base: { ref: "master", repo: { full_name: "alice/guild" } },
+  };
+  const target = `${Number(baseline.split(".")[0]) + 1}.0.0`;
+  const select = (prs, head = commit) =>
+    execFileSync("bash", ["-euo", "pipefail", "-c", [
+      'git() { printf "%s\\n" "$MASTER_HEAD"; }',
+      'gh() { printf "%s\\n" "$ASSOCIATED_PRS"; }',
+      selection,
+      'printf "%s\\n" "$RELEASE_VERSION"',
+    ].join("\n")], {
+      cwd: new URL("..", import.meta.url),
+      env: {
+        ...process.env,
+        GITHUB_WORKFLOW: "Release clients",
+        GITHUB_REF: "refs/heads/master",
+        GITHUB_EVENT_NAME: "push",
+        GITHUB_SHA: commit,
+        GITHUB_REPOSITORY: "alice/guild",
+        MASTER_HEAD: head,
+        ASSOCIATED_PRS: JSON.stringify(prs),
+        RELEASE_VERSION: "",
+      },
+      encoding: "utf8",
+      stdio: "pipe",
+    }).trim();
+
+  const valid = { ...matching, title: `Release ${target}` };
+  assert.equal(select([[{ ...valid, merged_at: null }], [valid]]), target);
+  assert.throws(() => select([[]]), /expected one merged master release PR/);
+  assert.throws(() => select([[valid, valid]]), /expected one merged master release PR/);
+  assert.throws(() => select([[valid]], "b".repeat(40)), /Master advanced/);
+  assert.throws(() => select([[{ ...matching, title: "Release 9.0.0-dev.1" }]]), /Release X.Y.Z/);
+  assert.throws(() => select([[{ ...matching, title: "Release 09.0.0" }]]), /semver triple/);
+  assert.throws(() => select([[{ ...matching, title: `Release ${baseline}` }]]), /must be greater/);
+  assert.throws(() => select([[{ ...matching, title: "Release 0.0.0" }]]), /must not decrease/);
+});
+
 
 test("develop cleanup keeps newest ten, anything under fourteen days, and installation pins", () => {
   const now = Date.UTC(2026, 10, 20);
