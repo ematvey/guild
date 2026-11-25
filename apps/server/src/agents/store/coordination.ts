@@ -161,6 +161,18 @@ export function queueCoordinationReply(db: Database, values: unknown[]) {
   );
 }
 
+export function queueMissingCoordinationReplies(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs i
+     SET reply_text=$3, reply_due_at=now(), reply_missing=true
+     FROM agent_threads t
+     WHERE t.chat_id=$1 AND t.execution_role='coordinator' AND i.agent_id=t.agent_id
+       AND i.id=ANY($2::uuid[]) AND i.kind='request' AND i.source_thread_id IS NOT NULL
+       AND i.reply_due_at IS NULL`,
+    values,
+  );
+}
+
 export function claimCoordinationReplies<T extends QueryResultRow>(db: Database) {
   return db.query<T>(
     `WITH due AS (

@@ -29,6 +29,7 @@ import {
 } from "./store/run-finish.js";
 import type { AgentRunStore } from "./store/runs.js";
 import { inputRequestIds } from "../storage/postgres/queries.js";
+import { coordinatorAgentForChat, queueMissingCoordinationReplies } from "./store/coordination.js";
 import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
@@ -142,6 +143,17 @@ export class AgentRunLifecycle {
    *  answer. A run that ended before any request still settles the queued
    *  rows created for its inputs, and a failed one is recorded. */
   async runEnd(chatId: string, inputs: readonly number[], failure: string | null): Promise<void> {
+    const { pool } = this.deps;
+    if (inputs.length > 0 && (await coordinatorAgentForChat(pool, [chatId])).rowCount === 1) {
+      const requestIds = (await inputRequestIds(pool, inputs)).filter((id) =>
+        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id),
+      );
+      await queueMissingCoordinationReplies(pool, [
+        chatId,
+        requestIds,
+        "I couldn’t send a reply to this request. Please try again.",
+      ]);
+    }
     const early = this.settledEarly.get(chatId);
     if (early !== undefined && includesAll(inputs, early.inputs)) {
       this.settledEarly.delete(chatId);

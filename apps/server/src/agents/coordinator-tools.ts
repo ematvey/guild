@@ -80,6 +80,21 @@ export function coordinatorTools(deps: {
     if (row === undefined) throw new Error("input_id must reference an input of this Agent");
     return row;
   };
+  const isActiveRequest = async (
+    inputId: string,
+    api: ToolExecutionApi,
+    context: Parameters<ToolRegistration["execute"]>[2],
+  ) => {
+    const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+    const requests = await inputRequestIds(pool, active?.inputs.map(Number) ?? []);
+    return requests.includes(inputId);
+  };
+  const queueReply = async (id: string, value: unknown) => {
+    const text = String(value).trim();
+    if (text === "") throw new Error("Reply text must not be empty");
+    const result = await queueCoordinationReply(pool, [id, agent.id, text]);
+    return { input_id: id, queued: result.rowCount === 1, reused: result.rowCount === 0 };
+  };
   const routineManager = async (
     inputId: unknown,
     api: ToolExecutionApi,
@@ -160,17 +175,16 @@ export function coordinatorTools(deps: {
       ["input_id", "text"],
       async (args, _callId, api, context) => {
         const origin = await source(args["input_id"]);
-        const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
-        const requests = await inputRequestIds(pool, active?.inputs.map(Number) ?? []);
-        if (origin.kind !== "request" || origin.source_thread_id === null || !requests.includes(origin.id)) {
+        if (
+          origin.kind !== "request" ||
+          origin.source_thread_id === null ||
+          !(await isActiveRequest(origin.id, api, context))
+        ) {
           throw new Error("Replies require a direct request from the active Turn");
         }
         const member = await deps.identity.getUser(origin.user_id);
         await store.requireAccess(member, agent.id, "use");
-        const text = String(args["text"]).trim();
-        if (text === "") throw new Error("Reply text must not be empty");
-        const result = await queueCoordinationReply(pool, [origin.id, agent.id, text]);
-        return { input_id: origin.id, queued: result.rowCount === 1, reused: result.rowCount === 0 };
+        return queueReply(origin.id, args["text"]);
       },
     ),
     tool(
@@ -178,10 +192,22 @@ export function coordinatorTools(deps: {
       "Explicitly send a short reply to the user and thread identified by input_id. Optional thread_id must belong to that user and this Agent. Surface a task with surface_thread_id.",
       { input_id: str, text: str, thread_id: str, surface_thread_id: str },
       ["input_id", "text"],
-      async (args, callId) => {
+      async (args, callId, api, context) => {
         const origin = await source(args["input_id"]);
         const member = await deps.identity.getUser(origin.user_id);
         await store.requireAccess(member, agent.id, "use");
+        if (
+          origin.kind === "request" &&
+          origin.source_thread_id !== null &&
+          (args["thread_id"] === undefined || args["thread_id"] === origin.source_thread_id) &&
+          (await isActiveRequest(origin.id, api, context))
+        ) {
+          const receipt = await queueReply(origin.id, args["text"]);
+          if (typeof args["surface_thread_id"] === "string") {
+            await store.threads.surfaceThread(args["surface_thread_id"], origin.user_id);
+          }
+          return receipt;
+        }
         const target = typeof args["thread_id"] === "string" ? args["thread_id"] : origin.source_thread_id;
         if (target === null) throw new Error("Choose a recipient thread_id for this event");
         const thread = await store.threads.getThread(agent.id, origin.user_id, target);
