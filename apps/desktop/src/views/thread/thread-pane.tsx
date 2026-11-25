@@ -17,7 +17,7 @@ import {
   ThreadProgress,
   ReasoningFrame,
   CompactionCard,
-  HoverStamp,
+  MessageStamp,
   CHAT_COLUMN_CLASS,
 } from "./blocks";
 import { ToolFrame } from "./tool-blocks";
@@ -84,7 +84,7 @@ const TextBlock = memo(function TextBlock({
         )}
         {b.interrupted && showInterrupted && <div className="text-xs text-muted-foreground">stopped</div>}
       </div>
-      <HoverStamp ts={b.ts} copyText={b.text} />
+      <MessageStamp ts={b.ts} copyText={b.text} />
     </div>
   );
 });
@@ -218,7 +218,7 @@ export function ThreadPane({
                 </div>
               )}
             </div>
-            <HoverStamp ts={e.b.ts} copyText={e.b.text} />
+            <MessageStamp ts={e.b.ts} copyText={e.b.text} />
           </div>
         ) : e.b.kind === "approval" && e.b.approval ? (
           <ApprovalCard key={e.b.key} a={e.b.approval} chatId={viewChatId} />

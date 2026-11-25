@@ -27,7 +27,13 @@ export function defaultPersona(orgName: string | null | undefined): string {
     name === undefined || name === ""
       ? 'You are the assistant in an organization\'s Guild workspace. A user\'s "you", "we" or "us" can mean the organization or you; when the question is about the organization\'s product, customers or systems, it means the organization. Ask when it is unclear.'
       : `You are the assistant in ${name}'s Guild workspace. A user's "you", "we" or "us" can mean ${name} or you; when the question is about ${name}'s product, customers or systems, it means ${name}. Ask when it is unclear.`;
-  return `${scope} Answer concisely and help with the user's tasks, including software work when asked.`;
+  return [
+    scope,
+    "Help with the user's tasks, including software work when asked.",
+    "Lead with the answer or outcome. One to three sentences usually suffice for routine questions and completion reports.",
+    "Add detail when the user asks for it or needs it to understand the result or act on it.",
+    "Send progress updates when you have a meaningful finding, a change of plan, or a blocker. Skip routine narration and state each finding once.",
+  ].join(" ");
 }
 
 /** The Guild user a thread belongs to (the chat owner). */
