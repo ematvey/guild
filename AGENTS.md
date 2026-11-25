@@ -68,8 +68,9 @@ only what the repo cannot tell you.
   release, publish a prerelease from the working branch, approve it on the dev
   stack, and verify all four platforms in its updater manifest
   (`docs/clients.md` §4).
-- **Title stable release PRs `Release X.Y.Z`.** Use the intended stable
-  version. The master release workflow reads and validates the merged PR title.
+- **Title stable release PRs `Release X.Y.Z`.** Use the target stable
+  version. For the default patch release, compute it from the version on
+  `master`. The master release workflow reads and validates the merged PR title.
 - **Committed versions change only in the master release workflow.**
   `scripts/bump-version.sh` updates the synchronized product version on `master`.
   Branch/local builds use `scripts/release.mjs preview` to stamp a temporary
@@ -106,6 +107,17 @@ only what the repo cannot tell you.
   domains (`example.com`, `example.org`, `example.test`).
   `scripts/check-identifiers.py` fails the gate on a listed identifier or on
   an email domain outside those.
+- **Each Guild deployment has its own workspace CSI driver identity.**
+  Set it in the installation's Helm values. Use the same identity in its
+  cluster-scoped CSI registration, adapter, StorageClass provisioner,
+  admission rules, CSI plugin, and node socket path. Keep the identity
+  stable across upgrades and use a distinct Substrate atespace per
+  deployment.
+- **Production backing services and persistent data are Kubernetes-managed.**
+  Run PostgreSQL, ClickHouse, object storage, and JuiceFS metadata services
+  in Kubernetes. Use Kubernetes-managed volumes for persistent data and
+  separate application and JuiceFS workspace buckets per deployment.
+  Reserve node mounts and sockets for CSI and runtime plumbing.
 - **One installation's data never enters this repository.** Addresses,
   cluster and host names, DSNs, credentials and the deployment manifests of
   a particular installation belong to that installation: its own repository
