@@ -668,6 +668,29 @@ describe("configured coordinator conversation", () => {
         content: payload.content, decision: { off: "ignored", observe: "would_accept", auto: "accepted" }[mode],
         matched_rule: mode === "off" ? null : "review", launched: mode === "auto", wakes: 0,
       });
+      if (mode === "observe") {
+        await waitFor(async () => (await stack.env.db.query(
+          `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+           WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+        )).rowCount === 0, 10000);
+        const coordinationUrl = `/api/v1/agents/${agentId}/coordination`;
+        const paused = await app.inject({ method: "PUT", url: coordinationUrl + "/pause", headers, payload: { paused: true } });
+        expect(paused.statusCode).toBe(200);
+        const reevaluated = await app.inject({ method: "POST", url: coordinationUrl + `/${inputId}/reevaluate`, headers });
+        expect(reevaluated.statusCode, reevaluated.body).toBe(200);
+        await app.platform.coordination.tick();
+        const snapshot = await app.inject({ method: "GET", url: coordinationUrl, headers });
+        expect(snapshot.json()).toMatchObject({ paused: true, outcomes: [{ id: inputId, decision: null, delivered_at: null }] });
+        const resumed = await app.inject({ method: "PUT", url: coordinationUrl + "/pause", headers, payload: { paused: false } });
+        expect(resumed.statusCode).toBe(200);
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND evaluation_request_id IS NOT NULL AND decision='would_accept'",
+            [inputId],
+          )).rowCount === 1;
+        }, 10000);
+      }
       await waitFor(async () => (await stack.env.db.query(
         `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
          WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],

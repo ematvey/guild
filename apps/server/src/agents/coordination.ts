@@ -108,6 +108,7 @@ export interface CoordinationInput {
   handback_reason?: string | null;
   source_name?: string | null;
   source_key?: string | null;
+  evaluation_request_id?: string | null;
   routine_id?: string | null;
   occurrence_id?: string | null;
   kind: string;
@@ -361,7 +362,7 @@ export class AgentCoordination {
           : [];
       await runtime.submitTurn(coordinator.chat_id, agent.org_id, {
         orgId: agent.org_id,
-        requestId: input.id,
+        requestId: input.evaluation_request_id ?? input.id,
         content,
         images,
         model,

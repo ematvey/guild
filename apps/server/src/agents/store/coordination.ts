@@ -42,6 +42,8 @@ export function claimCoordinationInputs<T extends QueryResultRow = QueryResultRo
     `WITH due AS (
         SELECT i.id FROM agent_coordination_inputs i JOIN agents a ON a.id = i.agent_id
         WHERE i.delivered_at IS NULL AND i.due_at <= now() AND (i.lease_until IS NULL OR i.lease_until < now())
+          AND (i.kind <> 'candidate' OR NOT EXISTS (
+            SELECT 1 FROM agent_coordination_state s WHERE s.agent_id=i.agent_id AND s.paused_at IS NOT NULL))
           AND a.status = 'active' AND COALESCE(CASE WHEN jsonb_typeof(a.resources #> '{assistant,enabled}')='boolean' THEN (a.resources #>> '{assistant,enabled}')::boolean END, a.is_personal)
         ORDER BY i.seq LIMIT 40 FOR UPDATE OF i SKIP LOCKED
       ), claimed AS (
@@ -194,7 +196,7 @@ export function settleUnansweredCoordinationCandidates(db: Database, values: unk
   return db.query(
     `UPDATE agent_coordination_inputs i SET decision='unavailable', decision_reason='No current admission decision'
      FROM agent_threads t WHERE t.chat_id=$1 AND t.execution_role='coordinator' AND i.agent_id=t.agent_id
-       AND i.id=ANY($2::uuid[]) AND i.kind='candidate' AND i.decision IS NULL`,
+       AND COALESCE(i.evaluation_request_id,i.id)=ANY($2::uuid[]) AND i.kind='candidate' AND i.decision IS NULL`,
     values,
   );
 }
@@ -203,7 +205,59 @@ export function hasCoordinationCandidates(db: Database, values: unknown[]) {
   return db.query(
     `SELECT 1 FROM agent_coordination_inputs i JOIN agent_threads t ON t.agent_id=i.agent_id
      WHERE t.chat_id=$1 AND t.execution_role='coordinator' AND i.kind='candidate'
-       AND i.id=ANY($2::uuid[]) LIMIT 1`,
+       AND COALESCE(i.evaluation_request_id,i.id)=ANY($2::uuid[]) LIMIT 1`,
+    values,
+  );
+}
+
+export function activeCoordinationInput(db: Database, values: unknown[]) {
+  return db.query(
+    `SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2
+       AND COALESCE(evaluation_request_id,id)=ANY($3::uuid[])`,
+    values,
+  );
+}
+
+export function setCoordinationPaused(db: Database, values: unknown[]) {
+  return db.query(
+    `INSERT INTO agent_coordination_state(agent_id,paused_at)
+     VALUES($1,CASE WHEN $2::boolean THEN now() END)
+     ON CONFLICT (agent_id) DO UPDATE SET
+       paused_at=CASE WHEN $2::boolean THEN COALESCE(agent_coordination_state.paused_at,now()) END`,
+    values,
+  );
+}
+
+export function coordinationPaused<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(`SELECT paused_at FROM agent_coordination_state WHERE agent_id=$1`, values);
+}
+
+export function reevaluateSourceCandidate(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs i SET decision=NULL,decision_reason=NULL,matched_rule=NULL,
+       source_policy=$4,evaluation_request_id=gen_random_uuid(),source_thread_id=COALESCE(i.source_thread_id,$5),
+       wake=true,delivered_at=NULL,due_at=now(),lease_until=NULL,reflected_at=NULL
+     FROM agents a WHERE i.id=$1 AND i.agent_id=$2 AND i.user_id=$3 AND a.id=i.agent_id
+       AND i.kind='candidate' AND i.decision IN ('ignored','would_accept','unavailable')
+       AND i.content<>'' AND ($4::jsonb->'sources') ? i.source_name
+       AND $4::jsonb=a.resources #> '{assistant,admission}'`,
+    values,
+  );
+}
+
+export function listCoordinationOutcomes<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(
+    `SELECT i.id,i.kind,i.source_name,i.source_key,i.created_at,i.delivered_at,i.reply_due_at IS NOT NULL AS reply_queued,
+            i.reply_missing,i.reply_delivered_at,i.reply_failed_at,i.decision,i.decision_reason,i.matched_rule,
+            i.accepted_scope,i.launched_run_id,i.launch_error,r.status AS run_status,r.work_report_state,
+            r.work_report_summary,r.work_report_question, origin.chat_id AS source_chat_id,worker.chat_id AS worker_chat_id
+     FROM agent_coordination_inputs i
+     LEFT JOIN agent_runs r ON r.id=i.launched_run_id
+     LEFT JOIN agent_threads origin ON origin.id=i.source_thread_id AND origin.user_id=i.user_id
+     LEFT JOIN agent_threads worker ON worker.id=r.thread_id AND worker.user_id=i.user_id
+     WHERE i.agent_id=$1 AND ($2::uuid IS NULL OR i.user_id=$2)
+       AND i.kind IN ('request','candidate','work_followup')
+     ORDER BY i.seq DESC LIMIT 100`,
     values,
   );
 }
@@ -245,6 +299,8 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
     `WITH due AS (
        SELECT id FROM agent_coordination_inputs
        WHERE launch_due_at <= now() AND launched_run_id IS NULL AND launch_error IS NULL
+         AND NOT EXISTS (SELECT 1 FROM agent_coordination_state s
+           WHERE s.agent_id=agent_coordination_inputs.agent_id AND s.paused_at IS NOT NULL)
        ORDER BY launch_due_at,seq LIMIT 16 FOR UPDATE SKIP LOCKED
      )
      UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'

@@ -2,6 +2,7 @@ import {
   readCoordinationSource,
   queueCoordinationReply,
   acceptCoordinationWork,
+  activeCoordinationInput,
   recordCoordinationDecision,
   isInternalChat,
   insertCoordinatorWake,
@@ -18,7 +19,7 @@ import type { PlatformPool } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
 import type { Agent } from "./types.js";
 import type { IdentityStore } from "../platform/store/identity.js";
-import { uuidv5 } from "../platform/time.js";
+import { isUuid, uuidv5 } from "../platform/time.js";
 import { authorizeSpawn, spawn, send, createSubagentTools, MAX_CHILD_NAME_CHARS, type SubagentsToolContext } from "./subagents.js";
 import { coordinationAdmission, coordinationSettings } from "./coordination.js";
 import { agentMessageEntry } from "../chats/agent-message.js";
@@ -89,7 +90,7 @@ export function coordinatorTools(deps: {
   ) => {
     const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
     const requests = await inputRequestIds(pool, active?.inputs.map(Number) ?? []);
-    return requests.includes(inputId);
+    return (await activeCoordinationInput(pool, [inputId, agent.id, requests.filter(isUuid)])).rowCount === 1;
   };
   const queueReply = async (id: string, value: unknown) => {
     const text = String(value).trim();
