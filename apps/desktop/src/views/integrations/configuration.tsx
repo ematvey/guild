@@ -467,6 +467,7 @@ export function ConfigurationTab({
             onClick={() => {
               setForm(initial);
               setSecretDraft({});
+              setIdentity({ name: item.name, label: item.label });
               setError(null);
             }}
           >
