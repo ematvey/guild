@@ -84,6 +84,10 @@ export interface CoordinationInput {
 }
 
 export function coordinationPreamble(input: CoordinationInput): string {
+  const delivery =
+    input.kind === "request"
+      ? `\n\n<inbox_delivery>Send your visible reply now by calling send_message with input_id ${input.id}. If you need to delegate, send the Member a short acknowledgment before spawning. Final assistant text is private.</inbox_delivery>`
+      : "";
   return `<coordination_input>\n${JSON.stringify({
     input_id: input.id,
     kind: input.kind,
@@ -94,7 +98,7 @@ export function coordinationPreamble(input: CoordinationInput): string {
     ...(input.kind === "routine"
       ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null }
       : {}),
-  })}\n</coordination_input>\n${input.content}`;
+  })}\n</coordination_input>\n${input.content}${delivery}`;
 }
 
 /** The inbox thread's title: the member's own assistant is "Your
