@@ -3,4 +3,4 @@ metadata:
 bindings:
   - role: editor
     members:
-      - user:system:serviceaccount:guild-experiment:guild-substrate
+      - user:system:serviceaccount:guild-prod:guild-substrate

@@ -1,12 +1,13 @@
+---
 apiVersion: ate.dev/v1
 kind: WorkerPool
 metadata:
   name: guild-actor-workers
-  namespace: guild-experiment
+  namespace: {{ .Release.Namespace }}
   labels:
     guild.dev/workload: sandbox
 spec:
-  replicas: 3
+  replicas: {{ .Values.workerReplicas }}
   workerImage: ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.1
   sandboxClasses:
     - name: gvisor
@@ -18,12 +19,13 @@ spec:
       limits:
         cpu: "2"
         memory: 2Gi
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: guild-actor-worker-egress
-  namespace: guild-experiment
+  namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:

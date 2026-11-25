@@ -1,0 +1,31 @@
+images:
+  server: ""
+  curl-fetch: ""
+  adapter: ""
+  csi: ""
+  # CI packages the chart with the matching GHCR digest. Set this for source installs or custom images.
+  actor: ""
+  pullPolicy: IfNotPresent
+
+# Required. Use the existing atespace when moving a deployment.
+atespace: ""
+clusterDomain: cluster.local
+workerReplicas: 3
+
+storage:
+  createDataClaim: true
+  size: 5Gi
+  storageClass: ""
+
+# Empty derives https://<ingress.host> when an ingress host is configured.
+publicOrigin: ""
+
+ingress:
+  host: ""
+  className: ""
+  tlsSecret: ""
+  annotations: {}
+
+# Optional complete specs, keyed by workload name. Images, pull policy and the
+# adapter atespace still come from the top-level values.
+workloadSpecs: {}

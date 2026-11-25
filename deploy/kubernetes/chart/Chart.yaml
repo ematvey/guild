@@ -1,0 +1,5 @@
+apiVersion: v2
+name: guild
+description: Guild application and Agent Substrate sandbox infrastructure
+type: application
+version: 0.1.0

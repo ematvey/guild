@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-kubeconfig="${1:?usage: verify-substrate-runner.sh KUBECONFIG}"
-[[ "$(kubectl --kubeconfig "$kubeconfig" config current-context)" == k3d-guild-agent-experiment ]]
-kube=(kubectl --kubeconfig "$kubeconfig" -n guild-experiment)
-ate=(kubectl-ate --kubeconfig "$kubeconfig" --preview)
+kubeconfig="${1:?usage: verify-substrate-runner.sh KUBECONFIG NAMESPACE ATESPACE CONTEXT}"
+namespace="${2:?provide the Kubernetes namespace}"
+atespace="${3:?provide the Substrate atespace}"
+context="${4:?provide the Kubernetes context}"
+kube=(kubectl --kubeconfig "$kubeconfig" --context "$context" -n "$namespace")
+ate=(kubectl-ate --kubeconfig "$kubeconfig" --context "$context" --preview)
 manifest_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 org=00000000-0000-4000-8000-000000000001
 agent="$(cat /proc/sys/kernel/random/uuid)"
@@ -28,7 +30,7 @@ name="$(probe write)"
 printf '%s created and wrote through Guild RunnerClient\n' "$name"
 suspended=false
 for _ in {1..50}; do
-  if "${ate[@]}" get actor "$name" -a guild-experiment -o json |
+  if "${ate[@]}" get actor "$name" -a "$atespace" -o json |
     jq -e '.status.state == "ACTOR_STATE_SUSPENDED"' >/dev/null; then
     suspended=true
     break
@@ -38,6 +40,6 @@ done
 [[ "$suspended" == true ]]
 printf '%s suspended after disconnect\n' "$name"
 [[ "$(probe read)" == "$name" ]]
-"${ate[@]}" get actor "$name" -a guild-experiment -o json |
+"${ate[@]}" get actor "$name" -a "$atespace" -o json |
   jq -e '.status.state == "ACTOR_STATE_RUNNING"' >/dev/null
 printf '%s resumed on demand and read the original file\n' "$name"

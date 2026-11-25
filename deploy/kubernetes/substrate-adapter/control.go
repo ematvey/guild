@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	atespace        = "guild-experiment"
 	workspaceDriver = "workspace.csi.guild.dev"
 	uuid            = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )
@@ -56,11 +55,12 @@ func resourceName(value string) string {
 	return fmt.Sprintf("guild-%x", digest[:16])
 }
 
-func ref(name string) *ate.ObjectRef {
-	return &ate.ObjectRef{Atespace: atespace, Name: name}
+func (c controller) ref(name string) *ate.ObjectRef {
+	return &ate.ObjectRef{Atespace: c.atespace, Name: name}
 }
 
 type controller struct {
+	atespace         string
 	ate              ate.ControlClient
 	kube             *http.Client
 	image            string
@@ -160,7 +160,7 @@ func workspaceTemplateName(path, image, snapshotLocation string) string {
 
 func (c controller) ensure(ctx context.Context, name, path string) error {
 	template := workspaceTemplateName(path, c.image, c.snapshotLocation)
-	existing, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	existing, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: c.ref(name)})
 	if err == nil {
 		// Existing Actors keep their image and snapshot settings. Check the
 		// storage mapping before reusing an Actor from a previous rollout.
@@ -188,7 +188,7 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		return err
 	}
 	_, err = c.ate.CreateActorTemplate(ctx, &ate.CreateActorTemplateRequest{ActorTemplate: &ate.ActorTemplate{
-		Metadata:       &ate.ResourceMetadata{Atespace: atespace, Name: template},
+		Metadata:       &ate.ResourceMetadata{Atespace: c.atespace, Name: template},
 		WorkerSelector: &ate.Selector{MatchLabels: map[string]string{"guild.dev/workload": "sandbox"}},
 		Containers: []*ate.Container{{
 			Name: "sandbox", Image: c.image, Command: []string{"/usr/local/bin/node", "/opt/guild/actor.js"},
@@ -213,7 +213,7 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		return err
 	}
 	_, err = c.ate.CreateActor(ctx, &ate.CreateActorRequest{Actor: &ate.Actor{
-		Metadata: &ate.ResourceMetadata{Atespace: atespace, Name: name}, ActorTemplate: ref(template),
+		Metadata: &ate.ResourceMetadata{Atespace: c.atespace, Name: name}, ActorTemplate: c.ref(template),
 	}})
 	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return err
@@ -243,14 +243,14 @@ func needsIdleSuspend(state ate.ActorState) bool {
 // Returns whether an idle check should run again while the Actor is still
 // transitioning. Substrate can start or continue a suspension in two states.
 func (c controller) suspendIdleActor(ctx context.Context, name string) (bool, error) {
-	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: c.ref(name)})
 	if err != nil {
 		return false, err
 	}
 	state := actor.GetStatus().GetState()
 	switch state {
 	case ate.ActorState_ACTOR_STATE_RUNNING, ate.ActorState_ACTOR_STATE_SUSPENDING:
-		_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+		_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: c.ref(name)})
 		return false, err
 	default:
 		return needsIdleSuspend(state), nil
@@ -258,11 +258,11 @@ func (c controller) suspendIdleActor(ctx context.Context, name string) (bool, er
 }
 
 func (c controller) suspendIfNeeded(ctx context.Context, name string) error {
-	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: ref(name)})
+	actor, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: c.ref(name)})
 	if err != nil || actor.GetStatus().GetState() == ate.ActorState_ACTOR_STATE_SUSPENDED {
 		return err
 	}
-	_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(name)})
+	_, err = c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: c.ref(name)})
 	return err
 }
 
@@ -270,11 +270,11 @@ func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {
 	switch actor.GetStatus().GetState() {
 	case ate.ActorState_ACTOR_STATE_SUSPENDING:
 		// Resume requires a completed suspension. Substrate can re-enter it.
-		_, err := c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: ref(actor.GetMetadata().GetName())})
+		_, err := c.ate.SuspendActor(ctx, &ate.SuspendActorRequest{Actor: c.ref(actor.GetMetadata().GetName())})
 		return err
 	case ate.ActorState_ACTOR_STATE_CRASHED, ate.ActorState_ACTOR_STATE_REVERTING:
 		// Revert is restartable and preserves the last completed snapshot and external workspace.
-		_, err := c.ate.RevertActor(ctx, &ate.RevertActorRequest{Actor: ref(actor.GetMetadata().GetName())})
+		_, err := c.ate.RevertActor(ctx, &ate.RevertActorRequest{Actor: c.ref(actor.GetMetadata().GetName())})
 		return err
 	default:
 		return nil
@@ -284,9 +284,9 @@ func (c controller) recoverActor(ctx context.Context, actor *ate.Actor) error {
 func (c controller) ensureEgress(ctx context.Context, name string) error {
 	// The existing Guild registry allowlist, expressed as TLS-only DNS rules.
 	_, err := c.ate.CreateActorEgressPolicy(ctx, &ate.CreateActorEgressPolicyRequest{
-		Actor: ref(name),
+		Actor: c.ref(name),
 		EgressPolicy: &ate.EgressPolicy{
-			Metadata: &ate.ResourceMetadata{Atespace: atespace, Name: "default"},
+			Metadata: &ate.ResourceMetadata{Atespace: c.atespace, Name: "default"},
 			Rules: []*ate.EgressRule{{TlsPassthrough: &ate.TlsPassthroughRule{
 				Hostnames: []string{
 					"registry.npmjs.org", "yarnpkg.com", "*.yarnpkg.com",

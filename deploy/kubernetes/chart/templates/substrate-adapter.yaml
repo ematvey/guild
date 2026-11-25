@@ -1,0 +1,104 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guild-substrate
+  namespace: {{ .Release.Namespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-workspace-classes
+rules:
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, create]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-workspace-classes
+subjects:
+  - kind: ServiceAccount
+    name: guild-substrate
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-workspace-classes
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ .Release.Namespace }}-workspace-classes
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [storage.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [storageclasses]
+  matchConditions:
+    - name: {{ .Release.Namespace }}-adapter
+      expression: request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:guild-substrate'
+  validations:
+    - expression: >-
+        object.metadata.name.matches('^guild-[0-9a-f]{32}$') &&
+        object.provisioner == 'workspace.csi.guild.dev' &&
+        has(object.reclaimPolicy) && object.reclaimPolicy == 'Retain' &&
+        has(object.parameters) && object.parameters.size() == 1 &&
+        'workspaceKey' in object.parameters
+      message: Guild may only create retained workspace StorageClasses for its CSI driver
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ .Release.Namespace }}-workspace-classes
+spec:
+  policyName: {{ .Release.Namespace }}-workspace-classes
+  validationActions: [Deny]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guild-substrate
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: guild-substrate
+  ports:
+    - {name: control, port: 8090}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guild-substrate
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: guild-substrate
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: guild
+      ports:
+        - port: 8090
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guild-substrate
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- include "guild.workloadSpec" (list . "guild-substrate" (include "guild.spec.guild-substrate" .)) | nindent 2 }}

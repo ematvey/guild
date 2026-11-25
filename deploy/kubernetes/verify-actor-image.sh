@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image="${1:-guild-k8s-actor:experiment}"
+image="${1:?usage: verify-actor-image.sh IMAGE}"
 container="$(docker run --rm --detach --network none --tmpfs /workspace:uid=1000,gid=1000 "$image" node /opt/guild/actor.js)"
 trap 'docker stop "$container" >/dev/null' EXIT
 
