@@ -1,3 +1,4 @@
+{{- if not .Values.storage.workspaceClaim }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -6,3 +7,4 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   {{- include "guild.workloadSpec" (list . "guild-juicefs" (include "guild.spec.guild-juicefs" .)) | nindent 2 }}
+{{- end }}

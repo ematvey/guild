@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	workspaceDriver = "workspace.csi.guild.dev"
-	uuid            = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+	legacyWorkspaceDriver = "workspace.csi.guild.dev"
+	uuid                  = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )
 
 var (
@@ -65,6 +65,8 @@ type controller struct {
 	kube             *http.Client
 	image            string
 	snapshotLocation string
+	workspaceDriver  string
+	workerSelector   string
 }
 
 func roots(path string) (*x509.CertPool, error) {
@@ -107,7 +109,7 @@ func (c controller) ensureStorage(ctx context.Context, name, path string) error 
 		return err
 	}
 	const url = "https://kubernetes.default.svc/apis/storage.k8s.io/v1/storageclasses"
-	class := storageClass{APIVersion: "storage.k8s.io/v1", Kind: "StorageClass", Provisioner: workspaceDriver,
+	class := storageClass{APIVersion: "storage.k8s.io/v1", Kind: "StorageClass", Provisioner: c.workspaceDriver,
 		Parameters: map[string]string{"workspaceKey": path}, ReclaimPolicy: "Retain"}
 	class.Metadata.Name = name
 	body, err := json.Marshal(class)
@@ -141,7 +143,7 @@ func (c controller) ensureStorage(ctx context.Context, name, path string) error 
 		defer current.Body.Close()
 		var stored storageClass
 		if current.StatusCode == 200 && json.NewDecoder(current.Body).Decode(&stored) == nil &&
-			stored.Provisioner == workspaceDriver && stored.Parameters["workspaceKey"] == path {
+			stored.Provisioner == c.workspaceDriver && stored.Parameters["workspaceKey"] == path {
 			return nil
 		}
 		return errors.New("existing StorageClass differs from the Guild workspace mapping")
@@ -158,19 +160,31 @@ func workspaceTemplateName(path, image, snapshotLocation string) string {
 	return resourceName(spec)
 }
 
+func (c controller) workspaceClass(path string) string {
+	if c.workspaceDriver == legacyWorkspaceDriver {
+		return resourceName(path)
+	}
+	return resourceName(c.workspaceDriver + "\n" + path)
+}
+
 func (c controller) ensure(ctx context.Context, name, path string) error {
-	template := workspaceTemplateName(path, c.image, c.snapshotLocation)
+	class := c.workspaceClass(path)
+	templatePath := path
+	if c.workspaceDriver != legacyWorkspaceDriver {
+		templatePath = class
+	}
+	template := workspaceTemplateName(templatePath, c.image, c.snapshotLocation)
 	existing, err := c.ate.GetActor(ctx, &ate.GetActorRequest{Actor: c.ref(name)})
 	if err == nil {
 		// Existing Actors keep their image and snapshot settings. Check the
 		// storage mapping before reusing an Actor from a previous rollout.
 		if existing.GetActorTemplate().GetName() != template &&
-			existing.GetActorTemplate().GetName() != resourceName(path+"\n"+c.image) {
+			(c.workspaceDriver != legacyWorkspaceDriver || existing.GetActorTemplate().GetName() != resourceName(path+"\n"+c.image)) {
 			previous, err := c.ate.GetActorTemplate(ctx, &ate.GetActorTemplateRequest{ActorTemplate: existing.GetActorTemplate()})
 			if err != nil {
 				return err
 			}
-			if !guildManagedActor(previous) || !usesWorkspace(previous, path) {
+			if !guildManagedActor(previous) || !c.usesWorkspace(previous, class) {
 				return errors.New("existing Actor uses a different workspace template")
 			}
 		}
@@ -183,13 +197,12 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 		return err
 	}
 
-	class := resourceName(path)
 	if err := c.ensureStorage(ctx, class, path); err != nil {
 		return err
 	}
 	_, err = c.ate.CreateActorTemplate(ctx, &ate.CreateActorTemplateRequest{ActorTemplate: &ate.ActorTemplate{
 		Metadata:       &ate.ResourceMetadata{Atespace: c.atespace, Name: template},
-		WorkerSelector: &ate.Selector{MatchLabels: map[string]string{"guild.dev/workload": "sandbox"}},
+		WorkerSelector: &ate.Selector{MatchLabels: map[string]string{"guild.dev/workload": c.workerSelector}},
 		Containers: []*ate.Container{{
 			Name: "sandbox", Image: c.image, Command: []string{"/usr/local/bin/node", "/opt/guild/actor.js"},
 			Env: []*ate.EnvVar{
@@ -221,10 +234,13 @@ func (c controller) ensure(ctx context.Context, name, path string) error {
 	return c.ensureEgress(ctx, name)
 }
 
-func usesWorkspace(template *ate.ActorTemplate, path string) bool {
+func (c controller) usesWorkspace(template *ate.ActorTemplate, class string) bool {
+	if template.GetWorkerSelector().GetMatchLabels()["guild.dev/workload"] != c.workerSelector {
+		return false
+	}
 	for _, volume := range template.GetVolumes() {
 		if volume.GetName() == "workspace" {
-			return volume.GetExternal().GetTemplate().GetStorageClassName() == resourceName(path)
+			return volume.GetExternal().GetTemplate().GetStorageClassName() == class
 		}
 	}
 	return false
