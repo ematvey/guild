@@ -245,7 +245,9 @@ export function ActivityPage({
     };
   }, [tab, period, status, trigger, q, caller, model, agentId, background, tick, scope, seedEpoch]);
 
-  useActivityRunUpdates(({ run, counts }, epoch) => {
+  useActivityRunUpdates((frame, epoch) => {
+    if (frame.type !== "activity_run") return;
+    const { run, counts } = frame;
     const threadId = run.thread_id;
     if (tab === "chats" && counts !== null && threadId !== null && (!run.internal || background)) {
       setUpdates((current) => {
@@ -875,7 +877,9 @@ export function ConversationPage({
     setTick((current) => current + 1);
   };
 
-  useActivityRunUpdates(({ run }) => {
+  useActivityRunUpdates((frame) => {
+    if (frame.type !== "activity_run") return;
+    const { run } = frame;
     if (run.thread_id === null || run.thread_id !== detail?.conversation.thread?.id) return;
     if (run.call_count === undefined && run.tool_count === undefined) return;
     setLiveCallCounts((current) => ({

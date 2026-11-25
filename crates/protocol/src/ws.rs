@@ -281,6 +281,10 @@ pub enum WsServerMsg {
         steps: Option<Vec<serde_json::Value>>,
         counts: Option<serde_json::Value>,
     },
+    /// The selected Activity Run is unavailable to the viewer.
+    ActivityRunUnavailable {
+        run_id: Uuid,
+    },
     /// The newest Activity Conversation page visible to the selected viewer.
     ActivityConversation {
         chat_id: Uuid,

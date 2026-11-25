@@ -1501,6 +1501,46 @@ describe("several instances of one integration kind", () => {
     });
     expect(clash.statusCode).toBe(409);
     expect(JSON.parse(clash.body).error.code).toBe("already_configured");
+
+    const read = async () => ({
+      row: (await e.env.db.query("SELECT name, label, config, enabled FROM integrations WHERE id = $1", [
+        row.rows[0]!.id,
+      ])).rows,
+      secrets: (await e.env.db.query(
+        "SELECT name, secret_enc FROM integration_secrets WHERE org_id = $1 AND integration = $2 ORDER BY name",
+        [e.orgId, "multi-mcp-main"],
+      )).rows,
+    });
+    const before = await read();
+    const combined = await call("PUT", `/api/v1/admin/integrations/${row.rows[0]!.id}`, e.adminToken, {
+      name: "multi-mcp-us", label: "Attempted rename", enabled: false, secrets: { probe: "submitted" },
+    });
+    expect(combined.statusCode).toBe(409);
+    expect(await read()).toEqual(before);
+  });
+
+  it("keeps the selected Trait provider when an instance is renamed", async () => {
+    const { rows } = await e.env.db.query(
+      "INSERT INTO integrations (org_id, name, kind, config, enabled) VALUES ($1, $2, 'searxng', $3, true) RETURNING id",
+      [e.orgId, "searx-selected", JSON.stringify({ base_url: connectorBase() })],
+    );
+    const id = rows[0]!.id;
+    const path = "/api/v1/admin/integrations/traits";
+    const bind = (provider: string | null) => call("PUT", `${path}/web_search`, e.adminToken, { provider });
+    try {
+      expect((await bind("searx-selected")).statusCode).toBe(200);
+      const renamed = await call("PUT", `/api/v1/admin/integrations/${id}`, e.adminToken, {
+        name: "searx-renamed", label: "Selected search",
+      });
+      expect(renamed.statusCode).toBe(200);
+      const traits = JSON.parse((await call("GET", path, e.adminToken)).body).traits;
+      expect(traits).toContainEqual(expect.objectContaining({
+        name: "web_search", provider: "searx-renamed", active: "searx-renamed",
+      }));
+    } finally {
+      await bind(null);
+      await e.env.db.query("DELETE FROM integrations WHERE id = $1", [id]);
+    }
   });
 
   it("refuses a reserved page segment as an instance slug, on create and on rename", async () => {

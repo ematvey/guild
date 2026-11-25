@@ -52,7 +52,7 @@ const pendingRuns = new Map<string, AgentRun[]>();
 /** `slice:agentId` of every seed in flight. */
 const seeding = new Set<string>();
 const runListeners = new Set<(run: AgentRun) => void>();
-type ActivityRunFrame = Extract<ServerFrame, { type: "activity_run" }>;
+type ActivityRunFrame = Extract<ServerFrame, { type: "activity_run" | "activity_run_unavailable" }>;
 const activityRunListeners = new Set<(frame: ActivityRunFrame, epoch: number) => void>();
 
 export function applyActivityRun(frame: ActivityRunFrame): void {

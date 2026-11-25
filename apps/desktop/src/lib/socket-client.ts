@@ -77,7 +77,7 @@ export interface SocketHandlers {
   /** One run, created or changed. */
   onAgentRun?: (run: AgentRun) => void;
   onActivityConversation?: (message: Extract<ServerFrame, { type: "activity_conversation" }>) => void;
-  onActivityRun?: (message: Extract<ServerFrame, { type: "activity_run" }>) => void;
+  onActivityRun?: (message: Extract<ServerFrame, { type: "activity_run" | "activity_run_unavailable" }>) => void;
   /** The member's open threads with one agent. */
   onAgentThreads?: (agent_id: string, threads: AgentThread[]) => void;
   /** One agent's routines with their newest runs. */
@@ -205,6 +205,7 @@ export function routeMessage(message: ServerFrame, handlers: SocketHandlers): vo
       handlers.onActivityConversation?.(message);
       return;
     case "activity_run":
+    case "activity_run_unavailable":
       handlers.onActivityRun?.(message);
       return;
     case "agent_threads":
