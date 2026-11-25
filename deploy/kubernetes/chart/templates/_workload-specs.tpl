@@ -65,8 +65,6 @@ template:
     automountServiceAccountToken: false
     containers:
       - name: csi
-        image: guild-k8s-workspace-csi:experiment
-        imagePullPolicy: Never
         securityContext:
           privileged: true
         ports:
@@ -130,8 +128,6 @@ template:
             readOnly: true
     containers:
       - name: server
-        image: guild-k8s-server:experiment
-        imagePullPolicy: Never
         ports:
           - containerPort: 8080
         envFrom:
@@ -169,7 +165,10 @@ template:
           - name: GUILD_S3_BUCKET
             value: guild
           - name: GUILD_S3_ACCESS_KEY_ID
-            value: GUILDEXPERIMENT
+            valueFrom:
+              secretKeyRef:
+                name: guild-data
+                key: rustfs-access-key
           - name: GUILD_S3_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
@@ -216,8 +215,6 @@ template:
     automountServiceAccountToken: false
     containers:
       - name: curl-fetch
-        image: guild-k8s-curl-fetch:experiment
-        imagePullPolicy: Never
         ports:
           - containerPort: 8080
         readinessProbe:
@@ -247,8 +244,6 @@ template:
       runAsNonRoot: true
     containers:
       - name: adapter
-        image: guild-k8s-substrate-adapter:experiment
-        imagePullPolicy: Never
         env:
           - name: GUILD_SANDBOX_RUNNER_TOKEN
             valueFrom:

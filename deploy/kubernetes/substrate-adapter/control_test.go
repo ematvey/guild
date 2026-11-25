@@ -58,3 +58,23 @@ func TestAttachFinishesInterruptedSuspension(t *testing.T) {
 		t.Fatalf("suspend calls=%d, err=%v; want one successful suspend", api.suspendCalls, err)
 	}
 }
+
+func TestSandboxImageReferences(t *testing.T) {
+	digest := "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, image := range []string{
+		"localhost:5000/guild-sandbox" + digest,
+		"registry.example.org/team/guild-sandbox" + digest,
+	} {
+		if !imageRef.MatchString(image) {
+			t.Errorf("rejected digest-pinned image %q", image)
+		}
+	}
+	for _, image := range []string{
+		"registry.example.org/team/guild-sandbox:latest",
+		"registry.example.org/team/guild-sandbox@sha256:short",
+	} {
+		if imageRef.MatchString(image) {
+			t.Errorf("accepted image without a valid digest %q", image)
+		}
+	}
+}

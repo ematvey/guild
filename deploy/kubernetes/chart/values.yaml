@@ -6,7 +6,7 @@ images:
   actor: ""
   pullPolicy: IfNotPresent
 
-# Empty uses the Helm release namespace. Pin this for an existing installation.
+# Required. Use the existing atespace when moving a deployment.
 atespace: ""
 clusterDomain: cluster.local
 workerReplicas: 3

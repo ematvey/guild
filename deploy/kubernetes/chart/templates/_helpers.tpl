@@ -21,7 +21,7 @@
         {{- $env = append $env . -}}
       {{- end -}}
     {{- end -}}
-    {{- $_ := set . "env" (append $env (dict "name" "GUILD_ATESPACE" "value" (default $root.Release.Namespace $root.Values.atespace))) -}}
+    {{- $_ := set . "env" (append $env (dict "name" "GUILD_ATESPACE" "value" (required "atespace is required" $root.Values.atespace))) -}}
   {{- end -}}
 {{- end -}}
 {{- toYaml $spec -}}

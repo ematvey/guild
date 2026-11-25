@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-kubeconfig="${1:?usage: verify-substrate-runner.sh KUBECONFIG [NAMESPACE] [ATESPACE] [CONTEXT]}"
-namespace="${2:-guild-dev}"
-atespace="${3:-$namespace}"
-context="${4:-$(kubectl --kubeconfig "$kubeconfig" config current-context)}"
+kubeconfig="${1:?usage: verify-substrate-runner.sh KUBECONFIG NAMESPACE ATESPACE CONTEXT}"
+namespace="${2:?provide the Kubernetes namespace}"
+atespace="${3:?provide the Substrate atespace}"
+context="${4:?provide the Kubernetes context}"
 kube=(kubectl --kubeconfig "$kubeconfig" --context "$context" -n "$namespace")
 ate=(kubectl-ate --kubeconfig "$kubeconfig" --context "$context" --preview)
 manifest_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

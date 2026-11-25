@@ -33,7 +33,7 @@ const (
 	maxFrame       = 256 << 20
 )
 
-var imageRef = regexp.MustCompile("^localhost:5000/guild-sandbox@sha256:[a-f0-9]{64}$")
+var imageRef = regexp.MustCompile("^([a-z0-9]+([.-][a-z0-9]+)*)(:[0-9]+)?(/[a-z0-9]+([._-]+[a-z0-9]+)*)+@sha256:[a-f0-9]{64}$")
 
 type actorUse struct {
 	mu          sync.Mutex
@@ -102,7 +102,7 @@ func (s *server) restoreIdleTimers(ctx context.Context) error {
 	}
 	options := &ate.ListOptions{}
 	for {
-		page, err := s.control.ate.ListActors(ctx, &ate.ListActorsRequest{Atespace: atespace, Options: options})
+		page, err := s.control.ate.ListActors(ctx, &ate.ListActorsRequest{Atespace: s.control.atespace, Options: options})
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		ctx, err := actorContext(ctx)
 		if err == nil {
-			_, err = s.control.ate.DeleteActor(ctx, &ate.DeleteActorRequest{Actor: ref(name)})
+			_, err = s.control.ate.DeleteActor(ctx, &ate.DeleteActorRequest{Actor: s.control.ref(name)})
 		}
 		if err != nil && status.Code(err) != codes.NotFound {
 			log.Printf("delete %s: %v", name, err)
@@ -267,13 +267,13 @@ func (s *server) proxy(w http.ResponseWriter, r *http.Request, name string) {
 	actorCtx, err := actorContext(ctx)
 	if err == nil {
 		var actor *ate.Actor
-		actor, err = s.control.ate.GetActor(actorCtx, &ate.GetActorRequest{Actor: ref(name)})
+		actor, err = s.control.ate.GetActor(actorCtx, &ate.GetActorRequest{Actor: s.control.ref(name)})
 		if err == nil {
 			err = s.control.recoverActor(actorCtx, actor)
 		}
 	}
 	if err == nil {
-		upstream, err = dialActor(ctx, name)
+		upstream, err = dialActor(ctx, s.control.atespace, name)
 		// CONNECT may have woken the Actor before the RPC handshake failed.
 		if err != nil && use.connections == 0 && use.idle == nil {
 			s.scheduleSuspend(use, name)
@@ -351,7 +351,7 @@ type readerConn struct {
 
 func (c readerConn) Read(buf []byte) (int, error) { return c.reader.Read(buf) }
 
-func dialActor(ctx context.Context, name string) (*websocket.Conn, error) {
+func dialActor(ctx context.Context, atespace, name string) (*websocket.Conn, error) {
 	bundle, err := os.ReadFile("/run/substrate/credential.pem")
 	if err != nil {
 		return nil, err
@@ -405,8 +405,9 @@ func dialActor(ctx context.Context, name string) (*websocket.Conn, error) {
 }
 
 func main() {
-	if configured := os.Getenv("GUILD_ATESPACE"); configured != "" {
-		atespace = configured
+	atespace := strings.TrimSpace(os.Getenv("GUILD_ATESPACE"))
+	if atespace == "" {
+		log.Fatal("GUILD_ATESPACE is required")
 	}
 	token := os.Getenv("GUILD_SANDBOX_RUNNER_TOKEN")
 	image := os.Getenv("GUILD_ACTOR_IMAGE")
@@ -439,7 +440,7 @@ func main() {
 		log.Fatal(err)
 	}
 	handler := &server{control: controller{
-		ate: ate.NewControlClient(channel), kube: kube, image: image,
+		ate: ate.NewControlClient(channel), kube: kube, image: image, atespace: atespace,
 		snapshotLocation: os.Getenv("GUILD_ACTOR_SNAPSHOT_LOCATION"),
 	}, token: token, idleTime: idle}
 	go func() {
