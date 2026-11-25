@@ -48,7 +48,7 @@ spec:
   validations:
     - expression: >-
         object.metadata.name.matches('^guild-[0-9a-f]{32}$') &&
-        object.provisioner == 'workspace.csi.guild.dev' &&
+        object.provisioner == '{{ include "guild.workspaceDriver" . }}' &&
         has(object.reclaimPolicy) && object.reclaimPolicy == 'Retain' &&
         has(object.parameters) && object.parameters.size() == 1 &&
         'workspaceKey' in object.parameters

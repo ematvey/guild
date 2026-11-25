@@ -26,6 +26,7 @@ import type {
   AgentRun as StoreRun,
 } from "../agents/types.js";
 import { ACTIVITY_CONVERSATION_PAGE, type Agent, type AgentRoutine, type AgentRun } from "@guild/wire/rest";
+import { ApiError } from "../platform/errors.js";
 import type { OrgPayload } from "../platform/notify.js";
 import { canReadOwned, readsWholeOrg } from "../platform/domain/access.js";
 import { groupConversation, type ConversationHistoryStore } from "../platform/store/conversation-history.js";
@@ -298,28 +299,49 @@ export class AgentStateFeed {
   }
 
   /** Seed only the selected socket, ordered with changes for the same Agent. */
-  async syncRun(user: UserRow, sink: SocketSink, runId: string, seed = true): Promise<void> {
+  async syncRun(orgId: string, userId: string, sink: SocketSink, runId: string, seed = true): Promise<void> {
+    const unavailable = () => {
+      if (sink.runView !== runId) return;
+      sink.runViewChat = null;
+      sendChanged(sink, "activity_run:detail", { type: "activity_run_unavailable", run_id: runId }, seed);
+    };
     let agentId: string;
     try {
       const run = await this.store.runs.getRun(runId);
-      await this.store.fetchInOrg(user.org_id, run.agent_id);
+      await this.store.fetchInOrg(orgId, run.agent_id);
       agentId = run.agent_id;
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) unavailable();
       return;
     }
     await this.chains.run(`agent:${agentId}`, "sync_activity_run", async () => {
-      const run = await this.store.runs.getRun(runId);
-      if (sink.runView !== runId || !canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) return;
-      const thread = run.thread_id === null
-        ? null
-        : await this.ctx.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
+      if (sink.runView !== runId) return;
+      const [viewer] = await this.ctx.identity.getUsers([userId]);
+      let run: StoreRun;
+      try {
+        run = await this.store.runs.getRun(runId);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return unavailable();
+        throw error;
+      }
+      if (
+        viewer === undefined ||
+        viewer.org_id !== orgId ||
+        !canReadOwned(viewer, run.user_id) ||
+        (run.internal && !readsWholeOrg(viewer))
+      ) {
+        return unavailable();
+      }
+      const thread =
+        run.thread_id === null
+          ? null
+          : await this.ctx.conversationHistory.threadOfRun(viewer.org_id, run.thread_id, readsWholeOrg(viewer));
       if (sink.runView !== runId) return;
       sink.runViewChat = thread?.chat_id ?? null;
       const steps = runStepsWire(await this.store.runs.runSteps(run));
       if (sink.runView !== runId) return;
       const frame = { type: "activity_run", run: runWire(run), counts: null, steps } as const;
-      if (seed) sink.send(frame);
-      else sendChanged(sink, "activity_run:detail", frame);
+      sendChanged(sink, "activity_run:detail", frame, seed);
     });
   }
 
@@ -350,7 +372,10 @@ export class AgentStateFeed {
     });
   }
 
-  async conversationProfilesChanged(orgId: string, userId: string): Promise<void> {
+  async memberProfileChanged(orgId: string, userId: string): Promise<void> {
+    await Promise.all(this.ctx.hub.memberSinksOfUser(userId).flatMap((sink) =>
+      sink.runView === null ? [] : [this.syncRun(orgId, userId, sink, sink.runView, false)],
+    ));
     const chats = new Set<string>();
     for (const viewerId of this.ctx.hub.memberUsersOfOrg(orgId)) {
       for (const sink of this.ctx.hub.memberSinksOfUser(viewerId)) {
@@ -408,14 +433,7 @@ export class AgentStateFeed {
           ),
       );
     this.conversationChanged(chatId);
-    if (readers.length === 0) return;
-    const users = await this.ctx.identity.getUsers([...new Set(readers.map((reader) => reader.userId))]);
-    await Promise.all(
-      readers.map(({ userId, orgId, sink, runId }) => {
-        const user = users.find((candidate) => candidate.id === userId && candidate.org_id === orgId);
-        return user === undefined ? undefined : this.syncRun(user, sink, runId, false);
-      }),
-    );
+    await Promise.all(readers.map(({ userId, orgId, sink, runId }) => this.syncRun(orgId, userId, sink, runId, false)));
   }
 
   private async sendRun(orgId: string, agentId: string, runId: string): Promise<void> {

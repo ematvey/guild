@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,15 +22,14 @@ import (
 )
 
 const (
-	driver     = "workspace.csi.guild.dev"
 	workspaces = "/var/lib/guild-juicefs/volume"
-	socket     = "/var/lib/kubelet/plugins/" + driver + "/csi.sock"
 	actorRoot  = "/var/lib/ate/actors"
 	uuid       = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )
 
 var (
 	workspaceKey = regexp.MustCompile("^(agents/" + uuid + "/" + uuid + "|(chats|workspaces)/" + uuid + "/[A-Za-z0-9_-]{1,64})$")
+	driverName   = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`)
 	actorTarget  = regexp.MustCompile("^" + actorRoot + "/(" + uuid + ")/volumes/(workspace)$")
 )
 
@@ -37,11 +37,12 @@ type bridge struct {
 	csi.UnimplementedIdentityServer
 	csi.UnimplementedControllerServer
 	csi.UnimplementedNodeServer
+	driver string
 	mounts sync.Mutex
 }
 
 func (b *bridge) GetPluginInfo(context.Context, *csi.GetPluginInfoRequest) (*csi.GetPluginInfoResponse, error) {
-	return &csi.GetPluginInfoResponse{Name: driver, VendorVersion: "0.1.0"}, nil
+	return &csi.GetPluginInfoResponse{Name: b.driver, VendorVersion: "0.1.0"}, nil
 }
 
 func (b *bridge) ControllerGetCapabilities(context.Context, *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
@@ -173,8 +174,13 @@ func (b *bridge) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVo
 }
 
 func main() {
-	b := &bridge{}
-	if err := os.MkdirAll("/var/lib/kubelet/plugins/"+driver, 0700); err != nil {
+	driver := os.Getenv("GUILD_WORKSPACE_CSI_DRIVER")
+	if len(driver) > 63 || !driverName.MatchString(driver) {
+		log.Fatal("GUILD_WORKSPACE_CSI_DRIVER must be a DNS name of at most 63 characters")
+	}
+	b := &bridge{driver: driver}
+	socket := filepath.Join("/var/lib/kubelet/plugins", driver, "csi.sock")
+	if err := os.MkdirAll(filepath.Dir(socket), 0700); err != nil {
 		log.Fatal(err)
 	}
 	if err := os.Remove(socket); err != nil && !errors.Is(err, os.ErrNotExist) {

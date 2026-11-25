@@ -7,7 +7,12 @@ import { randomUUID } from "node:crypto";
 import { ApiError } from "../platform/errors.js";
 import { RESERVED_INTEGRATION_SLUGS } from "../platform/registry-manifest.js";
 import { toolClassOf } from "../platform/domain/tool-class.js";
-import type { IntegrationInstance, IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
+import type {
+  IntegrationInstance,
+  IntegrationRow,
+  IntegrationSecretStore,
+  IntegrationStore,
+} from "../platform/store/integrations.js";
 import type { RegistryStore } from "../platform/store/registry.js";
 import { BUILTIN_MCP, builtinByName, builtinMcpByName, isBuiltinSlug } from "./loader.js";
 import { connectorFor, orgConnectors } from "./connectors.js";
@@ -348,24 +353,6 @@ export async function createIntegration(
   return instance;
 }
 
-/** Renames one instance: its slug, its display name, or both. */
-export async function renameIntegration(
-  gateway: IntegrationAdminDeps,
-  orgId: string,
-  id: string,
-  body: Record<string, unknown>,
-): Promise<{ name: string; label: string }> {
-  const existing = await gateway.integrations.get(orgId, id);
-  if (existing === null) throw ApiError.notFound("unknown integration");
-  const submitted = body["name"] === undefined ? null : bodyString(body, "name");
-  if (submitted === "") throw ApiError.badRequest("slug must not be empty");
-  const name = submitted ?? existing.name;
-  const label = body["label"] === undefined ? existing.label : bodyString(body, "label");
-  if (name !== existing.name) assertInstanceSlug(name, existing.kind);
-  const stored = await gateway.integrations.rename(orgId, id, name, label);
-  return { name: stored.name, label: stored.label };
-}
-
 /** The full, unfiltered tool list of one integration row with each tool's
  *  stored per-tool config. Built-in (adapter-bound) rows read their
  *  compiled-in declarations; MCP rows connect live and merge the discovered
@@ -511,9 +498,21 @@ export async function saveIntegration(
   gateway: IntegrationAdminDeps,
   orgId: string,
   instance: IntegrationInstance,
-  existing: { config: unknown; enabled: boolean } | null,
+  existing: IntegrationRow | null,
   body: Record<string, unknown>,
-): Promise<void> {
+): Promise<IntegrationInstance> {
+  const submittedName = existing === null || body["name"] === undefined ? instance.name : bodyString(body, "name");
+  if (submittedName === "") throw ApiError.badRequest("slug must not be empty");
+  if (submittedName !== instance.name) assertInstanceSlug(submittedName, instance.kind);
+  const target = {
+    ...instance,
+    name: submittedName,
+    label: existing === null || body["label"] === undefined ? instance.label : bodyString(body, "label"),
+  };
+  if (existing !== null && Object.keys(body).every((key) => key === "name" || key === "label")) {
+    await gateway.integrations.rename(orgId, existing, target);
+    return target;
+  }
   const master = gateway.masterKey();
   const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
   // A create-stub (POST with just a kind) registers the row disabled and
@@ -534,7 +533,7 @@ export async function saveIntegration(
           }
         : {};
     await gateway.integrations.upsertInstance(orgId, instance, config, false);
-    return;
+    return target;
   }
   const registryManifestValue = await saveManifest(gateway, orgId, instance.kind);
   const v2Claimed =
@@ -592,13 +591,14 @@ export async function saveIntegration(
     await gateway.integrations.saveWithSecrets(
       gateway.integrationSecrets,
       orgId,
-      instance,
+      target,
       config,
       enabled,
       submitted,
       master,
+      existing ?? undefined,
     );
-    return;
+    return target;
   }
   const connector = await connectorOrError(gateway, orgId, instance.kind);
   if (connector === undefined) throw ApiError.notFound(`unknown integration ${instance.kind}`);
@@ -669,12 +669,14 @@ export async function saveIntegration(
   await gateway.integrations.saveWithSecrets(
     gateway.integrationSecrets,
     orgId,
-    instance,
+    target,
     config,
     enabled,
     submitted,
     master,
+    existing ?? undefined,
   );
+  return target;
 }
 
 /** The settings-field labels of the named secrets, the name where a field

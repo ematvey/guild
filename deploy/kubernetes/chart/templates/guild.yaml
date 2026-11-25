@@ -20,9 +20,11 @@ metadata:
     helm.sh/resource-policy: keep
   namespace: {{ .Release.Namespace }}
 spec:
-  accessModes: [ReadWriteOnce]
-  {{- with .Values.storage.storageClass }}
-  storageClassName: {{ . | quote }}
+  accessModes: [{{ ternary "ReadWriteMany" "ReadWriteOnce" .Values.storage.plainWorkspacesInData }}]
+  {{- if .Values.storage.workspaceClaim }}
+  storageClassName: {{ required "storage.storageClass is required when creating a data claim for a managed workspace" .Values.storage.storageClass | quote }}
+  {{- else if .Values.storage.storageClass }}
+  storageClassName: {{ .Values.storage.storageClass | quote }}
   {{- end }}
   resources:
     requests:

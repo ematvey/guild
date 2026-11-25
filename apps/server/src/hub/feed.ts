@@ -189,19 +189,21 @@ export class FeedForwarder implements GenerationStreamSink {
    *  subtree; the captures compare against the last value sent. */
   private resync = (): void => {
     if (this.stopped) return;
-    const runChats = new Set<string>();
+    const activityChats = new Set<string>();
     for (const { userId, orgId } of this.ctx.hub.memberUsers()) {
       void this.pushWorkspace(orgId, userId, ALL_PARTS);
       void this.agentState.connect(orgId, userId);
       for (const sink of this.ctx.hub.memberSinksOfUser(userId)) {
-        if (typeof sink.runViewChat === "string") runChats.add(sink.runViewChat);
-        if (typeof sink.activityConversation === "string") runChats.add(sink.activityConversation);
+        if (sink.runView !== null) {
+          this.track("resync_activity_run", sink.runView, this.agentState.syncRun(orgId, userId, sink, sink.runView, false));
+        }
+        if (sink.activityConversation !== null) activityChats.add(sink.activityConversation);
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
         this.subagentTree(sink.view);
       }
     }
-    for (const chatId of runChats) this.track("resync_activity", chatId, this.agentState.committedActivity(chatId));
+    for (const chatId of activityChats) this.agentState.conversationChanged(chatId);
   };
 
   // -- notify fan-in ------------------------------------------------------------
@@ -247,7 +249,7 @@ export class FeedForwarder implements GenerationStreamSink {
         this.track(
           "guild_workspace",
           change.user_id,
-          this.agentState.conversationProfilesChanged(change.org_id, change.user_id),
+          this.agentState.memberProfileChanged(change.org_id, change.user_id),
         );
       }
     },
@@ -328,7 +330,7 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   async syncActivity(user: UserRow, sink: SocketSink): Promise<void> {
-    if (sink.runView !== null) await this.agentState.syncRun(user, sink, sink.runView);
+    if (sink.runView !== null) await this.agentState.syncRun(user.org_id, user.id, sink, sink.runView);
     if (sink.activityConversation !== null)
       await this.agentState.syncConversation(user, sink, sink.activityConversation);
   }

@@ -45,7 +45,7 @@ template:
     volumes:
       - name: storage
         hostPath:
-          path: /var/lib/guild-juicefs
+          path: {{ include "guild.workspaceHostPath" . | quote }}
           type: DirectoryOrCreate
       - name: fuse
         hostPath:
@@ -69,30 +69,49 @@ template:
           privileged: true
         ports:
           - containerPort: 50051
+        {{- if .Values.storage.plainWorkspacesInData }}
+        env:
+          - name: GUILD_PLAIN_WORKSPACE_ROOT
+            value: /guild-data
+        {{- end }}
         readinessProbe:
           tcpSocket:
             port: 50051
         volumeMounts:
           - name: workspaces
-            mountPath: /var/lib/guild-juicefs
+            mountPath: {{ ternary "/var/lib/guild-juicefs/volume" "/var/lib/guild-juicefs" (not (empty .Values.storage.workspaceClaim)) }}
+            {{- if not .Values.storage.workspaceClaim }}
             mountPropagation: HostToContainer
+            {{- end }}
+          {{- if .Values.storage.plainWorkspacesInData }}
+          - name: guild-data
+            mountPath: /guild-data
+          {{- end }}
           - name: ate
             mountPath: /var/lib/ate
             mountPropagation: Bidirectional
           - name: socket
-            mountPath: /var/lib/kubelet/plugins/workspace.csi.guild.dev
     volumes:
       - name: workspaces
+        {{- if .Values.storage.workspaceClaim }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storage.workspaceClaim | quote }}
+        {{- else }}
         hostPath:
-          path: /var/lib/guild-juicefs
+          path: {{ include "guild.workspaceHostPath" . | quote }}
           type: DirectoryOrCreate
+        {{- end }}
+      {{- if .Values.storage.plainWorkspacesInData }}
+      - name: guild-data
+        persistentVolumeClaim:
+          claimName: guild-data-dir
+      {{- end }}
       - name: ate
         hostPath:
           path: /var/lib/ate
           type: Directory
       - name: socket
         hostPath:
-          path: /var/lib/kubelet/plugins/workspace.csi.guild.dev
           type: DirectoryOrCreate
 {{- end -}}
 
@@ -118,6 +137,7 @@ template:
       - name: postgres-ready
         image: postgres:17
         command: [/bin/sh, -ec, 'until pg_isready -h postgres -U guild -d guild; do sleep 2; done']
+      {{- if not .Values.storage.workspaceClaim }}
       - name: workspace-ready
         image: postgres:17
         command: [/bin/sh, -ec, 'until grep -q " /juicefs/volume .* - fuse.juicefs " /proc/self/mountinfo; do sleep 2; done']
@@ -126,6 +146,7 @@ template:
             mountPath: /juicefs
             mountPropagation: HostToContainer
             readOnly: true
+      {{- end }}
     containers:
       - name: server
         ports:
@@ -161,7 +182,7 @@ template:
           - name: GUILD_S3_URL
             value: http://rustfs:9000
           - name: GUILD_S3_BUCKET
-            value: guild
+            value: {{ required "storage.applicationBucket is required" .Values.storage.applicationBucket | quote }}
           - name: GUILD_S3_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -188,13 +209,20 @@ template:
           - name: data
             mountPath: /data
           - name: workspaces
-            mountPath: /juicefs
+            mountPath: {{ ternary "/juicefs/volume" "/juicefs" (not (empty .Values.storage.workspaceClaim)) }}
+            {{- if not .Values.storage.workspaceClaim }}
             mountPropagation: HostToContainer
+            {{- end }}
     volumes:
       - name: workspaces
+        {{- if .Values.storage.workspaceClaim }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storage.workspaceClaim | quote }}
+        {{- else }}
         hostPath:
-          path: /var/lib/guild-juicefs
+          path: {{ include "guild.workspaceHostPath" . | quote }}
           type: Directory
+        {{- end }}
       - name: data
         persistentVolumeClaim:
           claimName: guild-data-dir

@@ -409,6 +409,11 @@ func main() {
 	if atespace == "" {
 		log.Fatal("GUILD_ATESPACE is required")
 	}
+	workspaceDriver := os.Getenv("GUILD_WORKSPACE_CSI_DRIVER")
+	workerSelector := os.Getenv("GUILD_WORKSPACE_WORKER_SELECTOR")
+	if workspaceDriver == "" || workerSelector == "" {
+		log.Fatal("GUILD_WORKSPACE_CSI_DRIVER and GUILD_WORKSPACE_WORKER_SELECTOR are required")
+	}
 	token := os.Getenv("GUILD_SANDBOX_RUNNER_TOKEN")
 	image := os.Getenv("GUILD_ACTOR_IMAGE")
 	if len(token) < 16 || !imageRef.MatchString(image) {
@@ -442,6 +447,7 @@ func main() {
 	handler := &server{control: controller{
 		ate: ate.NewControlClient(channel), kube: kube, image: image, atespace: atespace,
 		snapshotLocation: os.Getenv("GUILD_ACTOR_SNAPSHOT_LOCATION"),
+		workspaceDriver:  workspaceDriver, workerSelector: workerSelector,
 	}, token: token, idleTime: idle}
 	go func() {
 		for {

@@ -197,6 +197,7 @@ export type ServerFrame =
       steps?: AgentRunStep[];
       counts: { runs: number; open_runs: number; failed_runs: number } | null;
     }
+  | { type: "activity_run_unavailable"; run_id: Uuid }
   | { type: "activity_conversation"; chat_id: Uuid; detail: ConversationSnapshot | null }
   | { type: "agent_threads"; agent_id: Uuid; threads: AgentThread[] }
   | { type: "agent_routines"; agent_id: Uuid; routines: AgentRoutine[] }
