@@ -197,6 +197,8 @@ describe("codemode over the chat loop", () => {
       // `tools.searchTools` misread weaker models make.
       expect(system).toContain("Codemode rules:");
       expect(system).toContain("NEVER as `tools.searchTools`");
+      expect(system).toContain("Use the exact tool name and argument schema");
+      expect(system).toContain("keep their shared names, `web_search` and `web_fetch`");
       // The codemode declaration itself is the section's priciest entry and
       // the budget drops it first — the tool description carries the
       // environment details instead.
