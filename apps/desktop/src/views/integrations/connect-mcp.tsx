@@ -92,6 +92,7 @@ export function AddOrgMcp({ onCreated }: { onCreated: (slug: string) => void }) 
     try {
       await createOrgMcp({
         slug: effectiveSlug,
+        label: title.trim(),
         title: title.trim(),
         description: description.trim(),
         ...connection(),

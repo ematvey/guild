@@ -766,7 +766,7 @@ describe("M6 admin integrations (read paths)", () => {
     // A configured compiled-in row (github) and an MCP-plugin row
     // (installed via the registry suite above).
     await e.env.db.query(
-      "INSERT INTO integrations (id, org_id, name, config, enabled) VALUES ($1, $2, 'github', $3, true) ON CONFLICT (org_id, name) DO NOTHING",
+      "INSERT INTO integrations (id, org_id, name, kind, config, enabled) VALUES ($1, $2, 'github', 'github', $3, true) ON CONFLICT (org_id, name) DO NOTHING",
       [crypto.randomUUID(), e.orgId, JSON.stringify({ token_config: "x" })],
     );
     const list = await inject("GET", "/api/v1/admin/integrations", e.adminToken);
@@ -878,7 +878,7 @@ describe("M6 admin integrations (read paths)", () => {
     expect(after.items.find((a) => a.name === "github")!.configured).toBe(false);
 
     const ins = await e.env.db.query(
-      "INSERT INTO integrations (id, org_id, name, config, enabled) VALUES ($1, $2, 'slack', '{}', false) RETURNING id",
+      "INSERT INTO integrations (id, org_id, name, kind, config, enabled) VALUES ($1, $2, 'slack', 'slack', '{}', false) RETURNING id",
       [crypto.randomUUID(), e.orgId],
     );
     const rowId = ins.rows[0]!.id as string;

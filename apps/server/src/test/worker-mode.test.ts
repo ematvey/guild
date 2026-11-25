@@ -715,7 +715,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     const vendorBase = `http://127.0.0.1:${(vendor.address() as AddressInfo).port}`;
 
     await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'slack', 'slack', $2, true, 'org') ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
       [
         stack.orgId,
         JSON.stringify({

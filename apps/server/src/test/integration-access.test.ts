@@ -217,7 +217,7 @@ describe("integration access over HTTP", () => {
     stack = await setupGatewayStack();
     await stack.routeModel("GLM-Test-Model");
     const row = await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'hubspot', '{}', false) RETURNING id",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled) VALUES ($1, 'hubspot', 'hubspot', '{}', false) RETURNING id",
       [stack.orgId],
     );
     integrationId = row.rows[0].id as string;
@@ -300,7 +300,7 @@ describe("integration access over HTTP", () => {
 
   it("an all-tools agent follows the admin's audiences and takes no list of its own", async () => {
     const row = await stack.env.db.query(
-      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'crm2', '{}', true) RETURNING id",
+      "INSERT INTO integrations (org_id, name, kind, config, enabled) VALUES ($1, 'crm2', 'hubspot', '{}', true) RETURNING id",
       [stack.orgId],
     );
     const crmId = row.rows[0].id as string;

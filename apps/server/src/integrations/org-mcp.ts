@@ -24,6 +24,7 @@ import type { EventStore } from "../platform/store/events.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { isBuiltinSlug } from "./loader.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
+import { requireApprovedManifest } from "./plugins.js";
 import { headerSecretName, mcpRequestHeaders, validateHeaderTemplates } from "./mcp-headers.js";
 import { suggestedToolClass } from "./policy.js";
 
@@ -162,14 +163,15 @@ export async function createOrgMcp(
 ): Promise<string> {
   const orgId = publisher.orgId;
   const slug = str(body, "slug");
+  // The kind is the catalog item the instance belongs to; a second instance
+  // of a server the org already added names it and adds only a row.
+  const kind = str(body, "kind") || slug;
+  const label = str(body, "label");
   if (!SLUG.test(slug)) {
     throw ApiError.badRequest("slug must start with a letter or digit and use only a-z, 0-9, _ and -, up to 48 chars");
   }
-  if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
-    throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
-  }
-  if (isBuiltinSlug(slug)) {
-    throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
+  if (!SLUG.test(kind)) {
+    throw ApiError.badRequest("kind must be an integration slug");
   }
   if ((await deps.integrations.getByName(orgId, slug)) !== null) {
     throw ApiError.conflict("already_configured", `integration ${slug} already has a configuration`);
@@ -183,52 +185,74 @@ export async function createOrgMcp(
 
   const secretNames = connection.secrets.map(([n]) => n);
   const headerOf = new Map(Object.entries(connection.templates).map(([h, t]) => [t.slice(1, -1), h]));
-  const version = nextVersion(await deps.registry.itemVersions(orgId, "integration", slug));
-  const manifest = {
-    kind: "integration",
-    slug,
-    version,
-    title,
-    summary,
-    description,
-    publisher: publisher.label,
-    mcp: { url: connection.url, headers: connection.templates, envelope: connection.envelope },
-    auth: { kind: "org_secret", secret_names: secretNames, identity_key: "email" },
-    settings: {
-      fields: secretNames.map((name) => ({
-        name,
-        kind: "secret",
-        label: `${headerOf.get(name) ?? name} header`,
-        required: true,
-        default: null,
-        help: "The full header value the server expects, e.g. Bearer <token>",
-        placeholder: null,
-      })),
-    },
-    tools: { classes: Object.fromEntries([...selection].map(([name, s]) => [name, s.cls])) },
-  };
-  try {
-    validateV2(manifest as unknown as Manifest);
-  } catch (error) {
-    throw ApiError.badRequest((error as Error).message);
+  let manifest: Record<string, unknown>;
+  if (kind !== slug) {
+    try {
+      manifest = (await requireApprovedManifest(deps, orgId, kind)) as Record<string, unknown>;
+    } catch (error) {
+      throw ApiError.notFound(`unknown integration kind ${kind}: ${(error as Error).message}`);
+    }
+  } else {
+    if (RESERVED_INTEGRATION_SLUGS.includes(slug)) {
+      throw ApiError.conflict("slug_taken", `${slug} is reserved; pick another slug`);
+    }
+    if (isBuiltinSlug(slug)) {
+      throw ApiError.conflict("slug_taken", `${slug} is the name of a built-in integration`);
+    }
+    const version = nextVersion(await deps.registry.itemVersions(orgId, "integration", slug));
+    const created = {
+      kind: "integration",
+      slug,
+      version,
+      title,
+      summary,
+      description,
+      publisher: publisher.label,
+      mcp: { url: connection.url, headers: connection.templates, envelope: connection.envelope },
+      auth: { kind: "org_secret", secret_names: secretNames, identity_key: "email" },
+      settings: {
+        fields: secretNames.map((name) => ({
+          name,
+          kind: "secret",
+          label: `${headerOf.get(name) ?? name} header`,
+          required: true,
+          default: null,
+          help: "The full header value the server expects, e.g. Bearer <token>",
+          placeholder: null,
+        })),
+      },
+      tools: { classes: Object.fromEntries([...selection].map(([name, s]) => [name, s.cls])) },
+    };
+    try {
+      validateV2(created as unknown as Manifest);
+    } catch (error) {
+      throw ApiError.badRequest((error as Error).message);
+    }
+    const bytes = packBundle({ "manifest.json": JSON.stringify(created, null, 2) });
+    try {
+      await publishRegistryBundle(
+        { registry: deps.registry, teams: deps.teams, events: deps.events, objects: deps.objects },
+        publisher,
+        { kind: "integration", slug, version, description: summary, manifest: created },
+        bytes,
+      );
+    } catch (error) {
+      if (error instanceof BundleWriteError) throw ApiError.internal(error.message);
+      throw error;
+    }
+    await deps.registry.setReview(orgId, "integration", slug, "approved", version, bundleSha256(bytes));
+    manifest = created as unknown as Record<string, unknown>;
   }
-  const bytes = packBundle({ "manifest.json": JSON.stringify(manifest, null, 2) });
-  try {
-    await publishRegistryBundle(
-      { registry: deps.registry, teams: deps.teams, events: deps.events, objects: deps.objects },
-      publisher,
-      { kind: "integration", slug, version, description: summary, manifest },
-      bytes,
-    );
-  } catch (error) {
-    if (error instanceof BundleWriteError) throw ApiError.internal(error.message);
-    throw error;
-  }
-  await deps.registry.setReview(orgId, "integration", slug, "approved", version, bundleSha256(bytes));
 
+  const kindMcp = (manifest["mcp"] ?? {}) as Record<string, unknown>;
   const config = {
-    mcp: manifest.mcp,
-    auth: manifest.auth,
+    mcp: {
+      ...kindMcp,
+      url: connection.url,
+      headers: connection.templates,
+      envelope: connection.envelope,
+    },
+    auth: manifest["auth"] ?? { kind: "org_secret", secret_names: secretNames, identity_key: "email" },
     tools: Object.fromEntries(
       [...selection].map(([name, s]) => [name, { enabled: s.enabled, approval: "default", class: s.cls }]),
     ),
@@ -236,7 +260,7 @@ export async function createOrgMcp(
   await deps.integrations.saveWithSecrets(
     deps.integrationSecrets,
     orgId,
-    slug,
+    { name: slug, kind, label },
     config,
     true,
     connection.secrets,

@@ -4,6 +4,12 @@
 
 import type { CatalogPluginRow, CatalogRow, ShopItem, UsageSummaryRow } from "./integrations-api";
 
+/** The name the panel shows for one instance: the admin's label, else the
+ *  catalog item's title. */
+export function displayName(item: { label?: string; title: string }): string {
+  return (item.label ?? "") !== "" ? (item.label as string) : item.title;
+}
+
 export type InstalledStatus =
   | { kind: "needs_setup"; missing: string[] }
   | { kind: "disabled" }

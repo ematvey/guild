@@ -227,7 +227,7 @@ describe("codemode over the chat loop", () => {
       try {
         const { port } = firecrawl.address() as AddressInfo;
         await stack.env.db.query(
-          "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, 'firecrawl', $2, true, 'org')",
+          "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, 'firecrawl', 'firecrawl', $2, true, 'org')",
           [stack.orgId, JSON.stringify({ base_url: `http://127.0.0.1:${port}` })],
         );
         await stack.env.db.query(

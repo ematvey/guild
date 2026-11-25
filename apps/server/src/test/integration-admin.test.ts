@@ -270,7 +270,7 @@ async function seedIntegration(
   secrets: Record<string, string> = {},
 ): Promise<string> {
   const res = await e.env.db.query(
-    "INSERT INTO integrations (org_id, name, config, enabled, audience) VALUES ($1, $2, $3, $4, 'org') " +
+    "INSERT INTO integrations (org_id, name, kind, config, enabled, audience) VALUES ($1, $2, $2, $3, $4, 'org') " +
       "ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config, enabled = EXCLUDED.enabled " +
       "RETURNING id",
     [e.orgId, name, JSON.stringify(config ?? {}), enabled],
@@ -736,7 +736,7 @@ describe("admin integration save path", () => {
       },
     );
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true, name: "gitlab" });
     expect(connectorHits.some((h) => h.startsWith("/api/v4/user"))).toBe(true);
     const row = (
       await e.env.db.query(
@@ -1388,6 +1388,97 @@ describe("org MCP servers added from the admin UI", () => {
       }
     ).tools;
     expect(listedTools.find((t) => t.name === "web_search")!.class).toBe("write");
+  });
+});
+
+describe("several instances of one integration kind", () => {
+  const authUrl = (): string =>
+    `http://127.0.0.1:${(mcpServer.address() as AddressInfo).port}/auth-mcp`;
+  const headers = [{ name: "Authorization", value: "Bearer s3cret" }];
+
+  it("adds a second instance of an approved MCP kind, lists both, and renames one", async () => {
+    const first = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      { slug: "multi-mcp", title: "Multi MCP", url: authUrl(), headers },
+    );
+    expect(first.statusCode).toBe(200);
+
+    const second = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      {
+        slug: "multi-mcp-eu",
+        kind: "multi-mcp",
+        label: "Multi MCP EU",
+        url: authUrl(),
+        headers,
+      },
+    );
+    expect(second.statusCode).toBe(200);
+    const secondId = JSON.parse(second.body).id as string;
+
+    const listed = async (): Promise<
+      { name: string; kind: string; label: string; configured: boolean }[]
+    > =>
+      (
+        JSON.parse(
+          (await call("GET", "/api/v1/admin/integrations", e.adminToken)).body,
+        ) as {
+          items: {
+            name: string;
+            kind: string;
+            label: string;
+            configured: boolean;
+          }[];
+        }
+      ).items;
+    const both = (await listed()).filter((i) => i.kind === "multi-mcp");
+    expect(both.map((i) => i.name).sort()).toEqual([
+      "multi-mcp",
+      "multi-mcp-eu",
+    ]);
+    expect(both.every((i) => i.configured)).toBe(true);
+    expect(both.find((i) => i.name === "multi-mcp-eu")!.label).toBe(
+      "Multi MCP EU",
+    );
+
+    // The slug is the secret key and the tool namespace: renaming moves
+    // both.
+    const renamed = await call(
+      "PUT",
+      `/api/v1/admin/integrations/${secondId}`,
+      e.adminToken,
+      { name: "multi-mcp-us", label: "Multi MCP US" },
+    );
+    expect(renamed.statusCode).toBe(200);
+    const after = (await listed()).find((i) => i.name === "multi-mcp-us")!;
+    expect(after).toMatchObject({ kind: "multi-mcp", label: "Multi MCP US" });
+    expect((await listed()).some((i) => i.name === "multi-mcp-eu")).toBe(false);
+    const secrets = await e.env.db.query(
+      "SELECT integration FROM integration_secrets WHERE org_id = $1 ORDER BY integration",
+      [e.orgId],
+    );
+    const holders = secrets.rows.map((r) => r.integration as string);
+    expect(holders).toContain("multi-mcp-us");
+    expect(holders).not.toContain("multi-mcp-eu");
+  });
+
+  it("refuses an instance slug another instance of the kind already holds", async () => {
+    const dup = await call(
+      "POST",
+      "/api/v1/admin/integrations/mcp",
+      e.adminToken,
+      {
+        slug: "multi-mcp",
+        kind: "multi-mcp",
+        url: authUrl(),
+        headers,
+      },
+    );
+    expect(dup.statusCode).toBe(409);
   });
 });
 

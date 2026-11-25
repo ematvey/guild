@@ -215,13 +215,18 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
   const isMcp = typeof item.config?.mcp === "object" && item.config.mcp !== null;
   const [initial] = useState(() => initialDraft(fields, item.config, isMcp));
   const [form, setForm] = useState(initial);
+  const [identity, setIdentity] = useState({ name: item.name, label: item.label });
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(integrationSecretsPath(id));
   const stored = secretsRes.data?.secrets ?? null;
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(initial) || Object.values(secretDraft).some((v) => v !== "");
+  const identityDirty = identity.name !== item.name || identity.label !== item.label;
+  const dirty =
+    JSON.stringify(form) !== JSON.stringify(initial) ||
+    Object.values(secretDraft).some((v) => v !== "") ||
+    identityDirty;
   // A save error names the field that failed; the next keystroke may fix it,
   // so editing clears the message instead of leaving a stale verdict.
   const patchDraft = (name: string, value: unknown) => {
@@ -256,8 +261,12 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
     try {
       const config = buildIntegrationConfig(fields, item.config, form, isMcp);
       const secrets = Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== ""));
-      await updateIntegration(id, { config, secrets });
-      toast.success("Changes saved", { description: item.title });
+      await updateIntegration(id, {
+        config,
+        secrets,
+        ...(identityDirty ? { name: identity.name.trim(), label: identity.label.trim() } : {}),
+      });
+      toast.success("Changes saved", { description: identity.label.trim() || item.title });
       setSecretDraft({});
       onSaved();
     } catch (e) {
@@ -270,6 +279,38 @@ export function ConfigurationTab({ item, onSaved }: { item: ShopItem; onSaved: (
 
   return (
     <div className="pb-28">
+      <Section
+        title="Name"
+        description="What this instance is called in the panel, and the slug its tool names start with."
+      >
+        <FieldRow id="instance-label" label="Name" required={false} hint="Shown in the integrations panel.">
+          <Input
+            id="instance-label"
+            value={identity.label}
+            placeholder={item.title}
+            onChange={(e) => {
+              setError(null);
+              setIdentity((v) => ({ ...v, label: e.target.value }));
+            }}
+          />
+        </FieldRow>
+        <FieldRow
+          id="instance-name"
+          label="Slug"
+          required={false}
+          hint="Lowercase letters, digits, dashes and underscores. Tools are named <slug>_<tool>; renaming moves them."
+        >
+          <Input
+            id="instance-name"
+            className="font-mono text-xs"
+            value={identity.name}
+            onChange={(e) => {
+              setError(null);
+              setIdentity((v) => ({ ...v, name: e.target.value }));
+            }}
+          />
+        </FieldRow>
+      </Section>
       {settingFields.length > 0 && (
         <Section title="Settings">
           {settingFields.map((f) => {

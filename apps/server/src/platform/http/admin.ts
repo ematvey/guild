@@ -21,6 +21,7 @@ import {
   createIntegration,
   integrationShop,
   integrationTools,
+  renameIntegration,
   saveIntegration,
   testIntegration,
   type IntegrationTestDraft,
@@ -181,16 +182,16 @@ export function registerAdminIntegrationRoutes(
   app.post("/api/v1/admin/integrations", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
     const body = requireJsonBody(req);
-    const name = body["name"];
-    if (typeof name !== "string") throw ApiError.badRequest("missing name");
-    await createIntegration(gateway, admin.org_id, name, body);
-    const created = await gateway.integrations.getByName(admin.org_id, name);
+    const created = await createIntegration(gateway, admin.org_id, body);
+    const row = await gateway.integrations.getByName(admin.org_id, created.name);
     sendJson(reply, {
-      id: created!.id,
-      org_id: created!.org_id,
-      name: created!.name,
-      config: created!.config,
-      enabled: created!.enabled,
+      id: row!.id,
+      org_id: row!.org_id,
+      name: row!.name,
+      kind: row!.kind,
+      label: row!.label,
+      config: row!.config,
+      enabled: row!.enabled,
     });
     return reply;
   });
@@ -313,7 +314,7 @@ export function registerAdminIntegrationRoutes(
         v !== null && typeof v === "object" && !Array.isArray(v);
       if (isObject(body["config"])) draft.config = body["config"];
       if (isObject(body["secrets"])) draft.secrets = body["secrets"];
-      const ms = await testIntegration(gateway, admin.org_id, existing.name, existing, draft);
+      const ms = await testIntegration(gateway, admin.org_id, existing, existing, draft);
       sendJson(reply, { ok: true, ms });
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
@@ -418,17 +419,27 @@ export function registerAdminIntegrationRoutes(
     return reply;
   });
 
-  // Updates one integration by id: config, enabled flag and newly entered
-  // credential values, validated and connection-tested before anything is
-  // persisted. The connector slug comes from the row.
+  // Updates one integration by id: its name and label, config, enabled flag
+  // and newly entered credential values, validated and connection-tested
+  // before anything is persisted. The kind comes from the row.
   app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
     const admin = await requireAdminUser(identity, req);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
-    await saveIntegration(gateway, admin.org_id, existing.name, existing, body);
-    sendJson(reply, { ok: true });
+    const renamed =
+      body["name"] !== undefined || body["label"] !== undefined
+        ? await renameIntegration(gateway, admin.org_id, id, body)
+        : { name: existing.name, label: existing.label };
+    await saveIntegration(
+      gateway,
+      admin.org_id,
+      { name: renamed.name, kind: existing.kind, label: renamed.label },
+      existing,
+      body,
+    );
+    sendJson(reply, { ok: true, name: renamed.name, label: renamed.label });
     return reply;
   });
 }

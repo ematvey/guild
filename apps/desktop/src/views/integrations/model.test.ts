@@ -5,6 +5,8 @@ import { availableUpdates, buildCatalog, compactCount, findCatalogEntry, install
 function item(p: Partial<ShopItem>): ShopItem {
   return {
     name: "acme",
+    kind: "acme",
+    label: "",
     title: "Acme",
     version: "1.0.0",
     publisher: "Acme",
