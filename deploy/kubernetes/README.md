@@ -101,7 +101,7 @@ helm upgrade --install guild "$chart" --kube-context "$context" \
   --namespace "$namespace" -f "$values" --wait --timeout 10m
 kubectl --context "$context" -n "$namespace" rollout status daemonset/guild-workspace-csi
 kubectl --context "$context" -n "$namespace" get workerpool guild-actor-workers
-deploy/kubernetes/verify-default-dev.sh "$KUBECONFIG" https://guild.example.org "$namespace" "$context"
+deploy/kubernetes/verify-default-dev.sh "$KUBECONFIG" https://guild.example.org "$namespace" "$context" /data
 deploy/kubernetes/verify-substrate-runner.sh "$KUBECONFIG" "$namespace" "$atespace" "$context"
 ```
 
@@ -112,9 +112,10 @@ configured atespace as the third argument to the runner check when it differs
 from the namespace. The first verification script runs integration and chat
 probes against the configured Guild instance. Use test credentials and an
 approved test workspace when running it in production. The base CSI setup
-uses JuiceFS for both agent and plain-chat workspaces. If
-`storage.plainWorkspacesInData` is enabled, pass `/data` as the fifth
-argument to `verify-default-dev.sh`.
+uses JuiceFS for both agent and plain-chat workspaces. The example enables
+`storage.plainWorkspacesInData` and verifies plain-chat workspaces under
+`/data`. For installations that keep plain-chat workspaces in JuiceFS, omit
+the fifth argument to `verify-default-dev.sh`.
 
 To use existing backing services or site-specific node placement, set
 `workloadSpecs.<workload-name>` to the complete replacement Kubernetes

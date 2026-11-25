@@ -143,10 +143,8 @@ template:
         command: [/bin/sh, -ec, 'until grep -q " /juicefs/volume .* - fuse.juicefs " /proc/self/mountinfo; do sleep 2; done']
         volumeMounts:
           - name: workspaces
-            mountPath: {{ ternary "/juicefs/volume" "/juicefs" (not (empty .Values.storage.workspaceClaim)) }}
-            {{- if not .Values.storage.workspaceClaim }}
+            mountPath: /juicefs
             mountPropagation: HostToContainer
-            {{- end }}
             readOnly: true
       {{- end }}
     containers:
@@ -211,8 +209,10 @@ template:
           - name: data
             mountPath: /data
           - name: workspaces
-            mountPath: /juicefs
+            mountPath: {{ ternary "/juicefs/volume" "/juicefs" (not (empty .Values.storage.workspaceClaim)) }}
+            {{- if not .Values.storage.workspaceClaim }}
             mountPropagation: HostToContainer
+            {{- end }}
     volumes:
       - name: workspaces
         {{- if .Values.storage.workspaceClaim }}
