@@ -204,7 +204,7 @@ export function coordinatorTools(deps: {
     ),
     tool(
       "reply",
-      "Reply to a direct request in the active Turn. Guild delivers the text to the originating Assistant inbox.",
+      "Reply to a direct request in the active Turn. Guild delivers the text to the originating Member Thread.",
       { input_id: str, text: str },
       ["input_id", "text"],
       async (args, _callId, api, context) => {

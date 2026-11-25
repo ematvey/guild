@@ -249,10 +249,28 @@ export function retryCoordinationWork(db: Database, values: unknown[]) {
 
 export function acceptedWorkForThread<T extends QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT i.id,i.accepted_scope FROM agent_threads t JOIN agent_coordination_inputs i ON i.id=t.source_input_id
+    `SELECT i.id,i.agent_id,i.accepted_scope FROM agent_threads t JOIN agent_coordination_inputs i ON i.id=t.source_input_id
      JOIN agent_runs parent ON parent.id=i.accepted_parent_run_id
      WHERE t.id=$1 AND t.coordinator_managed AND t.parent_thread_id=parent.thread_id
        AND t.user_id=i.user_id AND t.agent_id=i.accepted_agent_id AND i.accepted_scope IS NOT NULL`,
+    values,
+  );
+}
+
+export function readWorkFollowups<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(
+    `SELECT source_event_id FROM agent_coordination_inputs
+     WHERE source_thread_id=$1 AND kind='work_followup' AND source_event_id=ANY($2::uuid[])
+     ORDER BY seq`,
+    values,
+  );
+}
+
+export function handBackWorkFollowup(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs SET kind='request',wake=true,due_at=now(),delivered_at=NULL,
+       reflected_at=NULL,lease_until=NULL,handback_reason=$3
+     WHERE source_thread_id=$1 AND source_event_id=$2 AND kind='work_followup'`,
     values,
   );
 }

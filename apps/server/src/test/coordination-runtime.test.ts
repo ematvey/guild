@@ -550,6 +550,57 @@ describe("configured coordinator conversation", () => {
     expect(attempts.rows).toHaveLength(2);
     expect(new Set(attempts.rows.map((row) => row.thread_id)).size).toBe(1);
     expect(attempts.rows[0]).toMatchObject({ id: originalRun, work_report_state: "blocked" });
+    await waitFor(() => stack.mock.requests.some(({ body }) => {
+      const request = JSON.stringify(body);
+      return request.includes("<worker_origin>") && request.includes("Worker retry completed.");
+    }), 10000);
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+    )).rowCount === 0, 10000);
+    const workerThreadId = attempts.rows[0]?.thread_id as string;
+    const workerChatId = (await stack.env.db.query(
+      "SELECT chat_id FROM agent_threads WHERE id=$1", [workerThreadId],
+    )).rows[0]?.chat_id as string;
+    const followup = randomUUID();
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      return last?.role === "user" && JSON.stringify(last.content).includes("Look into a different project.")
+        ? call("codemode", { code: 'return await tools.hand_back({reason:"Different project"});' })
+        : final("I returned this request for routing.");
+    } }]);
+    const posted = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${workerThreadId}/turns`, headers,
+      payload: { message: "Look into a different project.", user_message_id: followup },
+    });
+    expect(posted.statusCode, posted.body).toBeLessThan(300);
+    let handedBack: string | undefined;
+    await waitFor(async () => {
+      handedBack = (await stack.env.db.query<{ id: string }>(
+        `SELECT id FROM agent_coordination_inputs
+         WHERE source_event_id=$1 AND source_thread_id=$2 AND kind='request' AND handback_reason='Different project'`,
+        [followup, workerThreadId],
+      )).rows[0]?.id;
+      return handedBack !== undefined;
+    }, 10000);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM agent_runs WHERE thread_id=$1 AND finished_at IS NULL", [workerThreadId],
+    )).rowCount === 0, 10000);
+    stack.mock.setResponses([{ body: async () => {
+      const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+      const last = messages?.at(-1);
+      return last?.role === "user" && JSON.stringify(last.content).includes(handedBack!)
+        ? call("codemode", { code: `return await tools.reply(${JSON.stringify({ input_id: handedBack, text: "I can route the other project separately." })});` })
+        : final("Internal handback review.");
+    } }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%can route the other project%'",
+        [workerChatId],
+      )).rowCount === 1;
+    }, 10000);
   }, 30000);
 
 });

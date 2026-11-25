@@ -6,6 +6,7 @@ import {
   claimCoordinationReplies,
   settleCoordinationReply,
   claimCoordinationLaunches,
+  acceptedWorkForThread,
   settleCoordinationLaunch,
   initializeCoordinationState,
   listCoordinators,
@@ -83,6 +84,7 @@ export interface CoordinationInput {
   user_id: string;
   source_thread_id: string | null;
   source_event_id: string | null;
+  handback_reason?: string | null;
   routine_id?: string | null;
   occurrence_id?: string | null;
   kind: string;
@@ -104,6 +106,7 @@ export function coordinationPreamble(input: CoordinationInput): string {
     user: { id: input.user_id, name: input.name, email: input.email },
     thread_id: input.source_thread_id,
     message_id: input.source_event_id,
+    ...(input.handback_reason ? { handback_reason: input.handback_reason } : {}),
     ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
     ...(input.kind === "routine"
       ? { routine_id: input.routine_id ?? null, occurrence_id: input.occurrence_id ?? null }
@@ -224,17 +227,21 @@ export class AgentCoordination {
     for (const reply of rows) {
       try {
         const thread = reply.source_thread_id === null ? null : await store.threads.threadById(reply.source_thread_id);
+        const role = thread === null ? null : await coordinationRole(pool, thread.chat_id);
+        const work = thread?.type === "subagent"
+          ? (await acceptedWorkForThread<{ agent_id: string }>(pool, [thread.id])).rows[0]
+          : undefined;
         if (
           thread === null ||
           thread.user_id !== reply.user_id ||
-          thread.agent_id !== reply.agent_id ||
-          (await coordinationRole(pool, thread.chat_id))?.execution_role !== "inbox"
+          !((role?.execution_role === "inbox" && thread.agent_id === reply.agent_id) || work?.agent_id === reply.agent_id)
         ) {
           await settleCoordinationReply(pool, [reply.id, false]);
           continue;
         }
         const member = await identity.getUser(reply.user_id);
         const { agent } = await store.requireAccess(member, reply.agent_id, "use");
+        if (thread.agent_id !== agent.id) await store.requireAccess(member, thread.agent_id, "use");
         await runtime.writeEntry(thread.chat_id, {
           ...agentMessageEntry(agent.org_id, agent.model, reply.reply_text),
           data: { request_id: uuidv5(agent.id, `request-reply:${reply.id}`) },

@@ -4,7 +4,7 @@
 // the thread-history tools' exposure.
 
 import { Type } from "typebox";
-import { defineTool, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
+import { defineTool, LiveDoc, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { IdentityStore } from "../platform/store/identity.js";
@@ -15,7 +15,9 @@ import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
-import { recordCoordinationWorkReport } from "./store/coordination.js";
+import { isUuid } from "../platform/time.js";
+import { inputRequestIds } from "../storage/postgres/queries.js";
+import { handBackWorkFollowup, readWorkFollowups, recordCoordinationWorkReport } from "./store/coordination.js";
 import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -317,6 +319,36 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
           return saved.rowCount === 1
             ? { output: [{ type: "text", text: "Work report recorded." }] }
             : textErr("No active Run for this accepted work");
+        },
+      }),
+      defineTool({
+        name: "hand_back",
+        description: "Return an active Member follow-up outside the accepted scope to the coordinator.",
+        parameters: Type.Object({
+          reason: Type.String({ minLength: 1, maxLength: 1000 }),
+          message_id: Type.Optional(Type.String()),
+        }),
+        replay: "safe",
+        callers: ["tools"],
+        execute: async ({ reason, message_id }, api, context) => {
+          const run = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+          const requestIds = await inputRequestIds(deps.pool, run?.inputs.map(Number) ?? []);
+          const { rows } = await readWorkFollowups<{ source_event_id: string }>(deps.pool, [
+            worker.threadId, requestIds.filter(isUuid),
+          ]);
+          const selected = message_id === undefined
+            ? (rows.length === 1 ? rows[0] : undefined)
+            : rows.find((row) => row.source_event_id === message_id);
+          if (selected === undefined) {
+            return textErr(rows.length === 0
+              ? "No active Member follow-up can be handed back"
+              : "Choose an active message_id: " + rows.map((row) => row.source_event_id).join(", "));
+          }
+          if (reason.trim() === "") return textErr("A handback requires a reason");
+          const handedBack = await handBackWorkFollowup(deps.pool, [
+            worker.threadId, selected.source_event_id, reason.trim(),
+          ]);
+          return { output: [{ type: "text", text: handedBack.rowCount === 1 ? "Follow-up returned to the coordinator." : "Follow-up already handed back." }] };
         },
       }),
     );
