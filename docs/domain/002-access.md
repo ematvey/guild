@@ -111,7 +111,7 @@ A shell command (`bash`, `execute`) meets exec policy first. The command is spli
 | --- | --- |
 | forbidden | The call is refused. No Approval is offered |
 | allow | The call runs without an Approval, unless the command uses shell features that turn it into `prompt` |
-| prompt | The call goes to the Approval gate. An unmatched or unparsable command is `prompt` |
+| prompt | A Machine command goes to the Approval gate. A server sandbox command follows the server shell setting. An unmatched or unparsable command is `prompt` |
 
 The Approval gate then decides, in this order:
 
@@ -119,7 +119,7 @@ The Approval gate then decides, in this order:
 2. **Otherwise the Member's own policy** for that tool class.
 3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member, and the card shows the judge's reason.
 
-On the sandbox Executor the Agent works unattended, so only commands go through the gate. Other tools run without a card. An Integration tool marked `always_ask` asks in independently Member-started Threads. One marked `always_allow` never asks.
+Only Machine actions and Integration calls can enter approval policy. Internal Guild tools, including `send_message`, run under their own access checks without approval review. Server sandbox commands still pass static exec policy and the server shell setting. An Integration tool marked `always_ask` asks in independently Member-started Threads. One marked `always_allow` runs directly.
 
 An App data function an Agent calls with `call_app` follows the same gate. A `read`-class function runs at once; a function's class is its tool's or its own declaration (see 004). A function curated `always_ask` asks in an interactive Thread. Coordinator-managed work and Routines instead return the automatic judge verdict as a tool result. A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the page's grants stay the page's.
 
@@ -131,7 +131,7 @@ The coordinator has Workspace read/write/execute, subagent management, its Agent
 
 A shared Agent defaults to Agent acting scope, using its explicit Integration grants, with read as the default grant. Member acting scope additionally intersects those grants with the originating Member's current audience. Personal Agents always act in personal scope. Shared Agents cannot call impersonating Integrations or inherit a Member's personal MCP connections. These restrictions also apply to App data functions and are checked at execution.
 
-Coordinator-managed descendants and Routines run unattended. Static denies and grants remain hard boundaries. Calls needing judgment use the Org judge, with a default policy allowing ordinary scoped work and rejecting concrete destructive, exfiltration, privilege-escalation or unauthorized financial actions. Rejection, unavailable judgment or judge failure returns a rejected tool result; it never creates a human Approval. Independently Member-started Threads retain their approval mode. Joining a managed worker does not change its policy.
+Coordinator-managed descendants and Routines run unattended. Static denies and grants remain hard boundaries. Machine and Integration calls needing judgment use the Org judge, with a default policy allowing ordinary scoped work and rejecting concrete destructive, exfiltration, privilege-escalation or unauthorized financial actions. Rejection, unavailable judgment or judge failure returns a rejected tool result and the run can continue without the action or a human Approval. Independently Member-started Threads retain their approval mode. Joining a managed worker does not change its policy.
 
 ## Activity and usage
 

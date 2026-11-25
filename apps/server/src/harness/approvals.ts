@@ -35,7 +35,7 @@ import type { ThreadStore } from "../platform/store/thread.js";
 import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "../platform/domain/thread-events.js";
 import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
-import type { IntegrationGate } from "./integrations.js";
+import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { TraceStore } from "../platform/trace.js";
 import { APPROVAL_POLICY_PROMPT_KEY, type OrgKvStore } from "../platform/store/org-kv.js";
 import type { ChatStore } from "../platform/store/chats.js";
@@ -460,48 +460,50 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       if (chatId === null) {
         return isCommandTool ? { block: "denied: this conversation has no approval mapping" } : undefined;
       }
-      // A call that names a machine runs there; every other call runs in the
-      // server sandbox. The shell allowlist and the approval class follow the
-      // target, not the chat's binding.
-      const toolExecutor = call.arguments?.["machine"] !== undefined ? "machine" : "server";
+      const machineTool =
+        call.arguments?.["machine"] !== undefined &&
+        ([...CODING_TOOL_NAMES, "execute", "download", "send_file"] as readonly string[]).includes(call.name);
 
-      // 1. Static exec policy (the machine `execute` path's rules, applied
-      //    to the harness's bash tool — same rules, same matcher).
       if (isCommandTool) {
         const decision = evaluateExecute(deps.execPolicy, call.arguments);
         if (decision.kind === "deny") {
           return { block: `denied by exec policy: ${decision.reason}` };
         }
-        // A server-side executor honors the shell allowlist; a machine call
-        // runs on the desktop's own executor.
-        if (toolExecutor !== "machine" && !deps.allowShellTools) {
+        if (!machineTool && !deps.allowShellTools) {
           return { block: "denied: shell tools are disabled on this server" };
         }
-        if (decision.kind === "allow") return undefined; // static allow skips the gate
+        if (decision.kind === "allow") return undefined;
       }
 
       const role = await coordinationRole(deps.pool, chatId);
+      // These roles have only Guild tools and their own Workspace.
+      if (role?.execution_role === "coordinator" || role?.execution_role === "reflection") return undefined;
+
+      const conversationId = Number(runtime.conversationId);
+      const integration = await deps.integrations?.gateDecision(
+        conversationId,
+        call.name,
+        context.abortSignal,
+        call.id,
+      );
+      if (integration === "skip") return undefined;
+      const appCall = call.name === "call_app" ? await deps.appCallGate?.decision(conversationId, call) : undefined;
+      if (!machineTool && integration === undefined && appCall === undefined) return undefined;
+
       const routine = await isRoutineChat(deps.pool, [chatId]);
-      const unattended =
-        role?.coordinator_managed === true ||
-        role?.execution_role === "coordinator" ||
-        role?.execution_role === "reflection" ||
-        routine.rowCount! > 0;
-      if (unattended) {
-        const integration = await deps.integrations?.gateDecision(
-          Number(runtime.conversationId),
-          call.name,
-          context.abortSignal,
-          call.id,
-        );
-        if (integration === "skip") return undefined;
-        const appDecision =
-          call.name === "call_app" ? await deps.appCallGate?.decision(Number(runtime.conversationId), call) : undefined;
-        if (!isCommandTool && integration === undefined && appDecision === undefined) return undefined;
+      if (role?.coordinator_managed === true || routine.rowCount! > 0) {
         const chat = await deps.chats.identityOf(chatId);
-        const model = await deps.currentModel(Number(runtime.conversationId));
+        const model = await deps.currentModel(conversationId);
         if (chat === null || model === null) return { block: "Rejected: unattended action has no judge mapping" };
-        const verdict = await judgeVerdict(deps, chat.org_id, chatId, chat.internal ? null : chat.user_id, model, call, true);
+        const verdict = await judgeVerdict(
+          deps,
+          chat.org_id,
+          chatId,
+          chat.internal ? null : chat.user_id,
+          model,
+          call,
+          true,
+        );
         return verdict.approve === true
           ? undefined
           : {
@@ -509,47 +511,12 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
             };
       }
 
-      // 1b. Integration tools: the connector envelope. Guild-provided
-      //     disclosure, read-class, and always_allow-curated tools flow;
-      //     an always_ask curation forces the card; any other class falls
-      //     through to the chat's approval mode below (full_access flows,
-      //     ask/approve_for_me gate). The batch contract (server-side
-      //     workspace sessions) skips the interactive gate like every
-      //     server tool.
-      if (deps.integrations !== undefined) {
-        const decision = await deps.integrations.gateDecision(
-          Number(runtime.conversationId),
-          call.name,
-          context.abortSignal,
-          call.id,
-        );
-        if (decision === "ask") {
-          return waitForApproval(deps, runtime, chatId, call, context);
-        }
-        if (decision === "skip") return undefined;
-        // "policy" and undefined fall through to the chat approval mode.
+      if (integration === "ask" || appCall === "ask") {
+        return waitForApproval(deps, runtime, chatId, call, context);
       }
-
-      // 1c. App data functions: an `always_ask` curation asks the member,
-      //     whoever runs the turn; a write- or admin-class function goes to
-      //     the Thread's approval mode, so `full_access` runs it. A read-class
-      //     function never reaches here.
-      const appCall =
-        deps.appCallGate === undefined
-          ? undefined
-          : await deps.appCallGate.decision(Number(runtime.conversationId), call);
-      if (appCall === "ask") return waitForApproval(deps, runtime, chatId, call, context);
-
-      // 2. The batch contract: server-side workspace sessions are
-      //    pre-approved — no interactive gate (the exec policy above still
-      //    ran). Everything else gates by policy. A write-class App function
-      //    is the exception the member chose to keep: it always takes the
-      //    approval mode, the unattended executor included.
-      if (toolExecutor === "server" && !isCommandTool && appCall !== "policy") {
-        // Non-shell server tools (read/write/edit) run under the same batch
-        // contract.
-        return undefined;
-      }
+      // Interactive server-side Integration calls use the batch contract
+      // unless the tool is curated always_ask.
+      if (!machineTool && appCall !== "policy") return undefined;
 
       // 3. Approval policy: chat mode wins; unset resolves through the
       //    account policy or the AI judge.
