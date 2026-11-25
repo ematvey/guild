@@ -143,8 +143,6 @@ template:
             value: postgres://guild:$(POSTGRES_PASSWORD)@postgres:5432/guild
           - name: GUILD_BIND_ADDR
             value: 0.0.0.0:8080
-          - name: GUILD_API_URL
-            value: http://guild:8080
           - name: GUILD_AGENT_WORKSPACE_ROOT
             value: /juicefs/volume
           - name: GUILD_AGENT_WORKSPACE_WRITE_ROOT

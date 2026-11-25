@@ -27,16 +27,18 @@ before installing in another namespace on the same cluster. Creating an empty
    `ghcr.io/ematvey/guild-sandbox`, and attaches a `guild-helm-<commit>` artifact
    with the matching digest already set as the chart default. The package owner
    sets the GHCR package to Public for anonymous pulls.
-3. Copy `values.example.yaml`, set the four workload image references and the Substrate
-   atespace explicitly, and optionally set
-   the ingress host, class, annotations, and TLS Secret. The base app manifests
+3. Copy `values.example.yaml`, set the four workload image references and the
+   Substrate atespace, and optionally configure Ingress. The chart uses the
+   ingress host's HTTPS URL for Guild's public API origin. Set `publicOrigin`
+   explicitly when Guild is served at a different external URL. The base manifests
    expect PostgreSQL, ClickHouse, and RustFS at services named `postgres`,
    `clickhouse`, and `rustfs` in the target namespace. Provision the databases,
    S3 bucket, and formatted JuiceFS filesystem before deploying. To use
    existing services, supply Deployment and DaemonSet overrides for the
    connection settings and any host paths. Use Secret references for credentials.
    The base mounts a `guild-data-dir` PVC at `/data`. Set
-   `storage.createDataClaim: false` if your Deployment override supplies it another way.
+   `storage.createDataClaim: false` when supplying a pre-created claim of the
+   same name or when a Deployment override provides another mount.
 
 Organizations can override `images.actor` with their own
 `registry/repository@sha256:<digest>` image. The image must run Guild's sandbox
@@ -100,29 +102,40 @@ count matches `workerReplicas` separately from Helm's rollout wait. Pass the
 configured atespace as the third argument to the runner check when it differs
 from the namespace. The first verification script runs integration and chat
 probes against the configured Guild instance. Use test credentials and an
-approved test workspace when running it in production.
+approved test workspace when running it in production. The base CSI setup
+uses JuiceFS for both agent and plain-chat workspaces. If your CSI override
+uses a separate plain-chat root, pass its path as seen inside the Guild
+server as the fifth argument to `verify-default-dev.sh` (for example, `/data`).
 
 To use existing backing services or site-specific node placement, set
 `workloadSpecs.<workload-name>` to the complete replacement Kubernetes
 `spec`. Keep connection credentials in Secret references. The chart still
-sets image references, pull policy, and the adapter's atespace through their
-top-level values. The data PVC is retained on Helm uninstall. Store the
+sets image references, pull policy, the adapter's atespace, and any chart-configured
+public origin through their top-level values. The data PVC is retained on Helm uninstall. Store the
 release values and referenced Secret provisioning in your cluster's
 configuration source of truth.
 
-## One-time namespace migration
+## Namespace ownership and transfer
 
-Keep the existing atespace in the Helm values to retain Actor and snapshot
-identities. Preserve the JuiceFS metadata URL, object storage, workspace host
-paths, and data credentials. The Kubernetes namespace and Substrate atespace
-have independent lifecycles.
+The Kubernetes namespace owns namespaced workloads and claims. The Substrate
+atespace owns Actor and snapshot identities and has an independent lifecycle.
+A namespace transfer keeps the atespace, JuiceFS metadata URL, object storage,
+workspace host paths, and data credentials. The target release needs a
+recoverable copy of any namespace-scoped data before it can take over.
 
 1. Prepare the target namespace, Secrets, and Substrate permissions as above.
    Render the target chart with `helm template` and inspect the manifests.
    Retain the source workload definitions, ingress, and CSI driver endpoint
    for rollback.
 2. Stop the source Guild workload, drain sessions, and wait for Actors to
-   suspend. Stop the source CSI and JuiceFS DaemonSets before starting target
+   suspend. For a PVC-backed `/data` mount, snapshot or back up the quiesced
+   source claim and restore it to a PVC named `guild-data-dir` in the target
+   namespace. If the storage provider cannot restore across namespaces, copy
+   the data between claims using a supported backup and restore tool. Set
+   `storage.createDataClaim: false` for the restored claim, then verify the
+   target mounts that claim and can read the expected data. For a different
+   data mount, verify the target references the same storage or a verified copy.
+   Stop the source CSI and JuiceFS DaemonSets before starting target
    replacements because they share host mount paths and sockets. Change the
    cluster-wide `CSIDriverConfig` endpoint to the target service as part of
    this maintenance window. This is an explicit ownership transfer.
@@ -135,8 +148,11 @@ have independent lifecycles.
    `deployment/ate-api-server` in `ate-system` and wait for it.
 4. Switch the ingress, run the workspace, chat, and Actor suspend/resume
    verification, then retire the source workers and repeat the Actor check.
-   Remove the source namespace after verification. Retain the atespace, storage
-   classes, and backing data.
+   Remove the source namespace only after verifying the target data and
+   preserving a recoverable backup. Deleting the namespace deletes its PVCs.
+   Helm's retention annotation applies to Helm uninstall, and the volume's
+   reclaim policy controls what happens to the underlying volume when its claim
+   is deleted. Retain the atespace, storage classes, and backing data.
 
 For rollback, stop the target workloads and mounts, restore the previous CSI
 endpoint and roll the Substrate API Deployment. Bring back the source mounts,

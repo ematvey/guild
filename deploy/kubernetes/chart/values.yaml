@@ -17,6 +17,9 @@ storage:
   size: 5Gi
   storageClass: ""
 
+# Empty derives https://<ingress.host> when an ingress host is configured.
+publicOrigin: ""
+
 ingress:
   host: ""
   className: ""

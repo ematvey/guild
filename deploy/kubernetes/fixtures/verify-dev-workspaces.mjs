@@ -5,8 +5,8 @@ const org = "00000000-0000-4000-8000-000000000001";
 const id = crypto.randomUUID();
 const database = new URL(process.env.GUILD_DATABASE_URL);
 const workspace = process.env.GUILD_AGENT_WORKSPACE_ROOT;
-const dataDir = process.env.GUILD_DATA_DIR;
-assert.ok(workspace && dataDir);
+const plainWorkspace = process.env.PROBE_PLAIN_WORKSPACE_ROOT || workspace;
+assert.ok(workspace && plainWorkspace);
 const port = database.port || "5432";
 const host = database.hostname;
 const postgresSslRequest = [0, 0, 0, 8, 4, 210, 22, 47];
@@ -69,4 +69,4 @@ for (const key of [agentKey, `${agentKey}:member:${crypto.randomUUID()}`, `${age
   await check(key, agentSubpath, `${workspace}/${agentSubpath}`);
 }
 const plain = Date.now();
-await check(`chat:${org}:${plain}`, `chats/${org}/${plain}`, `${dataDir}/chats/${org}/${plain}`);
+await check(`chat:${org}:${plain}`, `chats/${org}/${plain}`, `${plainWorkspace}/chats/${org}/${plain}`);
