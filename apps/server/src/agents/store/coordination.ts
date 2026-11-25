@@ -503,3 +503,37 @@ export function recordWorkerOutcome<T extends QueryResultRow = QueryResultRow>(d
     values,
   );
 }
+
+export function followCoordinationThread(db: Database, workerThreadId: string, sourceThreadId: string) {
+  return db.query(
+    `INSERT INTO agent_coordination_followed_threads(worker_thread_id, source_thread_id)
+     SELECT worker.id, source.id FROM agent_threads worker
+     JOIN agent_coordination_inputs work ON work.id=worker.source_input_id
+     JOIN agent_threads source ON source.id=$2 AND source.user_id=worker.user_id AND source.agent_id=worker.agent_id
+     JOIN chats chat ON chat.id=source.chat_id AND NOT chat.internal AND chat.deleted_at IS NULL
+     WHERE worker.id=$1 AND worker.coordinator_managed AND worker.closed_at IS NULL
+       AND work.accepted_scope IS NOT NULL AND worker.id<>source.id AND source.execution_role='thread'
+     ON CONFLICT DO NOTHING`,
+    [workerThreadId, sourceThreadId],
+  );
+}
+
+export function unfollowCoordinationThread(db: Database, workerThreadId: string, sourceThreadId: string) {
+  return db.query(
+    `DELETE FROM agent_coordination_followed_threads WHERE worker_thread_id=$1 AND source_thread_id=$2`,
+    [workerThreadId, sourceThreadId],
+  );
+}
+
+export function listFollowedCoordinationThreads(db: Database, workerThreadId: string) {
+  return db.query<{ thread_id: string; title: string | null }>(
+    `SELECT source.id AS thread_id, source.title FROM agent_coordination_followed_threads follow
+     JOIN agent_threads worker ON worker.id=follow.worker_thread_id
+     JOIN agent_threads source ON source.id=follow.source_thread_id
+       AND source.user_id=worker.user_id AND source.agent_id=worker.agent_id AND source.execution_role='thread'
+     JOIN chats chat ON chat.id=source.chat_id AND NOT chat.internal AND chat.deleted_at IS NULL
+     WHERE follow.worker_thread_id=$1 AND worker.closed_at IS NULL
+     ORDER BY source.id`,
+    [workerThreadId],
+  );
+}

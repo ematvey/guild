@@ -459,13 +459,18 @@ describe("configured coordinator conversation", () => {
     const headers = { authorization: `Bearer ${stack.memberToken}` };
     const created = await app.inject({
       method: "POST", url: "/api/v1/agents", headers,
-      payload: { name: "Acceptance Assistant", model: "coordination-test", resources: { assistant: { enabled: true } } },
+      payload: { name: "Acceptance Assistant", model: "coordination-test", tools: ["conversation_read"], resources: { assistant: { enabled: true } } },
     });
     expect(created.statusCode, created.body).toBe(200);
     const agentId = created.json().agent.id as string;
     const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: agentId } });
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string };
+    const source = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads`, headers, payload: { title: "Related project context" },
+    });
+    expect(source.statusCode, source.body).toBe(200);
+    const relatedThreadId = source.json().thread.id as string;
     const sourceEventId = randomUUID();
     const submitted = await app.inject({
       method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
@@ -493,7 +498,7 @@ describe("configured coordinator conversation", () => {
       [inputId],
     )).rowCount === 1, 10000);
     stack.mock.setResponses([
-      { body: call("codemode", { code: 'return await tools.report_work({state:"blocked",summary:"Need project access",question:"Can you grant access?"});' }) },
+      { body: call("codemode", { code: `try { await tools.followed_threads({action:"follow",thread_id:${JSON.stringify(inbox.thread_id)}}); } catch {} await tools.followed_threads({action:"follow",thread_id:${JSON.stringify(relatedThreadId)}}); return await tools.report_work({state:"blocked",summary:"Need project access",question:"Can you grant access?"});` }) },
       { body: final("Worker review is blocked.") },
       { body: final("Internal child report.") },
     ]);
@@ -559,6 +564,10 @@ describe("configured coordinator conversation", () => {
        WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
     )).rowCount === 0, 10000);
     const workerThreadId = attempts.rows[0]?.thread_id as string;
+    const followed = await stack.env.db.query(
+      "SELECT source_thread_id FROM agent_coordination_followed_threads WHERE worker_thread_id=$1", [workerThreadId],
+    );
+    expect(followed.rows).toEqual([{ source_thread_id: relatedThreadId }]);
     const workerChatId = (await stack.env.db.query(
       "SELECT chat_id FROM agent_threads WHERE id=$1", [workerThreadId],
     )).rows[0]?.chat_id as string;

@@ -17,7 +17,14 @@ import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
 import { isUuid } from "../platform/time.js";
 import { inputRequestIds } from "../storage/postgres/queries.js";
-import { handBackWorkFollowup, readWorkFollowups, recordCoordinationWorkReport } from "./store/coordination.js";
+import {
+  followCoordinationThread,
+  handBackWorkFollowup,
+  listFollowedCoordinationThreads,
+  readWorkFollowups,
+  recordCoordinationWorkReport,
+  unfollowCoordinationThread,
+} from "./store/coordination.js";
 import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -352,6 +359,42 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
         },
       }),
     );
+  }
+
+  if (allowed.has("conversation_read") && deps.acceptedWork && deps.subagents !== undefined) {
+    const workerThreadId = deps.subagents.threadId;
+    tools.push(defineTool({
+      name: "followed_threads",
+      description: "List, follow or unfollow this worker's related Member Threads for context. " +
+        "Use conversation_read to read a followed Thread. Following a Thread grants no authority and does not start a Run.",
+      parameters: Type.Object({
+        action: Type.Union([Type.Literal("list"), Type.Literal("follow"), Type.Literal("unfollow")]),
+        thread_id: Type.Optional(Type.String()),
+      }),
+      structuredOutputSchema: Type.Object({
+        threads: Type.Array(Type.Object({ thread_id: Type.String(), title: Type.Union([Type.String(), Type.Null()]) })),
+      }),
+      replay: "safe",
+      callers: ["tools"],
+      outputLimits: { maxBytes: 16 * 1024 },
+      execute: async ({ action, thread_id }) => {
+        const requester = await deps.identity.getUser(deps.userId);
+        await deps.store.requireAccess(requester, deps.agent.id, "use");
+        if (action !== "list") {
+          if (thread_id === undefined || !isUuid(thread_id)) return textErr("A valid thread_id is required");
+          if (action === "follow") {
+            await followCoordinationThread(deps.pool, workerThreadId, thread_id);
+          } else {
+            await unfollowCoordinationThread(deps.pool, workerThreadId, thread_id);
+          }
+        }
+        const { rows } = await listFollowedCoordinationThreads(deps.pool, workerThreadId);
+        if (action === "follow" && !rows.some((row) => row.thread_id === thread_id)) {
+          return textErr("This Thread is unavailable for following");
+        }
+        return { structuredOutput: structured({ threads: rows }) };
+      },
+    }));
   }
 
   if (allowed.has("send_message")) {

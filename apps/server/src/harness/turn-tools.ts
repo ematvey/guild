@@ -247,7 +247,8 @@ export class TurnTools {
     if (acceptedScope === undefined) return instructions;
     return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
       "\nStay within this scope. Use report_work to record progress or a result. " +
-      "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope.";
+      "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
+      "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
 
   }
 
