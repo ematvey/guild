@@ -1,110 +1,67 @@
 # Guild — deploy nuances
 
-Everything non-obvious about building, serving, and shipping Guild on a
-single Docker host. Companion to `docs/clients.md` (client distribution
-details).
+Build, deploy, and verify Guild on Kubernetes. See [desktop client releases](clients.md)
+and the [Helm install guide](../deploy/kubernetes/README.md).
 
----
+## 0. Backing services
 
-## 0. Host services (default operating mode)
-
-Guild prod AND tests use shared **host-level** services — nobody runs
-private copies by default. Each service belongs to the host, not to this
-project:
-
-| Service | Endpoint | Notes |
-|---|---|---|
-| Postgres 17 | `127.0.0.1:5432` | Guild database and role: `guild` |
-| ClickHouse | `0.0.0.0:8123` (HTTP) | Guild database: `guild` |
-| S3-compatible storage | `0.0.0.0:9950` (S3 API), `:9951` (console) | Guild bucket: `guild` |
-| Faro collector (Alloy + Loki) | `0.0.0.0:12347` (`/collect`) | No auth; per-app rate limiting |
-
-Service data directories, admin credentials, and the S3 root pair live
-outside this repo, in the host's service configuration.
+The installation supplies PostgreSQL, ClickHouse, and S3-compatible storage.
+Use the installation's values and Secrets to configure service endpoints and
+credentials as described in the Helm install guide.
 
 Guild proxies browser telemetry through the server: `POST /faro/collect`
-forwards to `GUILD_FARO_URL` (default the collector above; empty disables).
+forwards to `GUILD_FARO_URL` (an empty value disables forwarding).
 The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
 absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
 The value rides the `workspace_identity` frame, so every client starts or
 stops collecting live. There is no per-device toggle; About shows the state
 read-only.
 
-- Each project gets its own **database/bucket** on the shared servers
-  (Guild: db `guild`, bucket `guild`).
-- Guild tests hit the same servers with per-run isolated DBs/buckets
-  (`test_*` / `t*` names; stale `test_*` databases are reaped on first use).
-  Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`,
-  `GUILD_TEST_S3_URL` (+ `_USER`/`_PASSWORD`/`_ACCESS_KEY_ID`
-  /`_SECRET_ACCESS_KEY`). There are no testcontainers.
-- `host.docker.internal` (compose `extra_hosts: host-gateway`) is how the
-  Guild server container reaches these ports.
+Tests use isolated databases and buckets on the configured test services.
+Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`, and
+`GUILD_TEST_S3_URL`. Supply test credentials through the environment or the
+gitignored `test.env` at the repository root.
 
 ---
 
-## 1. What runs where
+## 1. Build and deploy the server
 
-Guild can run on two stacks on one host: a dev stack and a prod stack.
-**Don't confuse them.**
+Set `version` to the product version for a stable release or to the intended
+preview version for a develop installation. Set `image` to an immutable image
+reference that identifies this build. From the repository root, build the image.
 
-### Dev: compose stack on :18080
+```bash
+docker build -f Dockerfile.server-ts \
+  --build-arg "GUILD_BUILD_VERSION=${version:?Set the server version}" \
+  -t "${image:?Set the server image reference}" .
+```
 
-- Compose project: `deploy/compose` (`docker-compose.yml` there).
-- Running container: `compose-server-1` (the TS server). The infra services
-  (postgres/clickhouse/minio) exist in the compose file behind the
-  `fullstack` profile as a self-contained fallback and are **stopped**
-  (`compose-postgres-1` etc.); the server reads config.env pointing at the
-  host services (§0).
-- `compose-server-1` publishes **0.0.0.0:18080 → 8080** (that's the chat app
-  + API everything points at).
-- Config: `deploy/compose/config.env` (gitignored — holds real secrets:
-  `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`). `GUILD_HTTP_PORT=18080`
-  because another service already uses 8080. DB/CH/S3 URLs use
-  `host.docker.internal:5432/8123/9950`.
-- Server state lives in the named volume `guild_data` (`/data` inside the
-  container — `GUILD_DATA_DIR`, the server-side workspace sessions root).
-  The fullstack fallback volumes (`pgdata`, `chdata`, `miniodata`) hold
-  data from the fallback profile only. `docker compose down -v` destroys
-  all of it.
+Publish the image to the installation's registry, or load it onto the eligible
+nodes when the installation uses preloaded images. Set `images.server` to the
+image reference in the installation's managed Helm values. For a first
+installation, follow the [Helm setup guide](../deploy/kubernetes/README.md#apply-and-verify).
+For an existing installation, set `chart`, `context`, `namespace`, and
+`values` to the chart, kube context, release namespace, and maintained values
+file. Set `BASE` to the deployed origin.
 
-### Other stacks on this host
+```bash
+helm upgrade guild "$chart" --kube-context "$context" \
+  --namespace "$namespace" -f "$values" --wait --timeout 10m
+```
 
-Each stack is its own checkout with its own compose project, database and
-object-storage bucket. They share the host Postgres/ClickHouse/S3 services.
+Verify the reported version at the deployed origin.
 
-| Stack | Checkout | Project | Port | Public host |
-|---|---|---|---|---|
-| dev | `~/guild` (`deploy/compose`) | `compose` | 18080 | `guild.example.com` |
-| prod | `~/guild-live` | `guild-live` | 18081 | `guild.example.org` |
-| ezh | `~/guild-stage` | `guild-stage` | 18088 | `ezh.example.com` |
+```bash
+curl -fsS "$BASE/api/v1/health" \
+  | jq -e --arg version "$version" '.status == "ok" and .version == $version'
+```
 
-- Dev and prod track `master`; work happens on `develop`.
-- Each stack gets fresh `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`,
-  `GUILD_INTERNAL_KEY` and `GUILD_SANDBOX_RUNNER_TOKEN`, plus its own
-  database, ClickHouse database and S3 bucket.
-- Sandbox networks must not overlap: dev `10.213.0.0/24`, prod
-  `10.215.0.0/24`, ezh `10.216.0.0/24`.
-- Agent workspaces are per stack, set in the stack's `.env` with no defaults
-  (compose refuses to start without them), see §4b:
-
-  | Stack | `GUILD_WORKSPACE_HOST_DIR` | `GUILD_JUICE_META_DB` | `GUILD_JUICE_VOLUME` | `GUILD_JUICE_BUCKET` | `GUILD_WORKSPACES_VOLUME` |
-  |---|---|---|---|---|---|
-  | dev (`compose`) | `/mnt/guild-dev` | `guild_meta_dev` | `guild-workspaces-dev` | `guild-workspaces-dev` | `compose_guild_workspaces_dev` |
-  | prod (`guild-live`) | `/mnt/guild` | `guild_meta` | `guild-workspaces` | `guild-workspaces` | `guild-live_guild_workspaces` |
-  | ezh (`guild-stage`) | `/mnt/guild-stage` | `guild_stage_meta` | `guild-workspaces-ezh` | `guild-workspaces-ezh` | `guild-stage_guild_workspaces` |
-
-  No two stacks may share any of these values.
-- Public hosts are ingress rules in `/etc/cloudflared/config.yml` (the
-  `cloudflared` tunnel), each pointing at the stack's port. Add a host with
-  `cloudflared tunnel route dns <tunnel> <host>` and restart the service.
+Health, WebSocket identity, and release eligibility use the version baked into
+the image. When deploying a paired desktop release, use the
+[release pairing procedure](clients.md#pairing-a-deployment-with-a-desktop-release).
+For a published preview, create its pending pin before the Helm upgrade.
 
 ---
-
-For a preview, `node scripts/release.mjs deploy-preview <artifact-directory>`
-sets `GUILD_BUILD_VERSION` in the ignored Compose `.env` and runs the rebuild
-below. The Docker build stamps that version into the image’s server package.
-Health, WebSocket identity and release eligibility use the same baked version.
-The source manifests retain the stable product version.
 
 ## 2. The big gotcha: the frontend dist is baked into the server IMAGE
 
@@ -113,19 +70,16 @@ in a `webui` stage and serves it from disk at `apps/desktop/dist` inside
 the image (`GUILD_WEB_DIST` default; `apps/server/src/http/web.ts`):
 
 - **A local `vite build` (or any edit under `apps/desktop/`) does NOT change
-  what `http://localhost:18080` serves.** The running container serves
-  whatever was baked into its image. Editing files, rebuilding the frontend
-  locally, even restarting the container — none of it ships frontend
-  changes.
+  what the cluster serves.** The running pod serves whatever was baked into
+  its image. Editing files, rebuilding the frontend locally, even restarting
+  the pod — none of it ships frontend changes.
 - If the image has no dist, pages answer with the 503 hint ("chat app not
   built") and the API still works.
 
-### Shipping a frontend change (the canonical recipe)
+### Shipping a frontend change
 
-```bash
-cd deploy/compose
-docker compose build server && docker compose up -d server
-```
+Use the [version-stamped server build and Helm rollout](#1-build-and-deploy-the-server)
+for frontend and backend changes.
 
 - The image's `webui` stage runs `npm ci --workspace apps/desktop` + `vite
   build` (it also needs `packages/ui/src` and `packages/wire/src`). Changing
@@ -139,13 +93,10 @@ docker compose build server && docker compose up -d server
 ### Verify the new bundle actually went live
 
 ```bash
-curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.js'
-curl -s localhost:18080/api/v1/health          # {"status":"ok"}
+curl -fsS "$BASE/thread/x" | grep -oE 'index-[A-Za-z0-9_-]+\.js'
 ```
 
-A changed asset hash = new bundle. Optionally
-`docker run --rm --entrypoint sh compose-server-1 -c "ls /app/apps/desktop/dist/assets |
-head"` to inspect the served bundle directly.
+Compare the served asset hash with the bundle in the new image.
 
 ---
 
@@ -167,179 +118,28 @@ Notes:
   `package.json`/`package-lock.json` + its apps only — **adding a
   dependency requires the lockfile update to flow through** (lockfile is
   COPYed in every stage).
-- Build context is the repo root (`context: ../..`), so anything new the
+- Build context is the repo root, so anything new the
   build needs must be COPYed explicitly.
 
 ---
 
-## 4. Compose stack details
+## 4. Cluster specifics
 
-- Default `up` starts `server`, `sandbox-runner`, `egress`, `curl-fetch` and
-  the build-only `sandbox-image` (exits at once); postgres/clickhouse/minio
-  are behind the `fullstack` profile (`--profile fullstack` to use them). The
-  server has no compose-service deps — the host services must already be up.
-  If the server crash-loops on boot, check the host services first.
+- The chart (`deploy/kubernetes/chart`) installs the server, the fetch
+  service, the Substrate adapter, the actor worker pool, JuiceFS and the
+  workspace CSI. `deploy/kubernetes/README.md` is the install and upgrade
+  procedure.
+- Server-side tools run in gVisor sandboxes created by the Substrate actor
+  workers, never in the server pod; see `docs/domain/003-execution.md`.
+- Agent workspaces and plain chats mount through the workspace CSI.
 - `curl-fetch` (`deploy/curl-fetch`, python + curl_cffi) is `web_fetch`'s
-  fallback transport. The server reaches it at `GUILD_CURL_FETCH_URL`
-  (`http://curl-fetch:8080`, set by compose). It replays a Chrome TLS and
-  HTTP/2 fingerprint for URLs firecrawl cannot return — JSON and plain-text
-  endpoints, and pages whose text is too thin for firecrawl's content
-  heuristics. It is never published; it answers only on the stack network.
-- The fullstack fallback ClickHouse stays pinned to
-  `clickhouse-server:24`; the host ClickHouse floats 26.5
-  (`pull_policy: always`) — a host CH upgrade can change behavior.
-- Registry bundles live in rustfs bucket `guild` (host :9950).
-- Host port override: `GUILD_HTTP_PORT` (18080 here) in `config.env`.
-- Server-side agent sessions store under `GUILD_DATA_DIR=/data`
-  (`workspaces/<org>/<name>`, plain chats `chats/<org>/<id>`); their tools
-  run in gVisor sandboxes — see §4a.
-
-### 4a. Sandboxes (server-side tools)
-
-- **Host prerequisite: the `runsc` runtime.** The runner refuses to start
-  without it. Install (once per Docker host): unpack a pinned, checksum-
-  verified gVisor release (`gvisor.tar.bz2` from
-  `storage.googleapis.com/gvisor/releases/release/<ver>/x86_64/`) to
-  `/usr/local/lib/gvisor/` (runsc needs `gvisor-bin/` next to it), add
-  `"runsc": {"path": "/usr/local/lib/gvisor/runsc", "runtimeArgs":
-  ["--overlay2=root:self"]}` under `runtimes` in `/etc/docker/daemon.json`,
-  `sudo systemctl reload docker` (a reload, not a restart: running
-  containers are untouched). Check: `docker info | grep -i runsc`.
-  Verified with gVisor release 20261005.0.
-- **config.env** needs `GUILD_SANDBOX_RUNNER_TOKEN` (shared by server and
-  runner; `openssl rand -hex 32`). The server gets
-  `GUILD_SANDBOX_RUNNER_URL` from compose.
-- **Two stacks on one host** (dev `compose`, prod its own project) each need
-  their own sandbox subnet and egress IP, set in `deploy/compose/.env`:
-  `GUILD_SANDBOX_SUBNET` (default `10.213.0.0/24`) and
-  `GUILD_SANDBOX_EGRESS_IP` (default `10.213.0.2`), plus
-  `GUILD_SANDBOX_IMAGE` / `GUILD_SANDBOX_EGRESS_IMAGE` tags (`:prod`) so
-  one stack's build can't swap the other's images. When Docker's default
-  address pools are exhausted, every new network needs an explicit subnet.
-- **The egress proxy is addressed by IP**, never by name: Docker's embedded
-  DNS does not work inside gVisor sandboxes. The allowlist is
-  `deploy/sandbox/egress/allowed-domains.txt` (mounted; `docker compose
-  restart egress` after editing).
-- **Sandbox containers are not compose services**: `docker ps --filter
-  label=guild.sandbox.project=compose`. Idle ones stop after 15 min and
-  are removed after 24 h; their files stay on the volume. `docker compose
-  down` does not remove running sandboxes — the runner removes its
-  project's sandboxes on every start and recreates them on demand.
-- **The server runs as uid 1000** (`node`) since the sandbox change; the
-  runner hands root-owned data dirs from older volumes to uid 1000 on its
-  first boot.
-- **Integration tests**: `scripts/sandbox-it.sh` builds `:sbx-it` images
-  and runs the runner + e2e suites in a throwaway `guild-sbx-it` project
-  (subnets `10.214.0.0/24`, `10.214.1.0/24`; runner on loopback :18090).
-
-### 4b. JuiceFS agent workspaces
-
-
-- **Each stack owns its filesystem.** `.env` names it with five values and
-  no defaults (table in §1): the host directory, the metadata database, the
-  JuiceFS volume name, the bucket, and the Docker volume name. Two stacks on
-  one host directory or one metadata database are one filesystem, and one
-  stack's unmount takes the other's workspaces down. The sidecar refuses to
-  start when another volume is mounted at its host directory.
-- **Host prerequisites:** create the bind source and the bucket once per
-  stack. No systemd unit is involved.
-
-  ```bash
-  sudo mkdir -p /mnt/guild-dev   # GUILD_WORKSPACE_HOST_DIR
-  ```
-
-  The compose volume `guild_workspaces` binds that directory;
-  `docker compose up` fails at volume creation when it does not exist.
-- The `juicefs-init` one-shot service creates `GUILD_JUICE_META_DB` in the
-  stack's Postgres from `GUILD_DATABASE_URL` credentials, then exits.
-- **The sidecar holds the volume.** Docker unmounts a bind volume when its
-  last container stops, and that unmount propagates through the shared
-  host directory and takes the FUSE mount down. The `juicefs` service mounts
-  `guild_workspaces` itself, so recreating the server and the runner together
-  (any deploy that rebuilds the shared image) leaves the mount alone.
-- **Never remove or recreate a workspace volume while its directory is
-  mounted.** Moving a stack to a new directory means a new
-  `GUILD_WORKSPACES_VOLUME` name; the old volume record stays until the old
-  directory has no mount, then `docker volume rm` is safe.
-- **Credentials:** the JuiceFS settings reach only the `juicefs` service.
-  Its object-store key goes in `deploy/compose/juicefs.env`
-  (`GUILD_JUICE_ACCESS_KEY`/`GUILD_JUICE_SECRET_KEY`, see
-  `juicefs.env.example`); without one it falls back to `config.env`'s
-  `GUILD_S3_*`, which the server also holds. Use a RustFS user whose policy
-  covers only the stack's bucket (dev: user and policy
-  `guild-workspaces-dev`, made with `mcli admin` and the root key from
-  `/etc/default/rustfs`). The sidecar stores an explicitly given key in the
-  volume on every start, so rotating it is editing `juicefs.env` and
-  restarting the sidecar; the `GUILD_S3_*` fallback never replaces a stored
-  key.
-- The `juicefs` sidecar formats the volume once (`juicefs format` is skipped
-  when `juicefs status` reports an existing volume), then mounts it in the
-  **host mount namespace**: it runs with `pid: host` and `privileged: true`,
-  installs the client at `/usr/local/bin/juicefs` (plus library symlinks under
-  `/usr/local/lib/juicefs`) and mounts via `nsenter -t 1 -m -n`. A FUSE mount
-  created inside the sidecar's own namespace is not visible to the Docker
-  daemon, so it cannot back the per-agent sandbox subpaths. The healthcheck
-  runs `nsenter -t 1 -m -- stat -f` on `GUILD_WORKSPACE_HOST_DIR`.
-- `server` binds `guild_workspaces` read-only at `/workspaces` (file
-  browser, `GUILD_AGENT_WORKSPACE_ROOT`); `sandbox-runner` binds it
-  read-write and creates `agents/<org>/<agent>` subpaths for the sandboxes.
-  Both wait for the `juicefs` healthcheck and restart with it (`depends_on:
-  restart: true`).
-- Per-agent quota: the sidecar sweeps `<host dir>/agents/*/*` in the host
-  mount namespace every `GUILD_AGENT_QUOTA_INTERVAL` seconds (default 300)
-  and runs `juicefs quota set --capacity GUILD_AGENT_WORKSPACE_GIB` (default
-  50) for each directory. The sweep needs the host network namespace too, so
-  `host.docker.internal` resolves to the host's Postgres.
-- Restarting the `juicefs` container replaces the FUSE session behind
-  Docker's bind volume (`/var/lib/docker/volumes/<project>_guild_workspaces/_data`).
-  The sidecar re-binds that `_data` to the host directory after every mount, so the
-  dependent services start on the live mount; the runner also removes its
-  sandbox containers on boot, because a sandbox created before the remount
-  keeps the dead session (`transport endpoint is not connected`; every
-  command in it hangs). Sandbox files live on the volume, so the removal
-  loses nothing. Verify by hand if a workspace looks empty or a command
-  hangs:
-
-  ```bash
-  findmnt -n /var/lib/docker/volumes/compose_guild_workspaces_dev/_data
-  ```
-
-  A fresh `docker compose up` on a stack that has never run is unaffected.
-- Chat workspaces stay on `guild_data`; the agent volume is separate.
-- The object-storage bucket must already exist before the first
-  `juicefs format` (for the isolated instance the init script creates it;
-  elsewhere `rclone mkdir` with the stack's key). The sidecar writes `127.0.0.1
-  host.docker.internal` into the host `/etc/hosts` when missing, because the
-  host-namespace mount resolves the same S3/Postgres names as the
-  containers.
-- Other stacks can point the services at a different config file with
-  `GUILD_CONFIG_ENV=/path/to/config.env` (default `config.env` next to the
-  compose file).
-
-**Isolated instance** (`scripts/agents-vfs-init.mjs`) — a disposable
-verification stack with fixed resources, never the dev/prod stacks:
-
-| Resource | Value |
-|---|---|
-| Compose project | `guild-agents-vfs` |
-| HTTP port | `18093` |
-| App database | `guild_agents_vfs` |
-| JuiceFS metadata database | `guild_meta_agents_vfs` |
-| JuiceFS volume | `guild-workspaces-agents-vfs` |
-| Object-storage bucket | `guild-agents-vfs` |
-| Host volume dir | `/mnt/guild-agents-vfs` |
-| Workspace volume | `guild-agents-vfs_guild_workspaces` |
-
-Host prerequisites for the isolated instance:
-
-```bash
-sudo mkdir -p /mnt/guild-agents-vfs
-```
-
-The script refuses any other database, bucket, port, or volume directory.
-It provisions the app database, `guild_meta`, the bucket, and the host
-directory, then prints how to bring the compose project up with the
-isolated config file (`GUILD_CONFIG_ENV`).
+  fallback transport, reached at `GUILD_CURL_FETCH_URL`. It replays a Chrome
+  TLS and HTTP/2 fingerprint for URLs firecrawl cannot return: JSON and
+  plain-text endpoints, and pages whose text is too thin for firecrawl's
+  content heuristics. It is never published outside the cluster.
+- Registry bundles live in the installation's S3 bucket.
+- Server-side agent sessions store under `GUILD_DATA_DIR`
+  (`workspaces/<org>/<name>`, plain chats `chats/<org>/<id>`).
 
 ---
 
@@ -349,9 +149,9 @@ isolated config file (`GUILD_CONFIG_ENV`).
   `POST /api/v1/auth/bootstrap` with `{"email","password"}`.
 - Provider keys & model routes are configured via the admin API (see
   `deploy/README.md` for copy-paste examples) or the admin Settings sections
-  in the app at `http://localhost:18080/settings/<section>`.
+  in the app at `/settings/<section>`.
 - Desktop pairing: generate a code in the web app (Settings → Connect
-  desktop app); the desktop client pairs against the same :18080.
+  desktop app); the desktop client pairs against the public host.
 
 ---
 
@@ -373,14 +173,9 @@ isolated config file (`GUILD_CONFIG_ENV`).
 
 ## 7. Running long rebuilds detached
 
-`docker compose build server` can run long (npm + tsc). Use the
-`big-job` skill (systemd-run transient unit, journal output). Two traps:
-
-- **No shell operators after `systemd-run --`** — `a && b` becomes literal
-  args. Wrap: `-- bash -lc 'cd .../deploy/compose && docker compose build
-  server && docker compose up -d server'`.
-- Always pass an explicit working directory (systemd-run inherits the
-  caller's cwd otherwise).
+Run the stamped build from §1 in a detached systemd transient unit with an
+explicit working directory. Follow the unit's journal and check its exit status
+before deploying the image.
 
 ---
 
@@ -396,8 +191,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
   `<session.base_url>/api/v1/updates/latest.json` and overrides the plugin's
   configured list at runtime, so one client build follows whichever stack it
   paired with. The `endpoints` entry in `tauri.conf.json` is a placeholder
-  the runtime replaces. `dangerousInsecureTransportProtocol: true` (plain
-  HTTP is intentional for this deployment). `createUpdaterArtifacts: true`.
+  the runtime replaces. `createUpdaterArtifacts: true`.
 - Two publisher scripts, both **idempotent** (they delete+republish an
   existing version/platform artifact) and both verify the server's sha256
   against the local file:
@@ -422,17 +216,7 @@ isolated config file (`GUILD_CONFIG_ENV`).
 ## 9. Quick recipes
 
 ```bash
-# ship a frontend or backend change to :18080
-cd deploy/compose && docker compose build server && docker compose up -d server
-
-# just restart (e.g. after config.env change)
-docker compose up -d server   # recreate if env changed: --force-recreate
-
-# what's actually being served?
-curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'
-
-# nuke everything including data (destructive!)
-docker compose down -v
+kubectl --context "$context" -n "$namespace" logs deploy/guild -f
 ```
 
 ## Daemon watch-items
@@ -490,8 +274,7 @@ except synchronization from master. Local and branch releases stamp a temporary
 next-patch `-dev.<build-number>` version with `--build` in a disposable checkout.
 See `docs/clients.md` §4 for publication and per-stack approval.
 
-Develop preview deployments use `scripts/release.mjs deploy-preview <directory>
-<installation>` to stamp the server image and pin the release after health matches.
-The default installation name is `dev`. Daily GitHub cleanup preserves the newest
+The desktop release paired with a deployment matches the version reported by
+the running server. Daily GitHub cleanup preserves the newest
 ten previews, all previews under fourteen days old, and installation pins; see
 `docs/clients.md` §4. Stable releases are retained.

@@ -1,11 +1,11 @@
 // Host-service credentials for tests that talk to the shared host services.
 // Secrets are host configuration and must never be committed: they are read
-// from the environment, then from the gitignored deploy/compose/config.env.
+// from the environment, then from the gitignored test.env at the repo root.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
-const CONFIG_ENV_PATH = path.join(REPO_ROOT, "deploy/compose/config.env");
+const CONFIG_ENV_PATH = path.join(REPO_ROOT, "test.env");
 
 function valueFromConfigEnv(key: string): string | undefined {
   try {
