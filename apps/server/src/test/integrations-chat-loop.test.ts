@@ -281,6 +281,57 @@ function toolResults(events: Record<string, unknown>[]): Record<string, unknown>
 }
 
 describe("M8: integrations chat runtime", () => {
+  it.each(["slack_post_message", "int_slack_post_message"])(
+    "requires Thread approval before executing %s",
+    async (name) => {
+      const chatId = await createChat("integration-write-approval", stack.adminToken);
+      const headers = auth(stack.adminToken);
+      expect((await stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/threads/${chatId}/approval`,
+        headers,
+        payload: { default: "ask" },
+      })).statusCode).toBe(200);
+      const before = slackPosts;
+      await stack.env.db.query(
+        "UPDATE integrations SET config=config #- '{tools,post_message,approval}' WHERE org_id=$1 AND name='slack'",
+        [orgId],
+      );
+      try {
+        scriptFor(
+          { body: toolCallSse(name, JSON.stringify({ channel: "C1", text: "approval test" })) },
+          { body: finalSse },
+        );
+        await submitTurn(chatId, "post this", stack.adminToken);
+        let callId: string | undefined;
+        await waitFor(async () => {
+          const events = await threadEvents(chatId, stack.adminToken);
+          const request = events
+            .map((row) => row.event as { type: string; call_id?: string })
+            .find((event) => event.type === "approval_request");
+          callId = request?.call_id;
+          return callId !== undefined || toolResults(events).length > 0;
+        });
+        expect(callId).toBeDefined();
+        expect(slackPosts).toBe(before);
+        expect((await stack.env.app.inject({
+          method: "POST",
+          url: `/api/v1/threads/${chatId}/approvals/${encodeURIComponent(callId!)}`,
+          headers,
+          payload: { approved: true },
+        })).statusCode).toBe(200);
+        await turnSettled(chatId, stack.adminToken);
+        expect(slackPosts).toBe(before + 1);
+      } finally {
+        await stack.env.db.query(
+          "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_allow\"') WHERE org_id=$1 AND name='slack'",
+          [orgId],
+        );
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
   it(
     "refuses a write when approval policy tightens after classification",
     async () => {

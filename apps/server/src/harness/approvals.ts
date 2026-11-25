@@ -514,9 +514,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       if (integration === "ask" || appCall === "ask") {
         return waitForApproval(deps, runtime, chatId, call, context);
       }
-      // Interactive server-side Integration calls use the batch contract
-      // unless the tool is curated always_ask.
-      if (!machineTool && appCall !== "policy") return undefined;
+      if (!machineTool && integration === undefined && appCall !== "policy") return undefined;
 
       // 3. Approval policy: chat mode wins; unset resolves through the
       //    account policy or the AI judge.
@@ -533,7 +531,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       } else if (chat_mode === "ask" || chat_mode === "never") {
         decision = "ask";
       } else if (user_policy !== null) {
-        decision = forTool(resolvePolicy(user_policy), clientToolClass(call.name));
+        decision = forTool(resolvePolicy(user_policy), integration?.policyTool ?? clientToolClass(call.name));
       } else {
         decision = "ask";
       }
