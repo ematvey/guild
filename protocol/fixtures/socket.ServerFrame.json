@@ -456,6 +456,11 @@
   { "type": "activity_run_unavailable", "run_id": "018f0b7c-0000-7000-8000-000000000001" },
   { "type": "activity_conversation", "chat_id": "018f0b7c-0000-7000-8000-000000000001", "detail": null },
   {
+    "type": "agent_coordination",
+    "agent_id": "00000000-0000-4000-8000-000000000001",
+    "snapshot": { "paused": false, "outcomes": [] }
+  },
+  {
     "type": "agent_threads",
     "agent_id": "018f0b7c-0000-7000-8000-000000000041",
     "threads": [

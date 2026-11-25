@@ -83,14 +83,20 @@ export function coordinatorTools(deps: {
     if (row === undefined) throw new Error("input_id must reference an input of this Agent");
     return row;
   };
+  const activeRequestIds = async (
+    api: ToolExecutionApi,
+    context: Parameters<ToolRegistration["execute"]>[2],
+  ) => {
+    const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+    return (await inputRequestIds(pool, active?.inputs.map(Number) ?? [])).filter(isUuid);
+  };
   const isActiveRequest = async (
     inputId: string,
     api: ToolExecutionApi,
     context: Parameters<ToolRegistration["execute"]>[2],
   ) => {
-    const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
-    const requests = await inputRequestIds(pool, active?.inputs.map(Number) ?? []);
-    return (await activeCoordinationInput(pool, [inputId, agent.id, requests.filter(isUuid)])).rowCount === 1;
+    const requests = await activeRequestIds(api, context);
+    return (await activeCoordinationInput(pool, [inputId, agent.id, requests])).rowCount === 1;
   };
   const queueReply = async (id: string, value: unknown) => {
     const text = String(value).trim();
@@ -132,7 +138,8 @@ export function coordinatorTools(deps: {
       ["input_id", "decision", "reason"],
       async (args, _callId, api, context) => {
         const origin = await source(args["input_id"]);
-        if (origin.kind !== "candidate" || !(await isActiveRequest(origin.id, api, context))) {
+        const requests = await activeRequestIds(api, context);
+        if (origin.kind !== "candidate" || !(await activeCoordinationInput(pool, [origin.id, agent.id, requests])).rowCount) {
           throw new Error("Evaluate an inferred event from the active Turn");
         }
         const requester = await deps.identity.getUser(origin.user_id);
@@ -157,7 +164,7 @@ export function coordinatorTools(deps: {
         const parentRun = target === null ? null : await deps.subagents.parentRun();
         const result = await recordCoordinationDecision<{ decision: string }>(pool, [
           origin.id, current.id, decision, reason, rule?.[0] ?? null,
-          target === null ? null : task, target?.id ?? null, parentRun?.id ?? null,
+          target === null ? null : task, target?.id ?? null, parentRun?.id ?? null, requests,
         ]);
         if (result.rowCount !== 1) throw new Error("The event was already evaluated or its policy changed");
         return { input_id: origin.id, decision };

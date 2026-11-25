@@ -1,4 +1,5 @@
 // Durable coordination, provenance and maintenance records. SQL stays in the Agent data-access lane.
+import type { CoordinationOutcome, CoordinationSnapshot } from "@guild/wire/rest";
 import type { QueryResultRow } from "pg";
 import type { PlatformPool, PoolClient } from "../../platform/db.js";
 type Database = PlatformPool | PoolClient;
@@ -178,6 +179,7 @@ export function recordCoordinationDecision<T extends QueryResultRow>(db: Databas
          launch_due_at=CASE WHEN $3='accepted' THEN now() END
      FROM agents a
      WHERE i.id=$1 AND i.agent_id=$2 AND i.kind='candidate' AND i.decision IS NULL
+       AND COALESCE(i.evaluation_request_id,i.id)=ANY($9::uuid[])
        AND a.id=i.agent_id AND i.source_policy=COALESCE(a.resources #> '{assistant,admission}', '{}'::jsonb)
      RETURNING decision`,
     values,
@@ -245,17 +247,34 @@ export function reevaluateSourceCandidate(db: Database, values: unknown[]) {
   );
 }
 
-export function listCoordinationOutcomes<T extends QueryResultRow>(db: Database, values: unknown[]) {
-  return db.query<T>(
-    `SELECT i.id,i.kind,i.source_name,i.source_key,i.created_at,i.delivered_at,i.reply_due_at IS NOT NULL AS reply_queued,
-            i.reply_missing,i.reply_delivered_at,i.reply_failed_at,i.decision,i.decision_reason,i.matched_rule,
+export async function coordinationSnapshot(db: Database, agentId: string, viewerId: string, admin: boolean): Promise<CoordinationSnapshot> {
+  const [outcomes, paused] = await Promise.all([
+    listCoordinationOutcomes(db, [agentId, viewerId, admin]),
+    coordinationPaused<{ paused_at: Date | null }>(db, [agentId]),
+  ]);
+  return { paused: paused.rows[0]?.paused_at != null, outcomes: outcomes.rows };
+}
+
+function listCoordinationOutcomes(db: Database, values: unknown[]) {
+  return db.query<CoordinationOutcome>(
+    `SELECT i.id,i.kind,i.source_name,i.source_key,i.created_at::text,i.delivered_at::text,i.reply_due_at IS NOT NULL AS reply_queued,
+            i.reply_missing,i.reply_delivered_at::text,i.reply_failed_at::text,i.decision,i.decision_reason,i.matched_rule,
             i.accepted_scope,i.launched_run_id,i.launch_error,r.status AS run_status,r.work_report_state,
-            r.work_report_summary,r.work_report_question, origin.chat_id AS source_chat_id,worker.chat_id AS worker_chat_id
+            r.work_report_summary,r.work_report_question, CASE WHEN i.user_id=$2 THEN origin.chat_id END AS source_chat_id,
+            CASE WHEN i.user_id=$2 THEN worker.chat_id END AS worker_chat_id,
+            i.user_id=$2 AS owned,
+            (i.user_id=$2 AND i.accepted_scope IS NOT NULL
+             AND (i.launch_error IS NOT NULL OR COALESCE(r.finished_at IS NOT NULL
+               AND (r.status='failed' OR r.work_report_state IN ('blocked','failed')),false))
+             AND NOT EXISTS (
+               SELECT 1 FROM agent_threads t JOIN agent_runs active ON active.thread_id=t.id
+               WHERE t.source_input_id=i.id AND (t.closed_at IS NOT NULL OR active.status IN ('queued','running'))
+             )) AS retryable
      FROM agent_coordination_inputs i
      LEFT JOIN agent_runs r ON r.id=i.launched_run_id
      LEFT JOIN agent_threads origin ON origin.id=i.source_thread_id AND origin.user_id=i.user_id
      LEFT JOIN agent_threads worker ON worker.id=r.thread_id AND worker.user_id=i.user_id
-     WHERE i.agent_id=$1 AND ($2::uuid IS NULL OR i.user_id=$2)
+     WHERE i.agent_id=$1 AND ($3::boolean OR i.user_id=$2)
        AND i.kind IN ('request','candidate','work_followup')
      ORDER BY i.seq DESC LIMIT 100`,
     values,

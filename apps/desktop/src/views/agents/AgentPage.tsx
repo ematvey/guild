@@ -37,6 +37,7 @@ import {
   VisibilityBadge,
 } from "./agent-ui";
 import { PageHeader } from "../../components/page-header";
+import { CoordinationActivity } from "./CoordinationActivity";
 import { ActivityPage } from "./ActivityPage";
 import { AgentFiles } from "./AgentFiles";
 import { AgentRoutines, humanSchedule } from "./AgentRoutines";
@@ -279,20 +280,23 @@ export function AgentPage({
             />
           )}
           {tab === "activity" && (
-            <ActivityPage
-              embedded
-              role={viewer.role}
-              agentId={agent.id}
-              filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
-              onFiltersChange={(next, options) =>
-                onNavigate(
-                  { view: "agent", agentId, tab: "activity", filters: next },
-                  options,
-                )
-              }
-              onNavigate={onNavigate}
-              onOpenChat={onOpenChat}
-            />
+            <>
+              <CoordinationActivity agent={agent} onOpenChat={onOpenChat} />
+              <ActivityPage
+                embedded
+                role={viewer.role}
+                agentId={agent.id}
+                filters={filters ?? DEFAULT_ACTIVITY_FILTERS}
+                onFiltersChange={(next, options) =>
+                  onNavigate(
+                    { view: "agent", agentId, tab: "activity", filters: next },
+                    options,
+                  )
+                }
+                onNavigate={onNavigate}
+                onOpenChat={onOpenChat}
+              />
+            </>
           )}
           {tab === "settings" && (
             <AgentSettings

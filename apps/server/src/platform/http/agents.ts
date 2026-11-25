@@ -1,5 +1,5 @@
 import {
-  captureCoordinationSource, coordinationPaused, listCoordinationOutcomes, reevaluateSourceCandidate,
+  captureCoordinationSource, coordinationSnapshot, reevaluateSourceCandidate,
   retryCoordinationWork, setCoordinationPaused,
 } from "../../agents/store/coordination.js";
 import { runStepsWire } from "../../agents/store/runs.js";
@@ -474,11 +474,7 @@ export function registerAgentRoutes(
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
     await store.requireAccess(user, agentId, "use");
-    const [outcomes, paused] = await Promise.all([
-      listCoordinationOutcomes(infra.pool, [agentId, readsWholeOrg(user) ? null : user.id]),
-      coordinationPaused<{ paused_at: Date | null }>(infra.pool, [agentId]),
-    ]);
-    return sendJson(reply, { paused: paused.rows[0]?.paused_at != null, outcomes: outcomes.rows });
+    return sendJson(reply, await coordinationSnapshot(infra.pool, agentId, user.id, readsWholeOrg(user)));
   });
 
   app.put("/api/v1/agents/:id/coordination/pause", async (req, reply) => {

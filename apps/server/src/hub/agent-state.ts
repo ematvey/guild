@@ -19,6 +19,8 @@ import type {
   AgentStore,
   AgentThreadStore,
 } from "../agents/store.js";
+import { coordinationSnapshot } from "../agents/store/coordination.js";
+import type { PlatformPool } from "../platform/db.js";
 import { wireThread } from "../agents/store.js";
 import type {
   Agent as StoreAgent,
@@ -229,6 +231,22 @@ export class AgentStateFeed {
       "guild_agent_threads",
       () => this.sendThreads(userId, agentId),
     );
+  }
+
+  coordination({ org_id: orgId, agent_id: agentId, user_id: ownerId }: OrgPayload, pool: PlatformPool): void {
+    if (agentId === null) return;
+    void this.chains.run(`coordination:${agentId}`, "guild_agent_coordination", async () => {
+      const viewers = await this.store.grants.visibleUserIds(agentId, this.ctx.hub.memberUsersOfOrg(orgId));
+      if (!viewers.length) return;
+      const users = await this.ctx.identity.getUsers(viewers);
+      await Promise.all(users.filter((user) => ownerId === null || user.id === ownerId || readsWholeOrg(user))
+        .map(async (user) => {
+          const snapshot = await coordinationSnapshot(pool, agentId, user.id, readsWholeOrg(user));
+          this.sendKeyed(user.id, `agent_coordination:${agentId}`, {
+            type: "agent_coordination", agent_id: agentId, snapshot,
+          });
+        }));
+    });
   }
 
   /** A new member socket's first paint: the member's agent list (their

@@ -46,7 +46,7 @@ const auth = (token: string): Record<string, string> => ({
 
 async function api<T>(
   token: string,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "PUT",
   url: string,
   payload?: Record<string, unknown>,
 ): Promise<T> {
@@ -137,6 +137,41 @@ async function insertRun(
 }
 
 describe("agent and skill state frames", () => {
+  it("pushes coordination outcomes to their owner and authorized admin, and broadcasts pause", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
+    const { token: otherToken } = await memberToken("coordination-viewer@example.com");
+    const { agent } = await api<{ agent: { id: string } }>(stack.memberToken, "POST", "/api/v1/agents", {
+      name: "Coordination activity", model: "GLM-Test-Model", visibility: "org",
+      resources: { assistant: { enabled: true, admission: { mode: "off", sources: ["project"] } } },
+    });
+    const [owner, admin, other] = await Promise.all(
+      [stack.memberToken, stack.adminToken, otherToken].map(memberSocket),
+    );
+    const root = `/api/v1/agents/${agent.id}`;
+    const belongs = (frame: Frame) => frame.type === "agent_coordination" && frame.agent_id === agent.id;
+    try {
+      const { input_id } = await api<{ input_id: string }>(stack.memberToken, "POST", root + "/sources/project/events", {
+        event_id: "activity-event", content: "Untrusted project update",
+      });
+      await expect(waitFrame(owner, belongs)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: true }] },
+      });
+      await expect(waitFrame(admin, belongs)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: false }] },
+      });
+      expect(textFrames(other).some(belongs)).toBe(false);
+      await api(stack.memberToken, "PUT", root + "/coordination/pause", { paused: true });
+      await expect(waitFrame(other, belongs)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [] } });
+      await expect(waitFrame(owner, (f) => belongs(f) && (f.snapshot as { paused: boolean }).paused))
+        .resolves.toMatchObject({ snapshot: { paused: true, outcomes: [{ id: input_id }] } });
+    } finally {
+      owner.end();
+      admin.end();
+      other.end();
+    }
+  });
+
   it("paints the agent list and skill catalog on connect, personal agent included", {
     timeout: TEST_TIMEOUT,
   }, async () => {
