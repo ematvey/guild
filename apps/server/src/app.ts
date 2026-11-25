@@ -63,10 +63,10 @@ export async function buildApp(config: Config) {
   // allow-listed webview origins.
   registerCors(app);
 
-  // Health: {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
     status: "ok",
     version: config.serverVersion,
+    commit: config.serverCommit,
   }));
 
   // Platform routes (auth, org, events, attachments, OIDC, gateway, chats,

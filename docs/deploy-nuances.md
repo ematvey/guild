@@ -28,10 +28,12 @@ gitignored `test.env` at the repository root.
 
 Set `version` to the product version for a stable release or to the intended
 preview version for a develop installation. Set `image` to an immutable image
-reference that identifies this build. From the repository root, build the image.
+reference that identifies this build. Build the image from a clean checkout.
 
 ```bash
+commit="$(git rev-parse HEAD)"
 docker build -f Dockerfile.server-ts \
+  --build-arg "GUILD_BUILD_COMMIT=$commit" \
   --build-arg "GUILD_BUILD_VERSION=${version:?Set the server version}" \
   -t "${image:?Set the server image reference}" .
 ```
@@ -53,7 +55,8 @@ Verify the reported version at the deployed origin.
 
 ```bash
 curl -fsS "$BASE/api/v1/health" \
-  | jq -e --arg version "$version" '.status == "ok" and .version == $version'
+  | jq -e --arg version "$version" --arg commit "$commit" \
+    '.status == "ok" and .version == $version and .commit == $commit'
 ```
 
 Health, WebSocket identity, and release eligibility use the version baked into

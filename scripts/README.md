@@ -26,4 +26,3 @@ stack unless the task is explicitly about prod.
 | --- | --- |
 | `agents-reinit.ts` | Resets every agent's `AGENTS.md` from the template (`--org`, `--dry-run`). |
 | `durable-repair.mjs` | Audits pi-durable document chains; `--fix` rebuilds a damaged live projection from the durable tasks. |
-| `agents-vfs-init.mjs` | Provisions the fixed resources of the disposable `guild-agents-vfs` verification stack on :18093 and refuses any other target (`docs/deploy-nuances.md`). |

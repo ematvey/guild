@@ -670,16 +670,18 @@ async function main() {
       const origin = new URL(base).origin;
       const health = await fetch(new URL("/api/v1/health", origin), { redirect: "error" });
       assert(health.ok, `server health returned HTTP ${health.status}`);
-      const { status, version } = await health.json();
+      const { status, version, commit } = await health.json();
       assert(status === "ok" && version === expectedVersion,
         `expected healthy server at ${expectedVersion}, got ${status} at ${version}`);
+      assert(typeof commit === "string" && /^[a-f0-9]{40}$/.test(commit),
+        "server health is missing a valid build commit");
 
       const tag = `client-v${version}`;
       const response = await fetch(new URL("/api/v1/admin/releases/github", origin), {
         method: "POST",
         redirect: "error",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ tag }),
+        body: JSON.stringify({ tag, source_commit: commit }),
       });
       assert(response.ok, `importing ${tag} returned HTTP ${response.status}: ${await response.text()}`);
       console.log(`Published ${tag} on ${origin}`);

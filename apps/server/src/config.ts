@@ -5,11 +5,13 @@
 import path from "node:path";
 import { createRequire } from "node:module";
 
-export const GUILD_TS_SERVER_VERSION: string = createRequire(import.meta.url)("../package.json").version;
+const serverManifest = createRequire(import.meta.url)("../package.json");
+export const GUILD_TS_SERVER_VERSION: string = serverManifest.version;
 
 export interface Config {
   /** Version baked into this server image, including temporary develop stamps. */
   serverVersion: string;
+  serverCommit?: string;
   /** Address the Fastify server binds, e.g. 0.0.0.0:8080 (GUILD_BIND_ADDR). */
   bindHost: string;
   bindPort: number;
@@ -253,6 +255,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const tracePayloads = env.GUILD_TRACE_PAYLOADS !== "0";
   return {
     serverVersion: GUILD_TS_SERVER_VERSION,
+    serverCommit: serverManifest.guildBuildCommit,
     faroUrl,
     webDistDir,
     internalKey,
