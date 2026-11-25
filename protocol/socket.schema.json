@@ -40,6 +40,7 @@
     "IntegrationAccess": { "$ref": "#/$defs/IntegrationAccess" },
     "AgentRunFrame": { "$ref": "#/$defs/AgentRunFrame" },
     "ActivityRunFrame": { "$ref": "#/$defs/ActivityRunFrame" },
+    "ActivityRunUnavailableFrame": { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
     "ActivityConversationFrame": { "$ref": "#/$defs/ActivityConversationFrame" },
     "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
@@ -100,6 +101,7 @@
         { "$ref": "#/$defs/IntegrationAccess" },
         { "$ref": "#/$defs/AgentRunFrame" },
         { "$ref": "#/$defs/ActivityRunFrame" },
+        { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
         { "$ref": "#/$defs/ActivityConversationFrame" },
         { "$ref": "#/$defs/AgentThreads" },
         { "$ref": "#/$defs/AgentRoutines" },
@@ -509,6 +511,16 @@
             "failed_runs": { "type": "integer" }
           }
         }
+      }
+    },
+    "ActivityRunUnavailableFrame": {
+      "description": "The selected Activity Run is unavailable to the viewer.",
+      "type": "object",
+      "required": ["type", "run_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "activity_run_unavailable" },
+        "run_id": { "$ref": "#/$defs/Uuid" }
       }
     },
     "ActivityConversationFrame": {

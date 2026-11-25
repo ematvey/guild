@@ -102,6 +102,27 @@ describe("run page", () => {
     expect(api.getRun).toHaveBeenCalledTimes(1);
   });
 
+  it("clears a revoked run and drops telemetry that was already in flight", async () => {
+    const step = { kind: "assistant", detail: "Private transcript text" } as const;
+    api.getRun.mockResolvedValue({ run: { ...running, steps: [step] }, thread: null });
+    let finishTrace!: (value: unknown) => void;
+    api.getTrace.mockReturnValue(
+      new Promise((resolve) => {
+        finishTrace = resolve;
+      }),
+    );
+    render(<RunDetailPage runId="r1" view="transcript" role="admin" onNavigate={() => {}} />);
+    expect(await screen.findByText(step.detail)).toBeTruthy();
+    act(() => applyActivityRun({ type: "activity_run_unavailable", run_id: "r1" }));
+    expect(screen.getByText("This run is unavailable.")).toBeTruthy();
+    expect(screen.queryByText(step.detail)).toBeNull();
+    await act(async () =>
+      finishTrace({ trace: traceFromRun(running), spans: [span("s1", "Private telemetry")], children: [] }),
+    );
+    expect(screen.queryByText("Private telemetry")).toBeNull();
+    expect(screen.queryByText("Running")).toBeNull();
+  });
+
   it("loads recorded telemetry for a background Run while preserving Thread navigation", async () => {
     api.getRun.mockResolvedValueOnce({
       run: {

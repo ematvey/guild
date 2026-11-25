@@ -7,6 +7,7 @@ import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339, utcText } from "../time.js";
 import { withTransaction, type PlatformPool, type PoolClient } from "../db.js";
 import { jsonbText } from "../domain/text.js";
+import { lockTraitBindings, OrgKvStore, parseTraitBindings, TRAIT_BINDINGS_KEY } from "./org-kv.js";
 
 /** An integration row, fields in wire order. `name` is the instance slug,
  *  `kind` the catalog item it instantiates, `label` the admin's name for
@@ -98,8 +99,10 @@ export class IntegrationStore {
     enabled: boolean,
     submitted: Iterable<[string, string]>,
     masterKey: Buffer,
+    existing?: Pick<IntegrationRow, "id" | "name" | "label">,
   ): Promise<void> {
     await withTransaction(this.pool, async (client) => {
+      if (existing !== undefined) await this.rename(orgId, existing, instance, client);
       for (const [secretName, plaintext] of submitted) {
         await secrets.upsert(orgId, instance.name, secretName, plaintext, masterKey, client);
       }
@@ -107,55 +110,51 @@ export class IntegrationStore {
     });
   }
 
-  /** Renames one instance: its slug and its display name. The slug is the
-   *  secret key, so the stored secrets move with it in the same transaction.
-   *  Nothing else stores the slug: Agents reach an instance by row id
-   *  (`agent_integrations`), and a tool name is derived from the slug when
-   *  the Turn resolves. Returns the row as stored. */
-  async rename(orgId: string, id: string, name: string, label: string): Promise<IntegrationRow> {
-    return withTransaction(this.pool, async (client) => {
-      const current = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE", [
-        orgId,
-        id,
-      ]);
-      const previous = current.rows[0]?.name as string | undefined;
-      if (previous === undefined) throw ApiError.notFound("unknown integration");
-      if (previous !== name) {
-        const taken = await client.query("SELECT 1 FROM integrations WHERE org_id = $1 AND name = $2", [orgId, name]);
-        if (taken.rowCount !== 0) {
-          throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
-        }
-        try {
-          await client.query("UPDATE integrations SET name = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [
-            orgId,
-            id,
-            name,
-          ]);
-        } catch (error) {
-          // Two renames racing for one slug: the loser answers the conflict
-          // the pre-check intends, not a raw unique violation.
-          if ((error as { code?: string }).code === "23505") {
-            throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
-          }
-          throw error;
-        }
-        await client.query("UPDATE integration_secrets SET integration = $3 WHERE org_id = $1 AND integration = $2", [
-          orgId,
-          previous,
-          name,
-        ]);
+  /** Slug changes move secrets and Trait bindings with the instance. */
+  async rename(
+    orgId: string,
+    existing: Pick<IntegrationRow, "id" | "name" | "label">,
+    instance: IntegrationInstance,
+    client?: PoolClient,
+  ): Promise<void> {
+    if (client === undefined) {
+      await withTransaction(this.pool, (tx) => this.rename(orgId, existing, instance, tx));
+      return;
+    }
+    const current = await client.query(
+      "SELECT name, label FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
+      [orgId, existing.id],
+    );
+    const stored = current.rows[0];
+    if (stored === undefined) throw ApiError.notFound("unknown integration");
+    if (stored.name !== existing.name || stored.label !== existing.label) {
+      throw ApiError.conflict("conflict", "integration identity changed during this save");
+    }
+    if (instance.name === existing.name && instance.label === existing.label) return;
+    if (instance.name !== existing.name) await lockTraitBindings(client, orgId);
+    try {
+      await client.query(
+        "UPDATE integrations SET name = $3, label = $4, updated_at = now() WHERE org_id = $1 AND id = $2",
+        [orgId, existing.id, instance.name, instance.label],
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw ApiError.conflict("already_configured", `integration ${instance.name} already has a configuration`);
       }
-      await client.query("UPDATE integrations SET label = $3, updated_at = now() WHERE org_id = $1 AND id = $2", [
-        orgId,
-        id,
-        label,
-      ]);
-      const stored = await client.query(`SELECT ${ROW_COLUMNS} FROM integrations WHERE org_id = $1 AND id = $2`, [
-        orgId,
-        id,
-      ]);
-      return row(stored.rows[0]!);
-    });
+      throw error;
+    }
+    if (instance.name === existing.name) return;
+    await client.query("UPDATE integration_secrets SET integration = $3 WHERE org_id = $1 AND integration = $2", [
+      orgId,
+      existing.name,
+      instance.name,
+    ]);
+    const kv = new OrgKvStore(this.pool);
+    const bindings = parseTraitBindings(await kv.get(orgId, TRAIT_BINDINGS_KEY, client));
+    const affected = Object.keys(bindings).filter((trait) => bindings[trait] === existing.name);
+    if (affected.length === 0) return;
+    for (const trait of affected) bindings[trait] = instance.name;
+    await kv.put(orgId, TRAIT_BINDINGS_KEY, JSON.stringify(bindings), client);
   }
 
   /** Sets one tool's per-tool curation (`enabled`, `approval`, and for an
@@ -254,7 +253,10 @@ export class IntegrationStore {
    *  old credentials). */
   async delete(orgId: string, id: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
-      const nameRes = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);
+      const nameRes = await client.query("SELECT name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE", [
+        orgId,
+        id,
+      ]);
       const name = nameRes.rows[0]?.name as string | undefined;
       if (name !== undefined) {
         await client.query("DELETE FROM integrations WHERE org_id = $1 AND id = $2", [orgId, id]);

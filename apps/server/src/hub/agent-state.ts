@@ -26,6 +26,7 @@ import type {
   AgentRun as StoreRun,
 } from "../agents/types.js";
 import { ACTIVITY_CONVERSATION_PAGE, type Agent, type AgentRoutine, type AgentRun } from "@guild/wire/rest";
+import { ApiError } from "../platform/errors.js";
 import type { OrgPayload } from "../platform/notify.js";
 import { canReadOwned, readsWholeOrg } from "../platform/domain/access.js";
 import { groupConversation, type ConversationHistoryStore } from "../platform/store/conversation-history.js";
@@ -299,27 +300,48 @@ export class AgentStateFeed {
 
   /** Seed only the selected socket, ordered with changes for the same Agent. */
   async syncRun(user: UserRow, sink: SocketSink, runId: string, seed = true): Promise<void> {
+    const unavailable = () => {
+      if (sink.runView !== runId) return;
+      sink.runViewChat = null;
+      sendChanged(sink, "activity_run:detail", { type: "activity_run_unavailable", run_id: runId }, seed);
+    };
     let agentId: string;
     try {
       const run = await this.store.runs.getRun(runId);
       await this.store.fetchInOrg(user.org_id, run.agent_id);
       agentId = run.agent_id;
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) unavailable();
       return;
     }
     await this.chains.run(`agent:${agentId}`, "sync_activity_run", async () => {
-      const run = await this.store.runs.getRun(runId);
-      if (sink.runView !== runId || !canReadOwned(user, run.user_id) || (run.internal && !readsWholeOrg(user))) return;
-      const thread = run.thread_id === null
-        ? null
-        : await this.ctx.conversationHistory.threadOfRun(user.org_id, run.thread_id, readsWholeOrg(user));
+      if (sink.runView !== runId) return;
+      const [viewer] = await this.ctx.identity.getUsers([user.id]);
+      let run: StoreRun;
+      try {
+        run = await this.store.runs.getRun(runId);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return unavailable();
+        throw error;
+      }
+      if (
+        viewer === undefined ||
+        viewer.org_id !== user.org_id ||
+        !canReadOwned(viewer, run.user_id) ||
+        (run.internal && !readsWholeOrg(viewer))
+      ) {
+        return unavailable();
+      }
+      const thread =
+        run.thread_id === null
+          ? null
+          : await this.ctx.conversationHistory.threadOfRun(viewer.org_id, run.thread_id, readsWholeOrg(viewer));
       if (sink.runView !== runId) return;
       sink.runViewChat = thread?.chat_id ?? null;
       const steps = runStepsWire(await this.store.runs.runSteps(run));
       if (sink.runView !== runId) return;
       const frame = { type: "activity_run", run: runWire(run), counts: null, steps } as const;
-      if (seed) sink.send(frame);
-      else sendChanged(sink, "activity_run:detail", frame);
+      sendChanged(sink, "activity_run:detail", frame, seed);
     });
   }
 
@@ -350,7 +372,15 @@ export class AgentStateFeed {
     });
   }
 
-  async conversationProfilesChanged(orgId: string, userId: string): Promise<void> {
+  async memberProfileChanged(orgId: string, userId: string): Promise<void> {
+    const [viewer] = await this.ctx.identity.getUsers([userId]);
+    if (viewer?.org_id === orgId) {
+      await Promise.all(
+        this.ctx.hub
+          .memberSinksOfUser(userId)
+          .flatMap((sink) => (sink.runView === null ? [] : [this.syncRun(viewer, sink, sink.runView, false)])),
+      );
+    }
     const chats = new Set<string>();
     for (const viewerId of this.ctx.hub.memberUsersOfOrg(orgId)) {
       for (const sink of this.ctx.hub.memberSinksOfUser(viewerId)) {

@@ -9,7 +9,13 @@
 
 import type { ObjectStore } from "../platform/s3.js";
 import type { RegistryStore } from "../platform/store/registry.js";
-import type { OrgKvStore } from "../platform/store/org-kv.js";
+import { withTransaction, type PoolClient } from "../platform/db.js";
+import {
+  lockTraitBindings,
+  parseTraitBindings,
+  TRAIT_BINDINGS_KEY,
+  type OrgKvStore,
+} from "../platform/store/org-kv.js";
 import { traitNames } from "@guild/integration-sdk";
 import { BUILTINS, builtinByName, type Connector } from "./loader.js";
 import { isCodeManifest, loadCodePlugin } from "./code-plugins.js";
@@ -66,40 +72,28 @@ export async function orgConnectors(
   return out;
 }
 
-/** Org KV key of the trait bindings: `{ "<trait>": "<integration slug>" }`. */
-export const TRAIT_BINDINGS_KEY = "integration_trait_bindings";
-
 export type TraitBindings = Record<string, string>;
 
 export async function readTraitBindings(kv: Pick<OrgKvStore, "get">, orgId: string): Promise<TraitBindings> {
-  const raw = await kv.get(orgId, TRAIT_BINDINGS_KEY);
-  if (raw === null) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const known = new Set(traitNames());
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).filter(
-        (entry): entry is [string, string] => known.has(entry[0]) && typeof entry[1] === "string" && entry[1] !== "",
-      ),
-    );
-  } catch {
-    return {};
-  }
+  return parseTraitBindings(await kv.get(orgId, TRAIT_BINDINGS_KEY));
 }
 
-/** Writes one binding; an empty provider clears it (back to the default
- *  order). */
+/** Writes one binding while serializing with instance slug changes. */
 export async function writeTraitBinding(
-  kv: Pick<OrgKvStore, "get" | "put">,
+  kv: OrgKvStore,
   orgId: string,
   trait: string,
   provider: string | null,
+  validate: (client: PoolClient) => Promise<void>,
 ): Promise<TraitBindings> {
   if (!traitNames().includes(trait)) throw new Error(`unknown trait ${trait}`);
-  const bindings = await readTraitBindings(kv, orgId);
-  if (provider === null || provider === "") delete bindings[trait];
-  else bindings[trait] = provider;
-  await kv.put(orgId, TRAIT_BINDINGS_KEY, JSON.stringify(bindings));
-  return bindings;
+  return withTransaction(kv.pool, async (client) => {
+    await lockTraitBindings(client, orgId);
+    await validate(client);
+    const bindings = parseTraitBindings(await kv.get(orgId, TRAIT_BINDINGS_KEY, client));
+    if (provider === null) delete bindings[trait];
+    else bindings[trait] = provider;
+    await kv.put(orgId, TRAIT_BINDINGS_KEY, JSON.stringify(bindings), client);
+    return bindings;
+  });
 }

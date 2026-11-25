@@ -247,7 +247,7 @@ export class FeedForwarder implements GenerationStreamSink {
         this.track(
           "guild_workspace",
           change.user_id,
-          this.agentState.conversationProfilesChanged(change.org_id, change.user_id),
+          this.agentState.memberProfileChanged(change.org_id, change.user_id),
         );
       }
     },

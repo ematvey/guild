@@ -7,7 +7,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BUILTINS, builtinByName } from "../integrations/loader.js";
-import { TRAIT_BINDINGS_KEY } from "../integrations/connectors.js";
+import { TRAIT_BINDINGS_KEY } from "../platform/store/org-kv.js";
 import { resolveIntegrations } from "../integrations/plugins.js";
 import { grafanaExecute } from "../integrations/grafana/execute.js";
 import { posthogExecute } from "../integrations/posthog/execute.js";

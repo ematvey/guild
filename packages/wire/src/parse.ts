@@ -36,6 +36,7 @@ const SERVER_TAG_NAMES = [
   "integration_access",
   "agent_run",
   "activity_run",
+  "activity_run_unavailable",
   "activity_conversation",
   "agent_threads",
   "agent_routines",

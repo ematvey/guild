@@ -304,11 +304,10 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
     if (!traitNames().includes(trait)) throw ApiError.notFound(`unknown trait ${trait}`);
     const body = requireJsonBody(req);
     const provider = typeof body["provider"] === "string" && body["provider"] !== "" ? body["provider"] : null;
-    if (provider !== null) {
-      const [connectors, rows] = await Promise.all([
-        orgConnectors(gateway, admin.org_id),
-        gateway.integrations.list(admin.org_id),
-      ]);
+    const connectors = provider === null ? [] : await orgConnectors(gateway, admin.org_id);
+    const bindings = await writeTraitBinding(identity.orgKv, admin.org_id, trait, provider, async (client) => {
+      if (provider === null) return;
+      const rows = await gateway.integrations.list(admin.org_id, client);
       const declares =
         rows.some(
           (r) => r.name === provider && connectors.some((c) => c.name === r.kind && c.traits[trait] !== undefined),
@@ -316,8 +315,7 @@ export function registerPluginCatalogRoutes(app: FastifyInstance, gateway: Gatew
         (connectors.some((c) => c.name === provider && c.traits[trait] !== undefined) &&
           !rows.some((r) => r.kind === provider));
       if (!declares) throw ApiError.badRequest(`${provider} does not provide ${trait}`);
-    }
-    const bindings = await writeTraitBinding(identity.orgKv, admin.org_id, trait, provider);
+    });
     sendJson(reply, { bindings });
     return reply;
   });

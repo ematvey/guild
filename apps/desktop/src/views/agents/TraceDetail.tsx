@@ -52,6 +52,8 @@ export function RunDetailPage({
   const [tick, setTick] = useState(0);
   const [telemetryTick, setTelemetryTick] = useState(0);
   const pushedRun = useRef<AgentRun | null>(null);
+  // Invalidates HTTP seeds already in flight when the socket revokes access.
+  const access = useRef({ runId, unavailable: false });
   /** The status on screen; frames compare against it without waiting for a
    *  render. */
   const shownStatus = useRef<string | null>(null);
@@ -83,9 +85,12 @@ export function RunDetailPage({
 
   useEffect(() => {
     let live = true;
+    const authorized = access.current;
+    if (authorized.runId === runId && authorized.unavailable) return;
+    const isLive = () => live && access.current === authorized;
     setError(null);
     const showError = (err: unknown) => {
-      if (!live) return;
+      if (!isLive()) return;
       setRun(null);
       setThread(null);
       setTrace(null);
@@ -95,16 +100,16 @@ export function RunDetailPage({
       setError(err instanceof Error ? err.message : "The run did not load.");
     };
     if (traceOnly) {
-      void loadTrace(() => live).catch(showError);
+      void loadTrace(isLive).catch(showError);
     } else {
       void getRun(runId).then(({ run: stored, thread: parent }) => {
-        if (!live) return;
+        if (!isLive()) return;
         const pushed = pushedRun.current;
         const current = pushed === null ? stored : { ...stored, ...pushed };
         shownStatus.current = current.status;
         setRun(current);
         setThread(parent);
-        void loadTrace(() => live).catch(() => {});
+        void loadTrace(isLive).catch(() => {});
       }, showError);
     }
     return () => {
@@ -113,13 +118,14 @@ export function RunDetailPage({
   }, [runId, traceOnly, tick, loadTrace]);
 
   useEffect(() => {
-    if (telemetryTick === 0) return;
+    if (telemetryTick === 0 || (access.current.runId === runId && access.current.unavailable)) return;
     let live = true;
-    void loadTrace(() => live).catch(() => {});
+    const authorized = access.current;
+    void loadTrace(() => live && access.current === authorized).catch(() => {});
     return () => {
       live = false;
     };
-  }, [loadTrace, telemetryTick]);
+  }, [loadTrace, runId, telemetryTick]);
 
   // A running run finishes on screen: every pushed change to this run moves
   // the run row and the trace header (status, summary, end, error, tokens,
@@ -127,13 +133,34 @@ export function RunDetailPage({
   // are ClickHouse analytics behind the trace endpoint, so the frame that
   // moves the run into a terminal status triggers one re-read of the trace
   // once per finish.
-  useActivityRunUpdates(({ run: pushed, steps }) => {
+  useActivityRunUpdates((frame) => {
+    if (frame.type === "activity_run_unavailable") {
+      if (traceOnly || frame.run_id !== runId) return;
+      access.current = { runId, unavailable: true };
+      pushedRun.current = null;
+      shownStatus.current = null;
+      setRun(null);
+      setThread(null);
+      setTrace(null);
+      setSpans([]);
+      setChildren([]);
+      setSelected(null);
+      setError("This run is unavailable.");
+      return;
+    }
+    const { run: pushed, steps } = frame;
     if (pushed.id !== runId) return;
+    const restoring = access.current.runId === runId && access.current.unavailable;
+    if (restoring && steps === undefined) return;
+    if (restoring) {
+      access.current = { runId, unavailable: false };
+      setError(null);
+    }
     const finishes = runFinishes(shownStatus.current, pushed);
     const update = { ...pushedRun.current, ...pushed, ...(steps === undefined ? {} : { steps }) };
     pushedRun.current = update;
     shownStatus.current = pushed.status;
-    setRun((prev) => (prev === null ? prev : { ...prev, ...update }));
+    setRun((prev) => (restoring ? update : prev === null ? prev : { ...prev, ...update }));
     setTrace((prev) => (prev === null ? prev : traceWithRun(prev, pushed)));
     if (finishes) setTelemetryTick((t) => t + 1);
   });
