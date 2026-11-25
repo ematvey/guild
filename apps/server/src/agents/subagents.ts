@@ -58,7 +58,7 @@ export interface SubagentsToolContext {
   /** Tree limits from config (never constants in this module). */
   maxDepth: number;
   maxChildrenPerNode: number;
-  coordination?: { sourceInputId?: string; managed: boolean; actionKey?: string };
+  coordination?: { sourceInputId?: string; managed: boolean; actionKey?: string; runActionKey?: string };
 }
 
 /** Longest spawner-chosen session name. */
@@ -220,6 +220,7 @@ async function startDelegatedRun(
   failureCode: string,
 ): Promise<{ run: AgentRun; agent: Agent }> {
   const parentRun = await context.parentRun();
+  const runActionKey = context.coordination?.runActionKey ?? context.coordination?.actionKey;
   try {
     return await startThreadRun(context, {
       agentId,
@@ -229,9 +230,7 @@ async function startDelegatedRun(
       failureCode,
       recordStack: true,
       run: {
-        ...(context.coordination?.actionKey === undefined
-          ? {}
-          : { id: uuidv5(agentId, context.coordination.actionKey) }),
+        ...(runActionKey === undefined ? {} : { id: uuidv5(agentId, runActionKey) }),
         user_id: parentRun.user_id ?? context.requester.id,
         parent_run_id: parentRun.id,
         delegate_agent_id: agentId,
@@ -302,7 +301,11 @@ export async function spawn(
     if (error instanceof ChildLimitReached) throw new SubagentError("child_limit", error.message);
     throw error;
   }
-  const { run: childRun } = await startDelegatedRun(context, thread, target.id, task, "spawn_submit_failed");
+  if (thread.closed_at !== null) throw new SubagentError("closed_thread", "the worker thread is closed");
+  const content = context.coordination?.runActionKey === undefined
+    ? task
+    : "Resume this accepted work using the Thread history. Preserve completed work.\n\n" + task;
+  const { run: childRun } = await startDelegatedRun(context, thread, target.id, content, "spawn_submit_failed");
   await context.threads.appendEvent(
     parentThread.chat_id,
     {

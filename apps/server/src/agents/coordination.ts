@@ -260,6 +260,7 @@ export class AgentCoordination {
       accepted_agent_id: string;
       accepted_name: string | null;
       accepted_parent_run_id: string;
+      launch_attempt: number;
     }>(pool);
     for (const work of rows) {
       try {
@@ -267,24 +268,27 @@ export class AgentCoordination {
         const { agent } = await store.requireAccess(requester, work.agent_id, "use");
         const parent = await store.runs.getRun(work.accepted_parent_run_id);
         if (parent.thread_id === null || parent.agent_id !== agent.id) {
-          await settleCoordinationLaunch(pool, [work.id, null, "parent_run_unavailable"]);
+          await settleCoordinationLaunch(pool, [work.id, null, "parent_run_unavailable", work.launch_attempt]);
           continue;
         }
         const launched = await spawn({
           pool, store, threads, agent, requester, runtime, maxDepth, maxChildrenPerNode,
           threadId: parent.thread_id,
           parentRun: async () => ({ ...parent, user_id: requester.id }),
-          coordination: { managed: true, sourceInputId: work.id, actionKey: `accept:${work.id}` },
+          coordination: {
+            managed: true, sourceInputId: work.id, actionKey: `accept:${work.id}`,
+            ...(work.launch_attempt === 1 ? {} : { runActionKey: `accept:${work.id}:retry:${work.launch_attempt}` }),
+          },
         }, {
           agent: work.accepted_agent_id,
           task: work.accepted_scope,
           ...(work.accepted_name === null ? {} : { name: work.accepted_name }),
         });
-        await settleCoordinationLaunch(pool, [work.id, launched.run_id, null]);
+        await settleCoordinationLaunch(pool, [work.id, launched.run_id, null, work.launch_attempt]);
       } catch (error) {
         if (error instanceof SubagentError && error.code === "child_limit") continue;
         if (error instanceof SubagentError || (error instanceof ApiError && (error.status === 403 || error.status === 404))) {
-          await settleCoordinationLaunch(pool, [work.id, null, error.code]);
+          await settleCoordinationLaunch(pool, [work.id, null, error.code, work.launch_attempt]);
         } else {
           log.warn({ err: error, inputId: work.id }, "accepted work launch deferred");
         }

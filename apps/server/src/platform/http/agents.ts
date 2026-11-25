@@ -1,3 +1,4 @@
+import { retryCoordinationWork } from "../../agents/store/coordination.js";
 import { runStepsWire } from "../../agents/store/runs.js";
 import { ensureCoordinationThread, coordinationSettings } from "../../agents/coordination.js";
 // Agent HTTP surface: CRUD and lifecycle, thread index, read-only files,
@@ -442,6 +443,17 @@ export function registerAgentRoutes(
     refuseDeletingAgent(agent);
     const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
     return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
+  });
+
+  app.post("/api/v1/agents/:id/work/:inputId/retry", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const inputId = parseUuidParam(req, "inputId");
+    const { agent } = await store.requireAccess(user, agentId, "use");
+    refuseDeletingAgent(agent);
+    const result = await retryCoordinationWork(infra.pool, [inputId, agentId, user.id]);
+    if (result.rowCount !== 1) throw ApiError.conflict("work_not_retryable", "This work is not available to retry");
+    return sendJson(reply, { queued: true });
   });
 
   /** Agents on the wire, with their Integration warnings. */

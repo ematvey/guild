@@ -526,6 +526,30 @@ describe("configured coordinator conversation", () => {
       const request = JSON.stringify(body);
       return request.includes("<worker_origin>") && request.includes("Can you grant access?");
     }), 10000);
+    const originalRun = acceptance.rows[0]?.launched_run_id as string;
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM agent_runs WHERE id=$1 AND finished_at IS NOT NULL", [originalRun],
+    )).rowCount === 1, 10000);
+    const retryUrl = `/api/v1/agents/${agentId}/work/${inputId}/retry`;
+    const retry = await app.inject({ method: "POST", url: retryUrl, headers });
+    expect(retry.statusCode, retry.body).toBe(200);
+    const duplicate = await app.inject({ method: "POST", url: retryUrl, headers });
+    expect(duplicate.statusCode).toBe(409);
+    stack.mock.setResponses([{ body: final("Worker retry completed.") }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launch_attempt=2 AND launched_run_id<>$2",
+        [inputId, originalRun],
+      )).rowCount === 1;
+    }, 10000);
+    const attempts = await stack.env.db.query(
+      `SELECT r.id,r.thread_id,r.work_report_state FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+       WHERE t.source_input_id=$1 ORDER BY r.created_at,r.id`, [inputId],
+    );
+    expect(attempts.rows).toHaveLength(2);
+    expect(new Set(attempts.rows.map((row) => row.thread_id)).size).toBe(1);
+    expect(attempts.rows[0]).toMatchObject({ id: originalRun, work_report_state: "blocked" });
   }, 30000);
 
 });

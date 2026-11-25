@@ -194,14 +194,14 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
      UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'
      FROM due WHERE i.id=due.id
      RETURNING i.id,i.agent_id,i.user_id,i.accepted_scope,i.accepted_agent_id,
-               i.accepted_name,i.accepted_parent_run_id`,
+               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt`,
   );
 }
 
 export function settleCoordinationLaunch(db: Database, values: unknown[]) {
   return db.query(
     `UPDATE agent_coordination_inputs SET launched_run_id=$2, launch_error=$3
-     WHERE id=$1 AND launched_run_id IS NULL AND launch_error IS NULL`,
+     WHERE id=$1 AND launched_run_id IS NULL AND launch_error IS NULL AND launch_attempt=$4`,
     values,
   );
 }
@@ -225,6 +225,24 @@ export function settleCoordinationReply(db: Database, values: unknown[]) {
      SET reply_text=NULL, reply_delivered_at=CASE WHEN $2::boolean THEN now() END,
          reply_failed_at=CASE WHEN NOT $2::boolean THEN now() END
      WHERE id=$1 AND reply_delivered_at IS NULL AND reply_failed_at IS NULL`,
+    values,
+  );
+}
+
+export function retryCoordinationWork(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs i
+     SET launch_attempt=i.launch_attempt+1, launch_due_at=now(), launched_run_id=NULL, launch_error=NULL
+     WHERE i.id=$1 AND i.agent_id=$2 AND i.user_id=$3 AND i.accepted_scope IS NOT NULL
+       AND (i.launch_error IS NOT NULL OR EXISTS (
+         SELECT 1 FROM agent_runs r WHERE r.id=i.launched_run_id AND r.finished_at IS NOT NULL
+           AND (r.status='failed' OR r.work_report_state IN ('blocked','failed'))
+       ))
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_threads t JOIN agent_runs r ON r.thread_id=t.id
+         WHERE t.source_input_id=i.id AND (t.closed_at IS NOT NULL OR r.status IN ('queued','running'))
+       )
+     RETURNING launch_attempt`,
     values,
   );
 }
