@@ -147,7 +147,63 @@ export function resetReflection<T extends QueryResultRow = QueryResultRow>(db: D
 
 export function readCoordinationSource<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT id,user_id,source_thread_id,kind FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
+    `SELECT id,user_id,source_thread_id,kind,source_name FROM agent_coordination_inputs WHERE id=$1 AND agent_id=$2`,
+    values,
+  );
+}
+
+export function captureCoordinationSource<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(
+    `INSERT INTO agent_coordination_inputs(
+       agent_id,user_id,source_thread_id,kind,content,source_name,source_key,source_policy,wake,delivered_at,
+       decision,decision_reason)
+     VALUES($1,$2,$3,'candidate',$4,$5,$6,$7,$8,
+       CASE WHEN NOT $8::boolean THEN now() END,
+       CASE WHEN NOT $8::boolean THEN 'ignored' END,
+       CASE WHEN NOT $8::boolean THEN $9 END)
+     ON CONFLICT (agent_id,source_name,source_key) WHERE source_name IS NOT NULL
+       DO UPDATE SET source_key=EXCLUDED.source_key
+     RETURNING id,decision`,
+    values,
+  );
+}
+
+export function recordCoordinationDecision<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(
+    `UPDATE agent_coordination_inputs i
+     SET decision=$3,decision_reason=$4,matched_rule=$5,
+         accepted_scope=$6,accepted_agent_id=$7,accepted_parent_run_id=$8,
+         launch_due_at=CASE WHEN $3='accepted' THEN now() END
+     FROM agents a
+     WHERE i.id=$1 AND i.agent_id=$2 AND i.kind='candidate' AND i.decision IS NULL
+       AND a.id=i.agent_id AND i.source_policy=COALESCE(a.resources #> '{assistant,admission}', '{}'::jsonb)
+     RETURNING decision`,
+    values,
+  );
+}
+
+export function coordinationLaunchPolicy(db: Database, values: unknown[]) {
+  return db.query(
+    `SELECT 1 FROM agent_coordination_inputs i JOIN agents a ON a.id=i.agent_id
+     WHERE i.id=$1 AND i.source_policy=a.resources #> '{assistant,admission}' AND i.source_policy->>'mode'='auto'`,
+    values,
+  );
+}
+
+export function settleUnansweredCoordinationCandidates(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs i SET decision='unavailable', decision_reason='No current admission decision'
+     FROM agent_threads t WHERE t.chat_id=$1 AND t.execution_role='coordinator' AND i.agent_id=t.agent_id
+       AND i.id=ANY($2::uuid[]) AND i.kind='candidate' AND i.decision IS NULL`,
+    values,
+  );
+}
+
+export function hasCoordinationCandidates(db: Database, values: unknown[]) {
+  return db.query(
+    `SELECT 1 FROM agent_coordination_inputs i JOIN agent_threads t ON t.agent_id=i.agent_id
+     WHERE t.chat_id=$1 AND t.execution_role='coordinator' AND i.kind='candidate'
+       AND i.id=ANY($2::uuid[]) LIMIT 1`,
     values,
   );
 }
@@ -194,7 +250,7 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
      UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'
      FROM due WHERE i.id=due.id
      RETURNING i.id,i.agent_id,i.user_id,i.accepted_scope,i.accepted_agent_id,
-               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt`,
+               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt,i.kind`,
   );
 }
 

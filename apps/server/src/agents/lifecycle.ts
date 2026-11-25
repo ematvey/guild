@@ -29,7 +29,7 @@ import {
 } from "./store/run-finish.js";
 import type { AgentRunStore } from "./store/runs.js";
 import { inputRequestIds } from "../storage/postgres/queries.js";
-import { coordinatorAgentForChat, queueMissingCoordinationReplies } from "./store/coordination.js";
+import { coordinatorAgentForChat, queueMissingCoordinationReplies, settleUnansweredCoordinationCandidates } from "./store/coordination.js";
 import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
@@ -153,6 +153,7 @@ export class AgentRunLifecycle {
         requestIds,
         "I couldn’t send a reply to this request. Please try again.",
       ]);
+      await settleUnansweredCoordinationCandidates(pool, [chatId, requestIds]);
     }
     const early = this.settledEarly.get(chatId);
     if (early !== undefined && includesAll(inputs, early.inputs)) {

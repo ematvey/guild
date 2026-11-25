@@ -1,6 +1,6 @@
-import { retryCoordinationWork } from "../../agents/store/coordination.js";
+import { captureCoordinationSource, retryCoordinationWork } from "../../agents/store/coordination.js";
 import { runStepsWire } from "../../agents/store/runs.js";
-import { ensureCoordinationThread, coordinationSettings } from "../../agents/coordination.js";
+import { ensureCoordinationThread, coordinationAdmission, coordinationSettings } from "../../agents/coordination.js";
 // Agent HTTP surface: CRUD and lifecycle, thread index, read-only files,
 // runs/activity, the inbox and conversation search. Every route resolves the
 // caller through the session and checks agent visibility/role before it
@@ -443,6 +443,28 @@ export function registerAgentRoutes(
     refuseDeletingAgent(agent);
     const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
     return sendJson(reply, { agent_id: agent.id, chat_id: thread.chat_id, thread_id: thread.id });
+  });
+
+  app.post("/api/v1/agents/:id/sources/:source/events", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    const { agent } = await store.requireAccess(user, agentId, "manage");
+    requireActiveAgent(agent);
+    if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is disabled");
+    const source = (req.params as { source: string }).source;
+    const admission = coordinationAdmission(agent);
+    if (!admission.sources.includes(source)) throw ApiError.forbidden("This Agent does not accept events from that source");
+    const body = jsonBody(req);
+    const key = requiredString(body, "event_id");
+    const content = requiredString(body, "content");
+    if (key.length > 256 || content.length > 16000) throw ApiError.badRequest("The source event is too long");
+    const wake = admission.mode !== "off" && admission.rules.length > 0;
+    const inbox = wake ? await ensureCoordinationThread(store, agent, user.id, "inbox") : null;
+    const row = (await captureCoordinationSource<{ id: string; decision: string | null }>(infra.pool, [
+      agentId, user.id, inbox?.id ?? null, content, source, key, JSON.stringify(admission.policy), wake,
+      admission.mode === "off" ? "Inferred admission is off" : "No admission rules are configured",
+    ])).rows[0]!;
+    return sendJson(reply, { input_id: row.id, decision: row.decision });
   });
 
   app.post("/api/v1/agents/:id/work/:inputId/retry", async (req, reply) => {

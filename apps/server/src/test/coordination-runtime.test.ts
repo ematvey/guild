@@ -603,4 +603,75 @@ describe("configured coordinator conversation", () => {
     }, 10000);
   }, 30000);
 
+
+  it("records source admission decisions and launches inferred work only in auto mode", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    for (const mode of ["off", "observe", "auto"] as const) {
+      const created = await app.inject({
+        method: "POST", url: "/api/v1/agents", headers,
+        payload: {
+          name: `Source admission ${mode}`, model: "coordination-test",
+          resources: { assistant: { enabled: true, admission: {
+            mode, sources: ["project"], rules: { review: "Review project status without external side effects." },
+          } } },
+        },
+      });
+      expect(created.statusCode, created.body).toBe(200);
+      const agentId = created.json().agent.id as string;
+      const url = `/api/v1/agents/${agentId}/sources/project/events`;
+      const payload = { event_id: "event-1", content: "The project status changed." };
+      const submitted = await app.inject({ method: "POST", url, headers, payload });
+      expect(submitted.statusCode, submitted.body).toBe(200);
+      const inputId = submitted.json().input_id as string;
+      const duplicate = await app.inject({ method: "POST", url, headers, payload: { ...payload, content: "Different content" } });
+      expect(duplicate.json().input_id).toBe(inputId);
+      const denied = await app.inject({ method: "POST", url: url.replace("/project/", "/unconfigured/"), headers, payload });
+      expect(denied.statusCode).toBe(403);
+      if (mode === "off") {
+        expect(submitted.json().decision).toBe("ignored");
+      } else {
+        const args = JSON.stringify({
+          input_id: inputId, decision: "accept", rule: "review", reason: "Project status changed", task: "Review project status.",
+        });
+        stack.mock.setResponses([{ body: async () => {
+          const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
+          const last = messages?.at(-1);
+          return last?.role === "user" && JSON.stringify(last.content).includes(inputId)
+            ? call("codemode", {
+              code: `try { await tools.schedule_wake({input_id:${JSON.stringify(inputId)},at:"2099-01-01T00:00:00Z",reason:"Bypass admission"}); } catch {} return await tools.evaluate_event(${args});`,
+            })
+            : final("Evaluation finished.");
+        } }]);
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND decision=$2",
+            [inputId, mode === "observe" ? "would_accept" : "accepted"],
+          )).rowCount === 1;
+        }, 10000);
+      }
+      if (mode === "auto") {
+        await waitFor(async () => {
+          await app.platform.coordination.tick();
+          return (await stack.env.db.query(
+            "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launched_run_id IS NOT NULL", [inputId],
+          )).rowCount === 1;
+        }, 10000);
+      }
+      const evidence = await stack.env.db.query(
+        `SELECT content,decision,matched_rule,launched_run_id IS NOT NULL AS launched,
+           (SELECT count(*)::int FROM agent_coordination_inputs WHERE agent_id=$2 AND kind='wake') AS wakes
+         FROM agent_coordination_inputs WHERE id=$1`, [inputId, agentId],
+      );
+      expect(evidence.rows[0]).toEqual({
+        content: payload.content, decision: { off: "ignored", observe: "would_accept", auto: "accepted" }[mode],
+        matched_rule: mode === "off" ? null : "review", launched: mode === "auto", wakes: 0,
+      });
+      await waitFor(async () => (await stack.env.db.query(
+        `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
+         WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
+      )).rowCount === 0, 10000);
+    }
+  }, 40000);
 });

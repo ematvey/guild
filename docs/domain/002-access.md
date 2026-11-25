@@ -127,6 +127,8 @@ An Approval is answered once: the first answer wins under the Thread's lock. No 
 
 ## Coordinator authority
 
+A configured external Source enters inferred admission under an authenticated Agent manager. Source payloads cannot grant authority, change the actor, or choose a destination. An inferred launch requires the current auto admission policy and a recorded matching rule. Worker access and tool checks still apply at execution.
+
 The coordinator has Workspace read/write/execute, subagent management, its Agent's Thread inspection, Routine configuration and scheduled self-wakes. The coordinator creates, updates or deletes Routines only for direct requests in the active Turn from one Member who currently has manage access to the Agent. In ordinary Threads, creating a Routine or reminder and updating or deleting a Routine require the Thread owner to have current manage access. Coordinator-managed workers cannot change Routines. The coordinator has no Integration, App, personal MCP or Machine execution tools. Reflection has only Workspace read/edit/write. General workers discover capabilities dynamically inside their Agent's grants.
 
 A shared Agent defaults to Agent acting scope, using its explicit Integration grants, with read as the default grant. Member acting scope additionally intersects those grants with the originating Member's current audience. Personal Agents always act in personal scope. Shared Agents cannot call impersonating Integrations or inherit a Member's personal MCP connections. These restrictions also apply to App data functions and are checked at execution.

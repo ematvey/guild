@@ -1,4 +1,4 @@
-import { isRoutineChat } from "../agents/store/coordination.js";
+import { hasCoordinationCandidates, isRoutineChat } from "../agents/store/coordination.js";
 import { coordinationRole } from "../agents/coordination.js";
 // The approval gate (approval_gate + exec_and_approval_gate onto the
 // pi-durable tool-task hook):
@@ -21,7 +21,7 @@ import { coordinationRole } from "../agents/coordination.js";
 // Coordinator-managed work and Routines return judge rejections directly.
 // Independently started Threads retain their interactive approval settings.
 
-import { hook, ToolTask } from "@earendil-works/pi-durable";
+import { hook, LiveDoc, ToolTask } from "@earendil-works/pi-durable";
 import type { HookApi } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord";
 import { setTimeout as delay } from "node:timers/promises";
@@ -30,10 +30,10 @@ import { codemodeScriptLint } from "./codemode-lint.js";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
-import { taskAbortRequested } from "../storage/postgres/queries.js";
+import { inputRequestIds, taskAbortRequested } from "../storage/postgres/queries.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "../platform/domain/thread-events.js";
-import { uuidv5, uuidv7 } from "../platform/time.js";
+import { isUuid, uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import { CODING_TOOL_NAMES, type IntegrationGate } from "./integrations.js";
 import type { TraceStore } from "../platform/trace.js";
@@ -464,6 +464,18 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         call.arguments?.["machine"] !== undefined &&
         ([...CODING_TOOL_NAMES, "execute", "download", "send_file"] as readonly string[]).includes(call.name);
 
+      const role = await coordinationRole(deps.pool, chatId);
+      if (
+        role?.execution_role === "coordinator" &&
+        !["evaluate_event", "reply", "accept_work"].includes(call.name)
+      ) {
+        const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+        const ids = (await inputRequestIds(deps.pool, active?.inputs.map(Number) ?? [])).filter(isUuid);
+        if (ids.length > 0 && (await hasCoordinationCandidates(deps.pool, [chatId, ids])).rowCount !== 0) {
+          return { block: "Inferred source events can only be evaluated through the admission policy" };
+        }
+      }
+
       if (isCommandTool) {
         const decision = evaluateExecute(deps.execPolicy, call.arguments);
         if (decision.kind === "deny") {
@@ -475,7 +487,6 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         if (decision.kind === "allow") return undefined;
       }
 
-      const role = await coordinationRole(deps.pool, chatId);
       // These roles have only Guild tools and their own Workspace.
       if (role?.execution_role === "coordinator" || role?.execution_role === "reflection") return undefined;
 
