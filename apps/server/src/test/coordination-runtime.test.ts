@@ -264,12 +264,10 @@ describe("configured coordinator conversation", () => {
         [input.id],
       )).rowCount,
     ).toBe(1);
-    expect(
-      (await stack.env.db.query(
-        "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
-        [inbox.chat_id],
-      )).rowCount,
-    ).toBe(1);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
+      [inbox.chat_id],
+    )).rowCount === 1, 10000);
     await waitFor(
       async () =>
         (
@@ -455,4 +453,60 @@ describe("configured coordinator conversation", () => {
     expect(requests).toContain("persistent coordinator");
     expect(requests).toContain(input.id);
   }, 30000);
+
+  it("reserves one scoped worker and acknowledgment for an accepted request", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/api/v1/agents", headers,
+      payload: { name: "Acceptance Assistant", model: "coordination-test", resources: { assistant: { enabled: true } } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const agentId = created.json().agent.id as string;
+    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: agentId } });
+    expect(opened.statusCode, opened.body).toBe(200);
+    const inbox = opened.json() as { chat_id: string; thread_id: string };
+    const sourceEventId = randomUUID();
+    const submitted = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
+      payload: { message: "Review this project.", user_message_id: sourceEventId },
+    });
+    expect(submitted.statusCode, submitted.body).toBeLessThan(300);
+    let inputId: string | undefined;
+    await waitFor(async () => {
+      inputId = (await stack.env.db.query<{ id: string }>(
+        "SELECT id FROM agent_coordination_inputs WHERE source_event_id=$1", [sourceEventId],
+      )).rows[0]?.id;
+      return inputId !== undefined;
+    }, 10000);
+    const accepted = { input_id: inputId, acknowledgment: "I’ll review the project.", task: "Read and summarize the project." };
+    stack.mock.setResponses([
+      { body: call("codemode", {
+        code: `await tools.accept_work(${JSON.stringify(accepted)}); return await tools.accept_work(${JSON.stringify({ ...accepted, task: "Duplicate scope" })});`,
+      }) },
+      { body: final("Internal acceptance notes.") },
+      { body: final("Worker review finished.") },
+    ]);
+    await app.platform.coordination.tick();
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launched_run_id IS NOT NULL AND reply_delivered_at IS NOT NULL",
+        [inputId],
+      )).rowCount === 1;
+    }, 20000);
+    const acceptance = await stack.env.db.query(
+      "SELECT accepted_scope, launched_run_id FROM agent_coordination_inputs WHERE id=$1", [inputId],
+    );
+    expect(acceptance.rows[0]?.accepted_scope).toBe(accepted.task);
+    const children = await stack.env.db.query(
+      "SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id WHERE t.source_input_id=$1", [inputId],
+    );
+    expect(children.rows.map((row) => row.id)).toEqual([acceptance.rows[0]?.launched_run_id]);
+    await waitFor(async () => (await stack.env.db.query(
+      "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%review the project%'",
+      [inbox.chat_id],
+    )).rowCount === 1, 10000);
+  }, 30000);
+
 });

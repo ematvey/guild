@@ -173,6 +173,39 @@ export function queueMissingCoordinationReplies(db: Database, values: unknown[])
   );
 }
 
+export function acceptCoordinationWork(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs
+     SET reply_text=$3, reply_due_at=now(), accepted_scope=$4, accepted_agent_id=$5,
+         accepted_name=$6, accepted_parent_run_id=$7, launch_due_at=now()
+     WHERE id=$1 AND agent_id=$2 AND kind='request' AND source_thread_id IS NOT NULL
+       AND reply_due_at IS NULL`,
+    values,
+  );
+}
+
+export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database) {
+  return db.query<T>(
+    `WITH due AS (
+       SELECT id FROM agent_coordination_inputs
+       WHERE launch_due_at <= now() AND launched_run_id IS NULL AND launch_error IS NULL
+       ORDER BY launch_due_at,seq LIMIT 16 FOR UPDATE SKIP LOCKED
+     )
+     UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'
+     FROM due WHERE i.id=due.id
+     RETURNING i.id,i.agent_id,i.user_id,i.accepted_scope,i.accepted_agent_id,
+               i.accepted_name,i.accepted_parent_run_id`,
+  );
+}
+
+export function settleCoordinationLaunch(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs SET launched_run_id=$2, launch_error=$3
+     WHERE id=$1 AND launched_run_id IS NULL AND launch_error IS NULL`,
+    values,
+  );
+}
+
 export function claimCoordinationReplies<T extends QueryResultRow>(db: Database) {
   return db.query<T>(
     `WITH due AS (

@@ -5,6 +5,8 @@ import {
   deliverCoordinationInput,
   claimCoordinationReplies,
   settleCoordinationReply,
+  claimCoordinationLaunches,
+  settleCoordinationLaunch,
   initializeCoordinationState,
   listCoordinators,
   readCoordinationState,
@@ -34,6 +36,8 @@ import type { GuildRuntime } from "../harness/runtime.js";
 import type { Logger } from "pino";
 import { compactionInFlight } from "../chats/compaction.js";
 import { coordinatorCompactionActivity } from "../storage/postgres/queries.js";
+import { spawn, SubagentError } from "./subagents.js";
+import type { ThreadStore } from "../platform/store/thread.js";
 import { startThreadRun } from "./thread-run.js";
 
 export interface CoordinationSettings {
@@ -92,7 +96,7 @@ export interface CoordinationInput {
 export function coordinationPreamble(input: CoordinationInput): string {
   const delivery =
     input.kind === "request"
-      ? `\n\n<inbox_delivery>Send your visible reply now by calling reply with input_id ${input.id}. If you need to delegate, send the Member a short acknowledgment before spawning. Final assistant text is private.</inbox_delivery>`
+      ? `\n\n<inbox_delivery>Send your visible reply now by calling reply with input_id ${input.id}. For delegated work, call accept_work with the acknowledgment and task instead. Final assistant text is private.</inbox_delivery>`
       : "";
   return `<coordination_input>\n${JSON.stringify({
     input_id: input.id,
@@ -161,7 +165,10 @@ export class AgentCoordination {
       pool: PlatformPool;
       store: AgentStore;
       identity: Pick<IdentityStore, "getUser">;
-      runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat">;
+      threads: ThreadStore;
+      maxDepth: number;
+      maxChildrenPerNode: number;
+      runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat" | "canStopChat">;
       routeSupportsImages(orgId: string, model: string): Promise<boolean>;
       log: Logger;
     },
@@ -193,6 +200,7 @@ export class AgentCoordination {
         }
       }
       await this.deliverReplies();
+      await this.launchAcceptedWork();
       if (Date.now() >= this.maintainAfter) {
         this.maintainAfter = Date.now() + 5000;
         await this.maintain();
@@ -237,6 +245,48 @@ export class AgentCoordination {
           await settleCoordinationReply(pool, [reply.id, false]);
         } else {
           log.warn({ err: error, inputId: reply.id }, "coordination reply deferred");
+        }
+      }
+    }
+  }
+
+  private async launchAcceptedWork(): Promise<void> {
+    const { pool, store, runtime, log, identity, threads, maxDepth, maxChildrenPerNode } = this.deps;
+    const { rows } = await claimCoordinationLaunches<{
+      id: string;
+      agent_id: string;
+      user_id: string;
+      accepted_scope: string;
+      accepted_agent_id: string;
+      accepted_name: string | null;
+      accepted_parent_run_id: string;
+    }>(pool);
+    for (const work of rows) {
+      try {
+        const requester = await identity.getUser(work.user_id);
+        const { agent } = await store.requireAccess(requester, work.agent_id, "use");
+        const parent = await store.runs.getRun(work.accepted_parent_run_id);
+        if (parent.thread_id === null || parent.agent_id !== agent.id) {
+          await settleCoordinationLaunch(pool, [work.id, null, "parent_run_unavailable"]);
+          continue;
+        }
+        const launched = await spawn({
+          pool, store, threads, agent, requester, runtime, maxDepth, maxChildrenPerNode,
+          threadId: parent.thread_id,
+          parentRun: async () => ({ ...parent, user_id: requester.id }),
+          coordination: { managed: true, sourceInputId: work.id, actionKey: `accept:${work.id}` },
+        }, {
+          agent: work.accepted_agent_id,
+          task: work.accepted_scope,
+          ...(work.accepted_name === null ? {} : { name: work.accepted_name }),
+        });
+        await settleCoordinationLaunch(pool, [work.id, launched.run_id, null]);
+      } catch (error) {
+        if (error instanceof SubagentError && error.code === "child_limit") continue;
+        if (error instanceof SubagentError || (error instanceof ApiError && (error.status === 403 || error.status === 404))) {
+          await settleCoordinationLaunch(pool, [work.id, null, error.code]);
+        } else {
+          log.warn({ err: error, inputId: work.id }, "accepted work launch deferred");
         }
       }
     }
