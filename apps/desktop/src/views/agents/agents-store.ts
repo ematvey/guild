@@ -8,11 +8,11 @@
 // pushed list replaces the slice, and a pushed run is held until the seed
 // lands and merged over it.
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
 import type { AttachableIntegration, CoordinationSnapshot } from "@guild/wire/rest";
 import type { ServerFrame } from "@guild/wire/types";
-import { listAgentRuns, listAgentThreads, listRoutines, readCoordination } from "./agents-api";
+import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
 import { createStore } from "../../lib/store";
 
@@ -104,7 +104,12 @@ export function upsertRun<T extends { id: string; created_at: string }>(rows: T[
 
 /** Replaces the agent list (the `agent_list` frame). */
 export function applyAgentList(agents: Agent[]): void {
-  agentStore.update((state) => ({ ...state, agents }));
+  const visible = new Set(agents.map((agent) => agent.id));
+  agentStore.update((state) => ({
+    ...state, agents, coordination: Object.fromEntries(
+      Object.entries(state.coordination).filter(([id]) => visible.has(id)),
+    ),
+  }));
 }
 
 /** Replaces the attachable Integrations (the `integration_access` frame). */
@@ -131,27 +136,16 @@ export function applyAgentCoordination(frame: Extract<ServerFrame, { type: "agen
   }));
 }
 
-export function useAgentCoordination(agentId: string) {
-  const snapshot = agentStore.use((state) => state.coordination[agentId]);
-  const epoch = agentStore.use((state) => state.epoch);
-  const [failure, setFailure] = useState<{ epoch: number; agentId: string; message: string } | null>(null);
-  const error = failure?.epoch === epoch && failure.agentId === agentId ? failure.message : null;
-  const needed = snapshot === undefined && error === null;
-  useEffect(() => {
-    if (!needed) return;
-    let live = true;
-    void readCoordination(agentId).then(
-      (loaded) => {
-        if (!live || agentStore.get().epoch !== epoch || agentStore.get().coordination[agentId]) return;
-        applyAgentCoordination({ type: "agent_coordination", agent_id: agentId, snapshot: loaded });
-      },
-      (err: unknown) => {
-        if (live) setFailure({ epoch, agentId, message: err instanceof Error ? err.message : "Could not load coordination." });
-      },
-    );
-    return () => { live = false; };
-  }, [agentId, epoch, needed]);
-  return { snapshot, error, retry: () => setFailure(null) };
+export function scrubAgentCoordination(): void {
+  agentStore.update((state) => ({
+    ...state, coordination: Object.fromEntries(Object.entries(state.coordination).map(([agentId, snapshot]) =>
+      [agentId, { ...snapshot, outcomes: snapshot.outcomes.filter((outcome) => outcome.owned) }],
+    )),
+  }));
+}
+
+export function useAgentCoordination(agentId: string): CoordinationSnapshot | undefined {
+  return agentStore.use((state) => state.coordination[agentId]);
 }
 
 /** Replaces one agent's thread list (the `agent_threads` frame). */

@@ -150,21 +150,33 @@ describe("agent and skill state frames", () => {
     );
     const root = `/api/v1/agents/${agent.id}`;
     const belongs = (frame: Frame) => frame.type === "agent_coordination" && frame.agent_id === agent.id;
+    const outcomes = (frame: Frame) => (frame.snapshot as { outcomes: unknown[] }).outcomes;
     try {
+      for (const socket of [owner, admin, other]) {
+        socket.send(JSON.stringify({ type: "sync", coordination_agent_id: agent.id }));
+        await expect(waitFrame(socket, belongs)).resolves.toMatchObject({ snapshot: { paused: false, outcomes: [] } });
+      }
       const { input_id } = await api<{ input_id: string }>(stack.memberToken, "POST", root + "/sources/project/events", {
         event_id: "activity-event", content: "Untrusted project update",
       });
-      await expect(waitFrame(owner, belongs)).resolves.toMatchObject({
+      const hasOutcome = (frame: Frame) => belongs(frame) && outcomes(frame).length > 0;
+      await expect(waitFrame(owner, hasOutcome)).resolves.toMatchObject({
         snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: true }] },
       });
-      await expect(waitFrame(admin, belongs)).resolves.toMatchObject({
+      await expect(waitFrame(admin, hasOutcome)).resolves.toMatchObject({
         snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: false }] },
       });
-      expect(textFrames(other).some(belongs)).toBe(false);
+      expect(textFrames(other).some(hasOutcome)).toBe(false);
       await api(stack.memberToken, "PUT", root + "/coordination/pause", { paused: true });
-      await expect(waitFrame(other, belongs)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [] } });
-      await expect(waitFrame(owner, (f) => belongs(f) && (f.snapshot as { paused: boolean }).paused))
-        .resolves.toMatchObject({ snapshot: { paused: true, outcomes: [{ id: input_id }] } });
+      const paused = (f: Frame) => belongs(f) && (f.snapshot as { paused: boolean }).paused;
+      await expect(waitFrame(other, paused)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [] } });
+      await expect(waitFrame(owner, paused)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [{ id: input_id }] } });
+      await stack.env.db.query("UPDATE users SET role='member' WHERE id=$1", [stack.adminId]);
+      try {
+        await waitFrame(admin, (frame) => paused(frame) && outcomes(frame).length === 0);
+      } finally {
+        await stack.env.db.query("UPDATE users SET role='admin' WHERE id=$1", [stack.adminId]);
+      }
     } finally {
       owner.end();
       admin.end();

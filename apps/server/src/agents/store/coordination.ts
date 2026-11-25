@@ -120,7 +120,7 @@ export function clearReflection<T extends QueryResultRow = QueryResultRow>(db: D
 export function pendingReflectionInputs<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
     `SELECT id,seq,content,kind,count(*) OVER () AS pending_count
-     FROM agent_coordination_inputs WHERE agent_id=$1 AND delivered_at IS NOT NULL AND reflected_at IS NULL
+     FROM agent_coordination_inputs WHERE agent_id=$1 AND delivered_at IS NOT NULL AND reflected_at IS NULL AND kind<>'candidate'
      ORDER BY seq LIMIT 50`,
     values,
   );
@@ -130,7 +130,9 @@ export function pendingReflectionInputs<T extends QueryResultRow = QueryResultRo
 export function expireReflectedInputContent(db: Database) {
   return db.query(`WITH expired AS (
     SELECT id FROM agent_coordination_inputs
-    WHERE reflected_at < now() - interval '30 days' AND content <> ''
+    WHERE (reflected_at < now() - interval '30 days'
+      OR (kind='candidate' AND decision IS NOT NULL AND created_at < now() - interval '30 days'))
+      AND content <> ''
       AND NOT (attached_thread_id IS NOT NULL AND launch_error IS NULL AND launched_run_id IS NULL)
     ORDER BY reflected_at,id LIMIT 200 FOR UPDATE SKIP LOCKED
   )
@@ -225,8 +227,8 @@ export function activeCoordinationInput(db: Database, values: unknown[]) {
 
 export function setCoordinationPaused(db: Database, values: unknown[]) {
   return db.query(
-    `INSERT INTO agent_coordination_state(agent_id,paused_at)
-     VALUES($1,CASE WHEN $2::boolean THEN now() END)
+    `INSERT INTO agent_coordination_state(agent_id,paused_at,reflection_started_at)
+     VALUES($1,CASE WHEN $2::boolean THEN now() END,now())
      ON CONFLICT (agent_id) DO UPDATE SET
        paused_at=CASE WHEN $2::boolean THEN COALESCE(agent_coordination_state.paused_at,now()) END`,
     values,
@@ -262,19 +264,19 @@ function listCoordinationOutcomes(db: Database, values: unknown[]) {
   return db.query<CoordinationOutcome>(
     `SELECT i.id,i.kind,i.source_name,i.source_key,i.created_at::text,i.delivered_at::text,i.reply_due_at IS NOT NULL AS reply_queued,
             i.reply_missing,i.reply_delivered_at::text,i.reply_failed_at::text,i.decision,i.decision_reason,i.matched_rule,
-            i.accepted_scope,i.launched_run_id,i.launch_error,r.status AS run_status,r.work_report_state,
+            i.accepted_scope,r.id AS launched_run_id,i.launch_error,r.status AS run_status,r.work_report_state,
             r.work_report_summary,r.work_report_question, CASE WHEN i.user_id=$2 THEN origin.chat_id END AS source_chat_id,
             CASE WHEN i.user_id=$2 THEN worker.chat_id END AS worker_chat_id,
             i.user_id=$2 AS owned,
-            (i.user_id=$2 AND i.accepted_scope IS NOT NULL
+            (i.user_id=$2 AND (i.accepted_scope IS NOT NULL OR i.attached_thread_id IS NOT NULL)
              AND (i.launch_error IS NOT NULL OR COALESCE(r.finished_at IS NOT NULL
                AND (r.status='failed' OR r.work_report_state IN ('blocked','failed')),false))
              AND NOT EXISTS (
                SELECT 1 FROM agent_threads t JOIN agent_runs active ON active.thread_id=t.id
-               WHERE t.source_input_id=i.id AND (t.closed_at IS NOT NULL OR active.status IN ('queued','running'))
+               WHERE (t.source_input_id=i.id OR t.id=i.attached_thread_id) AND (t.closed_at IS NOT NULL OR active.status IN ('queued','running'))
              )) AS retryable
      FROM agent_coordination_inputs i
-     LEFT JOIN agent_runs r ON r.id=i.launched_run_id
+     LEFT JOIN agent_runs r ON r.id=COALESCE(i.launched_run_id,i.followup_run_id)
      LEFT JOIN agent_threads origin ON origin.id=i.source_thread_id AND origin.user_id=i.user_id
      LEFT JOIN agent_threads worker ON worker.id=r.thread_id AND worker.user_id=i.user_id
      WHERE i.agent_id=$1 AND ($3::boolean OR i.user_id=$2)
@@ -347,7 +349,7 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
      UPDATE agent_coordination_inputs i SET launch_due_at=now()+interval '30 seconds'
      FROM due WHERE i.id=due.id
      RETURNING i.id,i.agent_id,i.user_id,i.accepted_scope,i.accepted_agent_id,
-               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt,i.kind,i.attached_thread_id,i.content`,
+               i.accepted_name,i.accepted_parent_run_id,i.launch_attempt,i.kind,i.attached_thread_id,i.attached_request_id,i.content`,
   );
 }
 
@@ -385,15 +387,17 @@ export function settleCoordinationReply(db: Database, values: unknown[]) {
 export function retryCoordinationWork(db: Database, values: unknown[]) {
   return db.query(
     `UPDATE agent_coordination_inputs i
-     SET launch_attempt=i.launch_attempt+1, launch_due_at=now(), launched_run_id=NULL, launch_error=NULL
-     WHERE i.id=$1 AND i.agent_id=$2 AND i.user_id=$3 AND i.accepted_scope IS NOT NULL
+     SET launch_attempt=i.launch_attempt+1, launch_due_at=now(), launched_run_id=NULL, launch_error=NULL,
+         attached_request_id=CASE WHEN i.attached_thread_id IS NOT NULL THEN gen_random_uuid() END
+     WHERE i.id=$1 AND i.agent_id=$2 AND i.user_id=$3
+       AND (i.accepted_scope IS NOT NULL OR i.attached_thread_id IS NOT NULL)
        AND (i.launch_error IS NOT NULL OR EXISTS (
          SELECT 1 FROM agent_runs r WHERE r.id=i.launched_run_id AND r.finished_at IS NOT NULL
            AND (r.status='failed' OR r.work_report_state IN ('blocked','failed'))
        ))
        AND NOT EXISTS (
          SELECT 1 FROM agent_threads t JOIN agent_runs r ON r.thread_id=t.id
-         WHERE t.source_input_id=i.id AND (t.closed_at IS NOT NULL OR r.status IN ('queued','running'))
+         WHERE (t.source_input_id=i.id OR t.id=i.attached_thread_id) AND (t.closed_at IS NOT NULL OR r.status IN ('queued','running'))
        )
      RETURNING launch_attempt`,
     values,
@@ -410,15 +414,23 @@ export function acceptedWorkForThread<T extends QueryResultRow>(db: Database, va
   );
 }
 
+export function bindCoordinationFollowupRun(db: Database, threadId: string, runId: string, requestIds: string[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs SET followup_run_id=$2
+     WHERE source_thread_id=$1 AND source_event_id=ANY($3::uuid[]) AND kind='work_followup' AND followup_run_id IS NULL`,
+    [threadId, runId, requestIds],
+  );
+}
+
 export function readWorkFollowups<T extends QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
     `SELECT source_event_id FROM agent_coordination_inputs
      WHERE source_thread_id=$1 AND kind='work_followup' AND source_event_id=ANY($2::uuid[])
      UNION ALL
-     SELECT i.id FROM agent_coordination_inputs i
-     WHERE i.id=ANY($2::uuid[]) AND i.attached_thread_id=$1
-       AND EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=i.id AND r.thread_id=$1)
-       AND NOT EXISTS (SELECT 1 FROM agent_coordination_inputs handback WHERE handback.source_event_id=i.id)
+     SELECT COALESCE(i.attached_request_id,i.id) FROM agent_coordination_inputs i
+     WHERE COALESCE(i.attached_request_id,i.id)=ANY($2::uuid[]) AND i.attached_thread_id=$1
+       AND EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=COALESCE(i.attached_request_id,i.id) AND r.thread_id=$1)
+       AND NOT EXISTS (SELECT 1 FROM agent_coordination_inputs handback WHERE handback.source_event_id=COALESCE(i.attached_request_id,i.id))
      ORDER BY source_event_id`,
     values,
   );
@@ -434,8 +446,8 @@ export function handBackWorkFollowup(db: Database, values: unknown[]) {
      ), attached AS (
        INSERT INTO agent_coordination_inputs(agent_id,user_id,source_thread_id,source_event_id,kind,content,wake,handback_reason)
        SELECT i.agent_id,i.user_id,i.source_thread_id,r.id,'request',i.content,true,$3
-       FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.id AND r.thread_id=$1
-       WHERE i.id=$2 AND i.attached_thread_id=$1 AND i.source_thread_id IS NOT NULL
+       FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=COALESCE(i.attached_request_id,i.id) AND r.thread_id=$1
+       WHERE COALESCE(i.attached_request_id,i.id)=$2 AND i.attached_thread_id=$1 AND i.source_thread_id IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM moved)
        ON CONFLICT (source_event_id) DO NOTHING
        RETURNING id

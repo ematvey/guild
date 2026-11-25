@@ -471,6 +471,7 @@ async function driveSocket(
           sink.runView = message.run_id ?? null;
           sink.runViewChat = null;
           sink.activityConversation = message.activity_chat_id ?? null;
+          sink.coordinationAgent = message.coordination_agent_id ?? null;
           await chats.sockets.syncActivity(current, sink);
         }
         if (message.chat_id === null) {

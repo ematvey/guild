@@ -848,7 +848,8 @@
         "activity_chat_id": {
           "$ref": "#/$defs/Uuid",
           "description": "Optional. The Activity Conversation this socket is watching."
-        }
+        },
+        "coordination_agent_id": { "$ref": "#/$defs/Uuid" }
       }
     },
     "Read": {

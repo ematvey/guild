@@ -45,6 +45,7 @@ export class SocketSink {
   runView: string | null = null;
   runViewChat: string | null = null;
   activityConversation: string | null = null;
+  coordinationAgent: string | null = null;
   private queue: SocketOutput[] = [];
   private pending = 0;
   private overloaded = false;

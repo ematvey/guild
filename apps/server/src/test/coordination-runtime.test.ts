@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
+import { pendingReflectionInputs } from "../agents/store/coordination.js";
 import { waitFor } from "./support/wait.js";
 
 const final = (text: string) =>
@@ -594,7 +595,7 @@ describe("configured coordinator conversation", () => {
         })});` });
       }
       if (last?.role === "user" && content?.includes("Follow-up from the Member in the originating Assistant inbox.")) {
-        return call("codemode", { code: 'return await tools.hand_back({reason:"Original scope complete"});' });
+        return call("codemode", { code: 'await tools.report_work({state:"blocked",summary:"Original scope complete"}); return await tools.hand_back({reason:"Original scope complete"});' });
       }
       return final("Routing checked.");
     } }]);
@@ -615,12 +616,25 @@ describe("configured coordinator conversation", () => {
       `SELECT 1 FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id
        WHERE t.agent_id=$1 AND r.finished_at IS NULL`, [agentId],
     )).rowCount === 0, 10000);
+    const attachRetry = await app.inject({
+      method: "POST", url: `/api/v1/agents/${agentId}/work/${attachmentId!}/retry`, headers,
+    });
+    expect(attachRetry.statusCode, attachRetry.body).toBe(200);
+    stack.mock.setResponses([{ body: final("Attachment retry complete.") }]);
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (await stack.env.db.query(
+        `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id
+         WHERE i.id=$1 AND i.launch_attempt=2 AND r.id<>i.id AND r.thread_id=$2 AND r.finished_at IS NOT NULL`,
+        [attachmentId, workerThreadId],
+      )).rowCount === 1;
+    }, 10000);
     const followup = randomUUID();
     stack.mock.setResponses([{ body: async () => {
       const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
       const last = messages?.at(-1);
       return last?.role === "user" && JSON.stringify(last.content).includes("Look into a different project.")
-        ? call("codemode", { code: 'return await tools.hand_back({reason:"Different project"});' })
+        ? call("codemode", { code: 'await tools.report_work({state:"ready",summary:"Completed worker follow-up"}); return await tools.hand_back({reason:"Different project"});' })
         : final("I returned this request for routing.");
     } }]);
     const posted = await app.inject({
@@ -640,6 +654,10 @@ describe("configured coordinator conversation", () => {
     await waitFor(async () => (await stack.env.db.query(
       "SELECT 1 FROM agent_runs WHERE thread_id=$1 AND finished_at IS NULL", [workerThreadId],
     )).rowCount === 0, 10000);
+    const followupOutcome = await app.inject({ method: "GET", url: `/api/v1/agents/${agentId}/coordination`, headers });
+    expect(followupOutcome.json().outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: handedBack, work_report_summary: "Completed worker follow-up" }),
+    ]));
     stack.mock.setResponses([{ body: async () => {
       const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
       const last = messages?.at(-1);
@@ -683,6 +701,11 @@ describe("configured coordinator conversation", () => {
       expect(denied.statusCode).toBe(403);
       if (mode === "off") {
         expect(submitted.json().decision).toBe("ignored");
+        expect((await pendingReflectionInputs(stack.env.db, [agentId])).rows).toEqual([]);
+        await app.inject({ method: "PUT", url: `/api/v1/agents/${agentId}/coordination/pause`, headers, payload: { paused: true } });
+        expect((await stack.env.db.query(
+          "SELECT reflection_started_at FROM agent_coordination_state WHERE agent_id=$1", [agentId],
+        )).rows[0]?.reflection_started_at).toBeTruthy();
       } else {
         const args = JSON.stringify({
           input_id: inputId, decision: "accept", rule: "review", reason: "Project status changed", task: "Review project status.",

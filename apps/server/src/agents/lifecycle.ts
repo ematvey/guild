@@ -1,3 +1,4 @@
+import { isUuid } from "../platform/time.js";
 // Run lifecycle for agent threads: an agent_runs row is the database copy
 // of one pi-durable run (`pi.live.run`). The run's first model request
 // opens it, taking over the queued row a delegated or routine turn created
@@ -29,7 +30,7 @@ import {
 } from "./store/run-finish.js";
 import type { AgentRunStore } from "./store/runs.js";
 import { inputRequestIds } from "../storage/postgres/queries.js";
-import { coordinatorAgentForChat, queueMissingCoordinationReplies, settleUnansweredCoordinationCandidates } from "./store/coordination.js";
+import { bindCoordinationFollowupRun, coordinatorAgentForChat, queueMissingCoordinationReplies, settleUnansweredCoordinationCandidates } from "./store/coordination.js";
 import { notifySubagentTree } from "./store/tree.js";
 
 const MAX_SUMMARY_CHARS = 500;
@@ -184,7 +185,7 @@ export class AgentRunLifecycle {
       return;
     }
     if (!create) return;
-    await runs.createRun({
+    const run = await runs.createRun({
       agent_id: thread.agent_id,
       user_id: (await requestingMember(pool, chatId, requestIds)) ?? thread.user_id,
       thread_id: thread.id,
@@ -193,6 +194,7 @@ export class AgentRunLifecycle {
       status: "running",
       started_at: startedAt,
     });
+    await bindCoordinationFollowupRun(pool, thread.id, run.id, requestIds.filter(isUuid));
   }
 
   private async finish(run: OpenChatRun, error: string | null): Promise<void> {

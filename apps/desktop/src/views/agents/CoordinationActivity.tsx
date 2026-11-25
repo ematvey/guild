@@ -26,7 +26,7 @@ export function CoordinationActivity({ agent, onOpenChat }: { agent: Agent; onOp
 }
 
 function CoordinationPanel({ agent, onOpenChat }: { agent: Agent; onOpenChat?: (chatId: string) => void }) {
-  const { snapshot, error, retry } = useAgentCoordination(agent.id);
+  const snapshot = useAgentCoordination(agent.id);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -54,9 +54,7 @@ function CoordinationPanel({ agent, onOpenChat }: { agent: Agent; onOpenChat?: (
         )}
       </div>
       {actionError && <p role="alert">{actionError}</p>}
-      {!snapshot && (error
-        ? <p role="alert">{error} <button type="button" className="underline" onClick={retry}>Reload</button></p>
-        : <p role="status">Loading coordination…</p>)}
+      {!snapshot && <p role="status">Loading coordination…</p>}
       {snapshot?.outcomes.length === 0 && <p className="text-sm">No coordination activity yet.</p>}
       <ul className="max-h-80 divide-y overflow-y-auto text-sm">
         {snapshot?.outcomes.map((input) => (

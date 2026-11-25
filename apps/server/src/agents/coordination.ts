@@ -292,6 +292,7 @@ export class AgentCoordination {
       user_id: string;
       accepted_scope: string | null;
       attached_thread_id: string | null;
+      attached_request_id: string | null;
       content: string;
       accepted_agent_id: string;
       accepted_name: string | null;
@@ -327,7 +328,7 @@ export class AgentCoordination {
               "Stay within the accepted scope. Use hand_back if this follow-up falls outside it.\n\n" + work.content,
             failureCode: "attach_submit_failed",
             run: {
-              id: work.id,
+              id: work.attached_request_id ?? work.id,
               user_id: requester.id,
               parent_run_id: parent.id,
               delegate_agent_id: child.agent_id,

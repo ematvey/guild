@@ -233,20 +233,31 @@ export class AgentStateFeed {
     );
   }
 
-  coordination({ org_id: orgId, agent_id: agentId, user_id: ownerId }: OrgPayload, pool: PlatformPool): void {
+  async syncCoordination(pool: PlatformPool, orgId: string, userId: string, sink: SocketSink): Promise<void> {
+    const agentId = sink.coordinationAgent;
     if (agentId === null) return;
-    void this.chains.run(`coordination:${agentId}`, "guild_agent_coordination", async () => {
-      const viewers = await this.store.grants.visibleUserIds(agentId, this.ctx.hub.memberUsersOfOrg(orgId));
-      if (!viewers.length) return;
-      const users = await this.ctx.identity.getUsers(viewers);
-      await Promise.all(users.filter((user) => ownerId === null || user.id === ownerId || readsWholeOrg(user))
-        .map(async (user) => {
-          const snapshot = await coordinationSnapshot(pool, agentId, user.id, readsWholeOrg(user));
-          this.sendKeyed(user.id, `agent_coordination:${agentId}`, {
-            type: "agent_coordination", agent_id: agentId, snapshot,
-          });
-        }));
+    return this.chains.run(`coordination:${agentId}`, "sync_coordination", async () => {
+      const member = (await this.ctx.identity.getUsers([userId]))[0];
+      const viewers = member?.org_id === orgId ? await this.store.grants.visibleUserIds(agentId, [userId]) : [];
+      const snapshot = viewers.length === 0 || !member
+        ? { paused: false, outcomes: [] }
+        : await coordinationSnapshot(pool, agentId, userId, readsWholeOrg(member));
+      if (sink.coordinationAgent === agentId) {
+        sendChanged(sink, `agent_coordination:${agentId}`, { type: "agent_coordination", agent_id: agentId, snapshot });
+      }
     });
+  }
+
+  coordination({ org_id: orgId, agent_id: agentId, user_id: ownerId }: OrgPayload, pool: PlatformPool): Promise<void> {
+    if (agentId === null) return Promise.resolve();
+    const users = this.ctx.hub.memberUsersOfOrg(orgId).filter((id) =>
+      this.ctx.hub.memberSinksOfUser(id).some((sink) => sink.coordinationAgent === agentId),
+    );
+    return this.ctx.identity.getUsers(users).then((members) => Promise.all(members
+      .filter((user) => ownerId === null || user.id === ownerId || readsWholeOrg(user))
+      .flatMap((user) => this.ctx.hub.memberSinksOfUser(user.id)
+        .filter((sink) => sink.coordinationAgent === agentId)
+        .map((sink) => this.syncCoordination(pool, orgId, user.id, sink))))).then(() => {});
   }
 
   /** A new member socket's first paint: the member's agent list (their
