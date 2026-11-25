@@ -25,7 +25,7 @@ All tools only read. Crawl jobs are not exposed.
 
 Firecrawl runs with one shared org configuration (`org_secret`); no member identity is passed to it. Search queries and the URLs agents fetch are sent to your Firecrawl server, which then contacts the target sites and its search backend. Guild refuses to fetch or map private and internal addresses, so agents cannot use it to reach hosts on your network.
 
-Firecrawl provides the `web_search` and `web_fetch` traits: it can answer the shared web search and web fetch tools. When several providers are enabled, the org picks one for each.
+Firecrawl provides the `web_search` and `web_fetch` traits: its callable tools are `firecrawl_web_search` and `firecrawl_web_fetch`. When several providers are enabled, the org picks one for each.
 
 ## Troubleshooting
 

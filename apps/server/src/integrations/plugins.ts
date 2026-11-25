@@ -329,11 +329,10 @@ export async function resolveIntegrations(
   return out;
 }
 
-/** Trait tools take their Guild-provided name, description, and schema, and
- *  one integration answers each trait: the org's bound provider when it is
- *  among the resolved integrations, else the first one declaring it. The
- *  model never sees two tools with the same name; the losers keep their
- *  other tools. */
+/** One integration answers each trait: the org's bound provider when it is
+ *  among the resolved integrations, else the first one declaring it. Its
+ *  namespaced tool uses the Guild-provided description and schema. Other
+ *  providers keep their non-trait tools. */
 export function assignTraits(turns: IntegrationTurn[], bindings: TraitBindings = {}): void {
   const winner = new Map<string, string>();
   for (const turn of turns) {
@@ -355,7 +354,7 @@ export function assignTraits(turns: IntegrationTurn[], bindings: TraitBindings =
       }
       const spec = traitSpec(info.trait);
       if (spec === undefined || winner.get(info.trait) !== turn.slug) continue;
-      kept.push({ ...info, spec: { name: spec.name, description: spec.description, parameters: spec.parameters } });
+      kept.push({ ...info, spec: { name: info.spec.name, description: spec.description, parameters: spec.parameters } });
     }
     turn.tools = kept;
   }

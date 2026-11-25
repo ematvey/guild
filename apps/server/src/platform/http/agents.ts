@@ -219,8 +219,8 @@ async function traitToolCatalog(
   } catch {
     return [];
   }
-  // Only Trait tools join the built-in catalog: they are Guild's generic
-  // tools, whatever Integration serves them. An Integration's own tools
+  // Only Trait tools join the built-in catalog under their stable allowlist
+  // IDs, whichever Integration serves them. An Integration's own tools
   // reach an agent through its Integration list.
   const tools: {
     name: string;
@@ -232,11 +232,11 @@ async function traitToolCatalog(
   const seen = new Set(AGENT_TOOL_CATALOG.map((tool) => tool.name));
   for (const turn of turns) {
     for (const info of turn.tools) {
-      if (info.trait === undefined || seen.has(info.spec.name)) continue;
+      if (info.trait === undefined || seen.has(info.trait)) continue;
       if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
-      seen.add(info.spec.name);
+      seen.add(info.trait);
       tools.push({
-        name: info.spec.name,
+        name: info.trait,
         label: info.trait === "web_search" ? "Web search" : "Web fetch",
         group: "Web",
         description: info.spec.description,

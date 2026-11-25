@@ -398,7 +398,7 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
     });
   });
 
-  it("lists the policy-filtered tool catalog with schemas and classes — a trait tool carries the Guild-provided name", async () => {
+  it("lists the policy-filtered tool catalog with schemas and classes — a trait tool carries the selected provider’s prefix", async () => {
     const res = await call(
       "GET",
       "/api/v1/integrations/searxng/tools",
@@ -414,7 +414,7 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
       }[];
     };
     expect(body.tools).toHaveLength(1);
-    expect(body.tools[0]).toMatchObject({ name: "web_search", class: "read" });
+    expect(body.tools[0]).toMatchObject({ name: "searxng_web_search", class: "read" });
     expect(body.tools[0].description).toContain("Search the public web");
     expect(body.tools[0].parameters).toMatchObject({ required: ["query"] });
   });

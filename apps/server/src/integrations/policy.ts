@@ -104,7 +104,7 @@ export const TRAITS_ONLY: IntegrationScope = { traits: "all", integrations: new 
  *  Agent's list. */
 export function scopeCeiling(scope: IntegrationScope, slug: string, info: IntegrationToolInfo): ToolClass | null {
   if (info.trait !== undefined) {
-    const named = scope.traits === "all" || scope.traits.has(info.spec.name);
+    const named = scope.traits === "all" || scope.traits.has(info.trait);
     return named ? (isToolClass(info.class) ? info.class : "read") : null;
   }
   return scope.integrations.get(slug) ?? null;

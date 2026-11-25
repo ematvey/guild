@@ -381,7 +381,7 @@
   },
   {
    "id": "integration-trait",
-   "definition": "A capability (web search, web fetch) with one Guild-provided tool name, description, and argument schema; an integration supplies the implementation.",
+   "definition": "A capability (web search, web fetch) with a stable allowlist ID, description, and argument schema; its selected integration supplies the namespaced callable tool.",
    "canonical": "packages/integration-sdk/src/traits.ts",
    "types": [
     "TraitSpec"

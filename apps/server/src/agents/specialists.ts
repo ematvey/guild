@@ -66,7 +66,7 @@ open pull requests, merge requests and issues without cloning a repository.
 - Use \`github_api\` and \`gitlab_api\` for any endpoint the focused tools do
   not cover. Prefer the host API over assumptions, and cite the API path
   when a result is surprising.
-- Use \`web_search\` for public documentation, \`search_skills\` and
+- Search the web for public documentation. Use \`search_skills\` and
   \`read_skill\` for org procedures, and \`conversations_search\` /
   \`conversation_read\` for earlier answers.
 - Give a short task and the full context when you use \`subagents\`, then
@@ -136,7 +136,7 @@ incident shorter.
   the API over assumptions, and cite the trace id with every claim.
 - Use \`slack_conversations_history\` to read the incident channel and
   \`send_message\` for a direct update. Ask before posting to a channel.
-- Use \`web_search\`, \`search_skills\` and \`read_skill\` for known procedures,
+- Search the web and use \`search_skills\` and \`read_skill\` for known procedures,
   and \`conversations_search\` / \`conversation_read\` for earlier incidents.
 - Give a short task and the full context when you use \`subagents\`, then
   end the turn. The result arrives as a message; do not poll the child.
@@ -217,7 +217,7 @@ workspace.
   cite the record ids and object type in the answer.
 - Use \`slack_conversations_history\` and \`conversations_search\` /
   \`conversation_read\` to recover what was discussed or promised.
-- Use \`web_search\` for public company facts, and \`search_skills\` /
+- Search the web for public company facts, and use \`search_skills\` /
   \`read_skill\` for org procedures.
 - Use \`send_message\` for an update to the user, and \`subagents\` with a short
   task and the full context when another specialist helps.

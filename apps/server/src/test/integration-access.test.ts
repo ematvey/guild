@@ -202,7 +202,7 @@ describe("turn scope", () => {
   });
 
   it("a Trait tool follows the built-in allowlist, not the Integration list", () => {
-    const search = tool("web_search", "read", "web_search");
+    const search = tool("searxng_web_search", "read", "web_search");
     expect(offered(scope([]), search)).toBe(true);
     expect(offered(scope([], new Set(["read"])), search)).toBe(false);
     expect(offered(scope([], new Set(["web_search"])), search)).toBe(true);
