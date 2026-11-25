@@ -42,6 +42,9 @@
     "ActivityRunFrame": { "$ref": "#/$defs/ActivityRunFrame" },
     "ActivityRunUnavailableFrame": { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
     "ActivityConversationFrame": { "$ref": "#/$defs/ActivityConversationFrame" },
+    "AgentCoordination": { "$ref": "#/$defs/AgentCoordination" },
+    "CoordinationSnapshot": { "$ref": "#/$defs/CoordinationSnapshot" },
+    "CoordinationOutcome": { "$ref": "#/$defs/CoordinationOutcome" },
     "AgentThreads": { "$ref": "#/$defs/AgentThreads" },
     "AgentRoutines": { "$ref": "#/$defs/AgentRoutines" },
     "SkillCatalog": { "$ref": "#/$defs/SkillCatalog" },
@@ -104,6 +107,7 @@
         { "$ref": "#/$defs/ActivityRunUnavailableFrame" },
         { "$ref": "#/$defs/ActivityConversationFrame" },
         { "$ref": "#/$defs/AgentThreads" },
+        { "$ref": "#/$defs/AgentCoordination" },
         { "$ref": "#/$defs/AgentRoutines" },
         { "$ref": "#/$defs/SkillCatalog" },
         { "$ref": "#/$defs/AppList" },
@@ -539,6 +543,202 @@
         }
       }
     },
+    "AgentCoordination": {
+      "type": "object",
+      "required": [
+        "type",
+        "agent_id",
+        "snapshot"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "agent_coordination"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/CoordinationSnapshot"
+        }
+      }
+    },
+    "CoordinationSnapshot": {
+      "type": "object",
+      "required": [
+        "paused",
+        "outcomes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoordinationOutcome"
+          },
+          "maxItems": 100
+        },
+        "unavailable": { "type": "boolean" }
+      }
+    },
+    "CoordinationOutcome": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "source_name",
+        "source_key",
+        "created_at",
+        "delivered_at",
+        "reply_queued",
+        "reply_missing",
+        "reply_delivered_at",
+        "reply_failed_at",
+        "decision",
+        "decision_reason",
+        "matched_rule",
+        "accepted_scope",
+        "launched_run_id",
+        "launch_error",
+        "run_status",
+        "work_report_state",
+        "work_report_summary",
+        "work_report_question",
+        "source_chat_id",
+        "worker_chat_id",
+        "owned",
+        "retryable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "source_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "delivered_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reply_queued": {
+          "type": "boolean"
+        },
+        "reply_missing": {
+          "type": "boolean"
+        },
+        "reply_delivered_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reply_failed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "matched_rule": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accepted_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launched_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launch_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_report_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_report_summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_report_question": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_chat_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worker_chat_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owned": {
+          "type": "boolean"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
     "AgentThreads": {
       "description": "The caller's open user threads with one agent, newest activity first: the same page GET /api/v1/agents/:id/threads returns. Sent to the threads' owner when one of them changes.",
       "type": "object",
@@ -649,7 +849,8 @@
         "activity_chat_id": {
           "$ref": "#/$defs/Uuid",
           "description": "Optional. The Activity Conversation this socket is watching."
-        }
+        },
+        "coordination_agent_id": { "$ref": "#/$defs/Uuid" }
       }
     },
     "Read": {

@@ -46,7 +46,7 @@ const auth = (token: string): Record<string, string> => ({
 
 async function api<T>(
   token: string,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "PUT",
   url: string,
   payload?: Record<string, unknown>,
 ): Promise<T> {
@@ -137,6 +137,57 @@ async function insertRun(
 }
 
 describe("agent and skill state frames", () => {
+  it("pushes coordination outcomes to their owner and authorized admin, and broadcasts pause", {
+    timeout: TEST_TIMEOUT,
+  }, async () => {
+    const { token: otherToken } = await memberToken("coordination-viewer@example.com");
+    const { agent } = await api<{ agent: { id: string } }>(stack.memberToken, "POST", "/api/v1/agents", {
+      name: "Coordination activity", model: "GLM-Test-Model", visibility: "org",
+      resources: { assistant: { enabled: true, admission: { mode: "off", sources: ["project"] } } },
+    });
+    const [owner, admin, other, legacy] = await Promise.all(
+      [stack.memberToken, stack.adminToken, otherToken, stack.memberToken].map(memberSocket),
+    );
+    const root = `/api/v1/agents/${agent.id}`;
+    const belongs = (frame: Frame) => frame.type === "agent_coordination" && frame.agent_id === agent.id;
+    const outcomes = (frame: Frame) => (frame.snapshot as { outcomes: unknown[] }).outcomes;
+    try {
+      for (const socket of [owner, admin, other]) {
+        socket.send(JSON.stringify({ type: "sync", coordination_agent_id: agent.id }));
+        await expect(waitFrame(socket, belongs)).resolves.toMatchObject({ snapshot: { paused: false, outcomes: [] } });
+      }
+      const { input_id } = await api<{ input_id: string }>(stack.memberToken, "POST", root + "/sources/project/events", {
+        event_id: "activity-event", content: "Untrusted project update",
+      });
+      const hasOutcome = (frame: Frame) => belongs(frame) && outcomes(frame).length > 0;
+      await expect(waitFrame(owner, hasOutcome)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: true }] },
+      });
+      await expect(waitFrame(admin, hasOutcome)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, decision: "ignored", owned: false }] },
+      });
+      await expect(waitFrame(legacy, hasOutcome)).resolves.toMatchObject({
+        snapshot: { paused: false, outcomes: [{ id: input_id, owned: true }] },
+      });
+      expect(textFrames(other).some(hasOutcome)).toBe(false);
+      await api(stack.memberToken, "PUT", root + "/coordination/pause", { paused: true });
+      const paused = (f: Frame) => belongs(f) && (f.snapshot as { paused: boolean }).paused;
+      await expect(waitFrame(other, paused)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [] } });
+      await expect(waitFrame(owner, paused)).resolves.toMatchObject({ snapshot: { paused: true, outcomes: [{ id: input_id }] } });
+      await stack.env.db.query("UPDATE users SET role='member' WHERE id=$1", [stack.adminId]);
+      try {
+        await waitFrame(admin, (frame) => paused(frame) && outcomes(frame).length === 0);
+      } finally {
+        await stack.env.db.query("UPDATE users SET role='admin' WHERE id=$1", [stack.adminId]);
+      }
+    } finally {
+      owner.end();
+      admin.end();
+      other.end();
+      legacy.end();
+    }
+  });
+
   it("paints the agent list and skill catalog on connect, personal agent included", {
     timeout: TEST_TIMEOUT,
   }, async () => {

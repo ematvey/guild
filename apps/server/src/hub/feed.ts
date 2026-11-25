@@ -198,6 +198,7 @@ export class FeedForwarder implements GenerationStreamSink {
           this.track("resync_activity_run", sink.runView, this.agentState.syncRun(orgId, userId, sink, sink.runView, false));
         }
         if (sink.activityConversation !== null) activityChats.add(sink.activityConversation);
+        this.track("resync_coordination", userId, this.agentState.syncCoordination(this.ctx.pool, orgId, userId, sink));
         if (typeof sink.view !== "string") continue;
         this.markDirty(sink.view);
         this.subagentTree(sink.view);
@@ -280,6 +281,9 @@ export class FeedForwarder implements GenerationStreamSink {
     guild_agent_runs: (payload) => this.agentState.run(payload),
     guild_agent_routines: (payload) => this.agentState.routines(payload),
     guild_agent_threads: (payload) => this.agentState.threads(payload),
+    guild_agent_coordination: (payload) => this.track(
+      "guild_agent_coordination", payload.org_id, this.agentState.coordination(payload, this.ctx.pool),
+    ),
     guild_skills: (payload) => this.agentState.skills(payload),
     guild_apps: (payload) => this.agentState.apps(payload),
   };
@@ -330,6 +334,7 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   async syncActivity(user: UserRow, sink: SocketSink): Promise<void> {
+    await this.agentState.syncCoordination(this.ctx.pool, user.org_id, user.id, sink, true);
     if (sink.runView !== null) await this.agentState.syncRun(user.org_id, user.id, sink, sink.runView);
     if (sink.activityConversation !== null)
       await this.agentState.syncConversation(user, sink, sink.activityConversation);
@@ -709,7 +714,10 @@ export class FeedForwarder implements GenerationStreamSink {
       }
       if (machines !== null) sendChanged(sink, "machine_list", { type: "machine_list", machines });
       if (models !== null) sendChanged(sink, "model_list", { type: "model_list", models });
-      if (member !== null) sendChanged(sink, "member_profile", { type: "member_profile", user: member });
+      if (member !== null) {
+        sendChanged(sink, "member_profile", { type: "member_profile", user: member });
+        this.track("coordination_member_profile", userId, this.agentState.syncCoordination(this.ctx.pool, orgId, userId, sink));
+      }
     }
   }
 

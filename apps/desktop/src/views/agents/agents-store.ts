@@ -10,7 +10,7 @@
 
 import { useEffect } from "react";
 import type { ActivitySummary, Agent, AgentRoutine, AgentRun, AgentThread, TraceRow } from "./agents-api";
-import type { AttachableIntegration } from "@guild/wire/rest";
+import type { AttachableIntegration, CoordinationSnapshot } from "@guild/wire/rest";
 import type { ServerFrame } from "@guild/wire/types";
 import { listAgentRuns, listAgentThreads, listRoutines } from "./agents-api";
 import { registerSessionReset } from "../../lib/session-reset";
@@ -27,6 +27,7 @@ interface AgentState {
   runs: Record<string, AgentRun[]>;
   threads: Record<string, AgentThread[]>;
   routines: Record<string, AgentRoutine[]>;
+  coordination: Record<string, CoordinationSnapshot>;
   /** Why a slice's seed failed, by `slice:agentId`. */
   errors: Record<string, string>;
   /** Bumps on every reconnect and sign-out: the seeding hooks run again,
@@ -40,6 +41,7 @@ const EMPTY: AgentState = {
   runs: {},
   threads: {},
   routines: {},
+  coordination: {},
   errors: {},
   epoch: 0,
 };
@@ -102,7 +104,12 @@ export function upsertRun<T extends { id: string; created_at: string }>(rows: T[
 
 /** Replaces the agent list (the `agent_list` frame). */
 export function applyAgentList(agents: Agent[]): void {
-  agentStore.update((state) => ({ ...state, agents }));
+  const visible = new Set(agents.map((agent) => agent.id));
+  agentStore.update((state) => ({
+    ...state, agents, coordination: Object.fromEntries(
+      Object.entries(state.coordination).filter(([id]) => visible.has(id)),
+    ),
+  }));
 }
 
 /** Replaces the attachable Integrations (the `integration_access` frame). */
@@ -121,6 +128,24 @@ export function applyAgentRun(run: AgentRun): void {
     pendingRuns.set(run.agent_id, upsertRun(pendingRuns.get(run.agent_id) ?? [], run));
   }
   for (const listener of runListeners) listener(run);
+}
+
+export function applyAgentCoordination(frame: Extract<ServerFrame, { type: "agent_coordination" }>): void {
+  agentStore.update((state) => ({
+    ...state, coordination: { ...state.coordination, [frame.agent_id]: frame.snapshot },
+  }));
+}
+
+export function scrubAgentCoordination(): void {
+  agentStore.update((state) => ({
+    ...state, coordination: Object.fromEntries(Object.entries(state.coordination).map(([agentId, snapshot]) =>
+      [agentId, { ...snapshot, outcomes: snapshot.outcomes.filter((outcome) => outcome.owned) }],
+    )),
+  }));
+}
+
+export function useAgentCoordination(agentId: string): CoordinationSnapshot | undefined {
+  return agentStore.use((state) => state.coordination[agentId]);
 }
 
 /** Replaces one agent's thread list (the `agent_threads` frame). */
@@ -143,7 +168,7 @@ function dropSeeds(): void {
  *  connect push replaces it. */
 export function resetAgentSlices(): void {
   dropSeeds();
-  agentStore.update((state) => ({ ...state, runs: {}, threads: {}, routines: {}, errors: {}, epoch: ++epochCounter }));
+  agentStore.update((state) => ({ ...state, runs: {}, threads: {}, routines: {}, coordination: {}, errors: {}, epoch: ++epochCounter }));
 }
 
 /** Drops everything; sign-out runs it so one user's agents never reach

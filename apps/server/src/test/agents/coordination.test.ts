@@ -61,12 +61,15 @@ suite("persistent coordination", () => {
       resources: { assistant: { enabled: true, coordinator_model: "vision" } },
     });
     coordination = new AgentCoordination({
+      threads, maxDepth: 4, maxChildrenPerNode: 10,
+      identity: { getUser: async (id) => [alice, bob].find((user) => user.id === id)! },
       databaseUrl: env!.databaseUrl,
       routeSupportsImages: async (_orgId, model) => model === "vision",
       pool: env!.db,
       store,
       log: pino({ level: "silent" }),
       runtime: {
+        canStopChat: () => true,
         submitTurn: async (chat, _org, input) => {
           calls.push({
             kind: "wake",
@@ -244,12 +247,15 @@ suite("persistent coordination", () => {
       const reflectedChats: string[] = [];
       const runPass = () =>
         new AgentCoordination({
+          threads, maxDepth: 4, maxChildrenPerNode: 10,
+          identity: { getUser: async () => alice },
           databaseUrl: env!.databaseUrl,
           pool: single,
           store: ownerStore,
           routeSupportsImages: async () => false,
           log: pino({ level: "silent" }),
           runtime: {
+            canStopChat: () => true,
             submitTurn: async (chatId) => {
               await single.query("SELECT 1");
               reflectedChats.push(chatId);

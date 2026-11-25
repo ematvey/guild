@@ -106,6 +106,7 @@ export const NOTIFY_PARSERS = {
   guild_agent_runs: orgPayload,
   guild_agent_routines: orgPayload,
   guild_agent_threads: orgPayload,
+  guild_agent_coordination: orgPayload,
   guild_skills: orgPayload,
   /** An App was published, shared, unshared or deleted. */
   guild_apps: orgPayload,

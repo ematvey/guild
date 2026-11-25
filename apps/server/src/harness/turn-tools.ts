@@ -1,3 +1,4 @@
+import { acceptedWorkForThread } from "../agents/store/coordination.js";
 import { guardMemoryTool } from "../agents/conflict.js";
 // Per-turn tool provisioning: the org's enabled integrations, the chat
 // owner's MCP servers, the agent's conversation tools, and the machine and
@@ -117,6 +118,9 @@ export class TurnTools {
     const agentRef = await agentThreadForChat(deps.pool, chatId);
     const agent = agentRef === null ? null : await deps.agents.fetchAgent(agentRef.agent_id);
     const role = await coordinationRole(deps.pool, chatId);
+    const work = role?.source_input_id && agentRef
+      ? (await acceptedWorkForThread<{ accepted_scope: string }>(deps.pool, [agentRef.thread_id])).rows[0]
+      : undefined;
     const coordinationOnly = role?.execution_role === "coordinator" || role?.execution_role === "reflection";
     const prepared = coordinationOnly
       ? { extensions: [], tools: [] }
@@ -139,7 +143,7 @@ export class TurnTools {
       : directBaseTools(base.tools, agent);
     const coding = (tool: ToolRegistration): boolean => (CODING_TOOL_NAMES as readonly string[]).includes(tool.name);
     const baseTools = allowed.filter((tool) => !coding(tool));
-    const agentTools = role?.execution_role === "reflection" ? [] : await this.agentTools(chatId, conversationId);
+    const agentTools = role?.execution_role === "reflection" ? [] : await this.agentTools(chatId, conversationId, work !== undefined);
     // The file tools carry a per-call `machine` target; without it they act
     // on the conversation's own environment, the agent's workspace.
     const owner = await deps.chats.ownerOf(chatId);
@@ -189,6 +193,7 @@ export class TurnTools {
                   await deps.conversations.projectInstructions(chatId),
                   await this.machineContext(chatId),
                   chatId,
+                  work?.accepted_scope,
                 )),
             }),
       },
@@ -223,6 +228,7 @@ export class TurnTools {
     projectInstructions: string | undefined,
     machine: MachineContext | null,
     chatId: string,
+    acceptedScope?: string,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
@@ -237,13 +243,19 @@ export class TurnTools {
     const thread = (await this.deps.binding.threadContext(chatId)) ?? undefined;
     const canDelegate =
       spawnedBy === undefined ? agent.tools_mode === "all" || agent.tools.includes("subagents") : spawnedBy.can_spawn;
-    return composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
+    const instructions = composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
+    if (acceptedScope === undefined) return instructions;
+    return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
+      "\nStay within this scope. Use report_work to record progress or a result. " +
+      "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
+      "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
+
   }
 
   /** The conversation tools that exist only for agent threads: send_message,
    *  conversations_search and conversation_read, filtered by the agent's
    *  tool allowlist. Plain chats get none. */
-  private async agentTools(chatId: string, conversationId: number): Promise<ToolRegistration[]> {
+  private async agentTools(chatId: string, conversationId: number, acceptedWork: boolean): Promise<ToolRegistration[]> {
     const deps = this.deps;
     const ref = await agentThreadForChat(deps.pool, chatId);
     deps.log.debug({ chatId, agentId: ref?.agent_id ?? null }, "agent tools lookup");
@@ -305,6 +317,7 @@ export class TurnTools {
       userId: ref.user_id,
       identity: deps.identity,
       coordinatorManaged: role?.coordinator_managed === true,
+      acceptedWork,
       chatId,
       deliverMessage: (targetChatId, orgId, text, model) =>
         deps.turns.writeEntry(targetChatId, agentMessageEntry(orgId, model, text)),

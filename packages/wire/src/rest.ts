@@ -368,6 +368,39 @@ export interface AgentRun {
 }
 
 /** One of the caller's threads with an agent, with its chat's flags. */
+export interface CoordinationOutcome {
+  id: string;
+  kind: string;
+  source_name: string | null;
+  source_key: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  reply_queued: boolean;
+  reply_missing: boolean;
+  reply_delivered_at: string | null;
+  reply_failed_at: string | null;
+  decision: string | null;
+  decision_reason: string | null;
+  matched_rule: string | null;
+  accepted_scope: string | null;
+  launched_run_id: string | null;
+  launch_error: string | null;
+  run_status: string | null;
+  work_report_state: string | null;
+  work_report_summary: string | null;
+  work_report_question: string | null;
+  source_chat_id: string | null;
+  worker_chat_id: string | null;
+  owned: boolean;
+  retryable: boolean;
+}
+
+export interface CoordinationSnapshot {
+  unavailable?: boolean;
+  paused: boolean;
+  outcomes: CoordinationOutcome[];
+}
+
 export interface AgentThread {
   id: string;
   agent_id: string;

@@ -35,6 +35,8 @@ import {
   applyIntegrationAccess,
   applyAgentRoutines,
   applyAgentRun,
+  applyAgentCoordination,
+  scrubAgentCoordination,
   applyAgentThreads,
   resetAgentSlices,
 } from "../../agents/agents-store";
@@ -57,6 +59,7 @@ export interface MemberSocketDeps {
   /** The Activity Run selected by the URL. */
   runId: string | null;
   activityChatId: string | null;
+  coordinationAgentId?: string | null;
   /** The open chat no longer exists server-side. */
   recoverMissingChatRef: RefObject<() => void>;
 }
@@ -67,8 +70,8 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   const { signOut, thread, outgoing, recoverMissingChatRef } = deps;
   const { store, retireSendPending, openChatIdRef, onThreadStateApplied, applyChatTree, cancelPending } = thread;
   const { outgoingRef, observedUserIdsRef, settleOutgoing } = outgoing;
-  const activityRef = useRef({ runId: deps.runId, chatId: deps.activityChatId });
-  activityRef.current = { runId: deps.runId, chatId: deps.activityChatId };
+  const activityRef = useRef({ runId: deps.runId, chatId: deps.activityChatId, coordinationAgentId: deps.coordinationAgentId });
+  activityRef.current = { runId: deps.runId, chatId: deps.activityChatId, coordinationAgentId: deps.coordinationAgentId };
   const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
   // The newest event id whose read-marker POST already fired per chat:
@@ -206,8 +209,21 @@ export function useMemberSocket(deps: MemberSocketDeps) {
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
+    let coordinationAdmin: boolean | null = null;
+    const pendingCoordination = new Map<string, Parameters<typeof applyAgentCoordination>[0]>();
+    const applyCoordination = (frame: Parameters<typeof applyAgentCoordination>[0]) => {
+      if (coordinationAdmin === null) {
+        pendingCoordination.set(frame.agent_id, frame);
+        return;
+      }
+      applyAgentCoordination(coordinationAdmin ? frame : {
+        ...frame, snapshot: { ...frame.snapshot, outcomes: frame.snapshot.outcomes.filter((outcome) => outcome.owned) },
+      });
+    };
     const connection = startSocket({
       onConnect: () => {
+        coordinationAdmin = null;
+        pendingCoordination.clear();
         syncingChatsRef.current.clear();
         // A read frame sent just before the old socket died may never have
         // been processed: forget the guard so the reconnect sync re-sends it.
@@ -229,12 +245,19 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       },
       onMachineList: applyMachineList,
       onModelList: applyModelList,
-      onMemberProfile: applyMemberProfile,
+      onMemberProfile: (user) => {
+        coordinationAdmin = user.role === "admin";
+        if (!coordinationAdmin) scrubAgentCoordination();
+        applyMemberProfile(user);
+        for (const frame of pendingCoordination.values()) applyCoordination(frame);
+        pendingCoordination.clear();
+      },
       onAgentList: applyAgentList,
       onIntegrationAccess: applyIntegrationAccess,
       onAgentRun: applyAgentRun,
       onActivityRun: applyActivityRun,
       onActivityConversation: applyActivityConversation,
+      onAgentCoordination: applyCoordination,
       onAgentThreads: applyAgentThreads,
       onAgentRoutines: applyAgentRoutines,
       onSkillCatalog: (items, installs) => applySkillCatalog({ items, installs }),
@@ -342,6 +365,7 @@ export function useMemberSocket(deps: MemberSocketDeps) {
       getOpenChatId: () => openChatIdRef.current,
       getOpenRunId: () => activityRef.current.runId,
       getOpenActivityChatId: () => activityRef.current.chatId,
+      getOpenCoordinationAgentId: () => activityRef.current.coordinationAgentId ?? null,
     });
     socketRef.current = connection;
     return () => {

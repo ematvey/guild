@@ -39,6 +39,7 @@ const SERVER_TAG_NAMES = [
   "activity_run_unavailable",
   "activity_conversation",
   "agent_threads",
+  "agent_coordination",
   "agent_routines",
   "skill_catalog",
   "app_list",
