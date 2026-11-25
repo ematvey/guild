@@ -15,6 +15,7 @@ import { createSubagentTools, type SubagentsToolContext } from "./subagents.js";
 import { createSendFileTool, type SendFileContext } from "./send-file.js";
 import { readThreadTranscript, type ThreadReadResult } from "./thread-read.js";
 import { ALL_AGENT_TOOLS, MAX_AGENT_DESCRIPTION_CHARS, type Agent } from "./types.js";
+import { recordCoordinationWorkReport } from "./store/coordination.js";
 import { structured } from "../harness/tool-schema.js";
 
 const MAX_SEARCH_RESULTS = 20;
@@ -29,6 +30,7 @@ export interface AgentToolDeps {
   userId: string;
   identity: Pick<IdentityStore, "getUser">;
   coordinatorManaged: boolean;
+  acceptedWork?: boolean;
   /** The chat this turn runs in. A thread the agent opens records it as its
    *  origin, so the agent can read the run behind a delivered message. */
   chatId?: string;
@@ -283,6 +285,42 @@ export function createAgentTools(deps: AgentToolDeps): ToolRegistration[] {
       },
     }),
   ];
+
+  if (deps.acceptedWork && deps.subagents !== undefined) {
+    const worker = deps.subagents;
+    tools.push(
+      defineTool({
+        name: "report_work",
+        description:
+          "Record the state of the accepted work. Use blocked with one question when you need a Member decision, " +
+          "ready when the result is available, and waiting when you are waiting for an input or event.",
+        parameters: Type.Object({
+          state: Type.Union([
+            Type.Literal("progress"), Type.Literal("ready"), Type.Literal("waiting"),
+            Type.Literal("blocked"), Type.Literal("failed"),
+          ]),
+          summary: Type.String({ minLength: 1, maxLength: 2000 }),
+          question: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+        }),
+        replay: "safe",
+        callers: ["tools"],
+        execute: async ({ state, summary, question }) => {
+          const text = summary.trim();
+          if (text === "") return textErr("A report requires a summary");
+          if (question !== undefined && (state !== "blocked" || question.trim() === "")) {
+            return textErr("A question requires a blocked report");
+          }
+          const run = await worker.parentRun();
+          const saved = await recordCoordinationWorkReport(deps.pool, [
+            worker.threadId, run.id, state, text, question?.trim() ?? null,
+          ]);
+          return saved.rowCount === 1
+            ? { output: [{ type: "text", text: "Work report recorded." }] }
+            : textErr("No active Run for this accepted work");
+        },
+      }),
+    );
+  }
 
   if (allowed.has("send_message")) {
     tools.push(

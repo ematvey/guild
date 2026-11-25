@@ -229,6 +229,30 @@ export function settleCoordinationReply(db: Database, values: unknown[]) {
   );
 }
 
+export function acceptedWorkForThread<T extends QueryResultRow>(db: Database, values: unknown[]) {
+  return db.query<T>(
+    `SELECT i.id,i.accepted_scope FROM agent_threads t JOIN agent_coordination_inputs i ON i.id=t.source_input_id
+     JOIN agent_runs parent ON parent.id=i.accepted_parent_run_id
+     WHERE t.id=$1 AND t.coordinator_managed AND t.parent_thread_id=parent.thread_id
+       AND t.user_id=i.user_id AND t.agent_id=i.accepted_agent_id AND i.accepted_scope IS NOT NULL`,
+    values,
+  );
+}
+
+export function recordCoordinationWorkReport(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_runs r
+     SET work_report_state=$3, work_report_summary=$4, work_report_question=$5, work_reported_at=now()
+     FROM agent_threads t
+     JOIN agent_coordination_inputs i ON i.id=t.source_input_id
+     JOIN agent_runs parent ON parent.id=i.accepted_parent_run_id
+     WHERE t.id=$1 AND r.id=$2 AND r.thread_id=t.id AND r.status='running'
+       AND t.coordinator_managed AND t.user_id=i.user_id AND t.agent_id=i.accepted_agent_id
+       AND t.parent_thread_id=parent.thread_id AND i.accepted_scope IS NOT NULL`,
+    values,
+  );
+}
+
 export function isInternalChat<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(`SELECT 1 FROM chats WHERE id=$1 AND internal`, values);
 }
@@ -293,8 +317,12 @@ export function readIntegrationAgentScope<T extends QueryResultRow = QueryResult
 
 export function readWorkerOrigin<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
-    `SELECT i.id,i.user_id,i.source_thread_id,i.source_event_id,u.email,COALESCE(u.display_name,u.email) AS name
+    `SELECT i.id,i.user_id,i.source_thread_id,i.source_event_id,u.email,COALESCE(u.display_name,u.email) AS name,
+       CASE WHEN r.work_report_state IS NOT NULL THEN jsonb_build_object(
+         'state', r.work_report_state, 'summary', r.work_report_summary, 'question', r.work_report_question
+       ) END AS report
        FROM agent_threads t JOIN agent_coordination_inputs i ON i.id=t.source_input_id
+       LEFT JOIN agent_runs r ON r.thread_id=t.id AND r.id=$2
        JOIN users u ON u.id=i.user_id WHERE t.id=$1`,
     values,
   );

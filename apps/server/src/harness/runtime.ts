@@ -1172,7 +1172,8 @@ export class GuildRuntime {
         source_event_id: string | null;
         email: string;
         name: string;
-      }>(this.pool, [result.thread_id])
+        report: { state: string; summary: string; question: string | null } | null;
+      }>(this.pool, [result.thread_id, result.run_id])
     ).rows[0];
     await this.submitTurn(chatId, orgId, {
       orgId,

@@ -485,20 +485,35 @@ describe("configured coordinator conversation", () => {
         code: `await tools.accept_work(${JSON.stringify(accepted)}); return await tools.accept_work(${JSON.stringify({ ...accepted, task: "Duplicate scope" })});`,
       }) },
       { body: final("Internal acceptance notes.") },
-      { body: final("Worker review finished.") },
     ]);
     await app.platform.coordination.tick();
+    await waitFor(async () => (await stack.env.db.query(
+      `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.accepted_parent_run_id
+       WHERE i.id=$1 AND r.finished_at IS NOT NULL`,
+      [inputId],
+    )).rowCount === 1, 10000);
+    stack.mock.setResponses([
+      { body: call("codemode", { code: 'return await tools.report_work({state:"blocked",summary:"Need project access",question:"Can you grant access?"});' }) },
+      { body: final("Worker review is blocked.") },
+      { body: final("Internal child report.") },
+    ]);
     await waitFor(async () => {
       await app.platform.coordination.tick();
       return (await stack.env.db.query(
-        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND launched_run_id IS NOT NULL AND reply_delivered_at IS NOT NULL",
+        `SELECT 1 FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id
+         WHERE i.id=$1 AND i.reply_delivered_at IS NOT NULL AND r.work_report_state='blocked'`,
         [inputId],
       )).rowCount === 1;
     }, 20000);
     const acceptance = await stack.env.db.query(
-      "SELECT accepted_scope, launched_run_id FROM agent_coordination_inputs WHERE id=$1", [inputId],
+      `SELECT i.accepted_scope,i.launched_run_id,r.id AS work_report_run_id,r.work_report_question
+       FROM agent_coordination_inputs i JOIN agent_runs r ON r.id=i.launched_run_id WHERE i.id=$1`, [inputId],
     );
-    expect(acceptance.rows[0]?.accepted_scope).toBe(accepted.task);
+    expect(acceptance.rows[0]).toMatchObject({
+      accepted_scope: accepted.task,
+      work_report_run_id: acceptance.rows[0]?.launched_run_id,
+      work_report_question: "Can you grant access?",
+    });
     const children = await stack.env.db.query(
       "SELECT r.id FROM agent_runs r JOIN agent_threads t ON t.id=r.thread_id WHERE t.source_input_id=$1", [inputId],
     );
@@ -507,6 +522,10 @@ describe("configured coordinator conversation", () => {
       "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%review the project%'",
       [inbox.chat_id],
     )).rowCount === 1, 10000);
+    await waitFor(() => stack.mock.requests.some(({ body }) => {
+      const request = JSON.stringify(body);
+      return request.includes("<worker_origin>") && request.includes("Can you grant access?");
+    }), 10000);
   }, 30000);
 
 });
