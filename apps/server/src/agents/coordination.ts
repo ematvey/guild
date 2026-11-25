@@ -3,6 +3,8 @@ import {
   retryCoordinationInput,
   claimCoordinationInputs,
   deliverCoordinationInput,
+  claimCoordinationReplies,
+  settleCoordinationReply,
   initializeCoordinationState,
   listCoordinators,
   readCoordinationState,
@@ -16,10 +18,14 @@ import {
 } from "./store/coordination.js";
 // One Agent's persistent coordination: durable attributed inputs, passive
 // observations, timed wakes and background memory/context maintenance.
+import { agentMessageEntry } from "../chats/agent-message.js";
+import { uuidv5 } from "../platform/time.js";
 import { memberMessageEntry } from "../chats/member-message.js";
 import { mediaPartsFor } from "../chats/turn-text.js";
 import type { MessageAttachment } from "../platform/domain/thread-events.js";
 import type { EntryDraft } from "@earendil-works/pi-durable";
+import { ApiError } from "../platform/errors.js";
+import type { IdentityStore } from "../platform/store/identity.js";
 import type { PlatformPool } from "../platform/db.js";
 import { withPlatformSession, withTransaction } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
@@ -86,7 +92,7 @@ export interface CoordinationInput {
 export function coordinationPreamble(input: CoordinationInput): string {
   const delivery =
     input.kind === "request"
-      ? `\n\n<inbox_delivery>Send your visible reply now by calling send_message with input_id ${input.id}. If you need to delegate, send the Member a short acknowledgment before spawning. Final assistant text is private.</inbox_delivery>`
+      ? `\n\n<inbox_delivery>Send your visible reply now by calling reply with input_id ${input.id}. If you need to delegate, send the Member a short acknowledgment before spawning. Final assistant text is private.</inbox_delivery>`
       : "";
   return `<coordination_input>\n${JSON.stringify({
     input_id: input.id,
@@ -154,6 +160,7 @@ export class AgentCoordination {
       databaseUrl: string;
       pool: PlatformPool;
       store: AgentStore;
+      identity: Pick<IdentityStore, "getUser">;
       runtime: Pick<GuildRuntime, "submitTurn" | "writeEntry" | "compactChat" | "stopChat">;
       routeSupportsImages(orgId: string, model: string): Promise<boolean>;
       log: Logger;
@@ -185,6 +192,7 @@ export class AgentCoordination {
           await retryCoordinationInput(this.deps.pool, [input.id]);
         }
       }
+      await this.deliverReplies();
       if (Date.now() >= this.maintainAfter) {
         this.maintainAfter = Date.now() + 5000;
         await this.maintain();
@@ -193,6 +201,44 @@ export class AgentCoordination {
       this.deps.log.warn({ err: error }, "coordination pass failed");
     } finally {
       this.ticking = false;
+    }
+  }
+
+  private async deliverReplies(): Promise<void> {
+    const { pool, store, runtime, log, identity } = this.deps;
+    const { rows } = await claimCoordinationReplies<{
+      id: string;
+      agent_id: string;
+      user_id: string;
+      source_thread_id: string | null;
+      reply_text: string;
+    }>(pool);
+    for (const reply of rows) {
+      try {
+        const thread = reply.source_thread_id === null ? null : await store.threads.threadById(reply.source_thread_id);
+        if (
+          thread === null ||
+          thread.user_id !== reply.user_id ||
+          thread.agent_id !== reply.agent_id ||
+          (await coordinationRole(pool, thread.chat_id))?.execution_role !== "inbox"
+        ) {
+          await settleCoordinationReply(pool, [reply.id, false]);
+          continue;
+        }
+        const member = await identity.getUser(reply.user_id);
+        const { agent } = await store.requireAccess(member, reply.agent_id, "use");
+        await runtime.writeEntry(thread.chat_id, {
+          ...agentMessageEntry(agent.org_id, agent.model, reply.reply_text),
+          data: { request_id: uuidv5(agent.id, `request-reply:${reply.id}`) },
+        });
+        await settleCoordinationReply(pool, [reply.id, true]);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          await settleCoordinationReply(pool, [reply.id, false]);
+        } else {
+          log.warn({ err: error, inputId: reply.id }, "coordination reply deferred");
+        }
+      }
     }
   }
 

@@ -61,6 +61,7 @@ suite("persistent coordination", () => {
       resources: { assistant: { enabled: true, coordinator_model: "vision" } },
     });
     coordination = new AgentCoordination({
+      identity: { getUser: async (id) => [alice, bob].find((user) => user.id === id)! },
       databaseUrl: env!.databaseUrl,
       routeSupportsImages: async (_orgId, model) => model === "vision",
       pool: env!.db,
@@ -244,6 +245,7 @@ suite("persistent coordination", () => {
       const reflectedChats: string[] = [];
       const runPass = () =>
         new AgentCoordination({
+          identity: { getUser: async () => alice },
           databaseUrl: env!.databaseUrl,
           pool: single,
           store: ownerStore,

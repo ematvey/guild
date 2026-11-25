@@ -1,5 +1,6 @@
 import {
   readCoordinationSource,
+  queueCoordinationReply,
   isInternalChat,
   insertCoordinatorWake,
   listCoordinatorWakes,
@@ -153,6 +154,26 @@ export function coordinatorTools(deps: {
       },
     ),
     tool(
+      "reply",
+      "Reply to a direct request in the active Turn. Guild delivers the text to the originating Assistant inbox.",
+      { input_id: str, text: str },
+      ["input_id", "text"],
+      async (args, _callId, api, context) => {
+        const origin = await source(args["input_id"]);
+        const active = (await api.snapshot(LiveDoc, api.conversationId, context))?.run;
+        const requests = await inputRequestIds(pool, active?.inputs.map(Number) ?? []);
+        if (origin.kind !== "request" || origin.source_thread_id === null || !requests.includes(origin.id)) {
+          throw new Error("Replies require a direct request from the active Turn");
+        }
+        const member = await deps.identity.getUser(origin.user_id);
+        await store.requireAccess(member, agent.id, "use");
+        const text = String(args["text"]).trim();
+        if (text === "") throw new Error("Reply text must not be empty");
+        const result = await queueCoordinationReply(pool, [origin.id, agent.id, text]);
+        return { input_id: origin.id, queued: result.rowCount === 1, reused: result.rowCount === 0 };
+      },
+    ),
+    tool(
       "send_message",
       "Explicitly send a short reply to the user and thread identified by input_id. Optional thread_id must belong to that user and this Agent. Surface a task with surface_thread_id.",
       { input_id: str, text: str, thread_id: str, surface_thread_id: str },
@@ -280,8 +301,8 @@ export function coordinatorTools(deps: {
 export function coordinatorInstructions(agent: Agent): string {
   return `<coordinator>\nYou maintain the one persistent coordinator conversation for ${agent.name}.
 Your context and Workspace are shared Agent knowledge. Inputs identify their originating member, thread and causal reference.
-For every coordination input with kind "request", send the Member a reply as your first action. Call codemode with JavaScript of the form \`return await tools.send_message({ input_id: "the current input ID", text: "your reply" });\`. Copy input_id from that request's coordination_input block so the reply reaches its source Thread.
-For greetings and questions you can answer immediately, put the answer itself in text and finish after the tool confirms delivery. For work you need to delegate, send a short acknowledgment first. Your final text stays in the internal coordinator Thread.
+For every coordination input with kind "request", send the Member a reply as your first action. Call codemode with JavaScript of the form \`return await tools.reply({ input_id: "the current input ID", text: "your reply" });\`. Copy input_id from that request's coordination_input block so the reply reaches its source Thread.
+For greetings and questions you can answer immediately, put the answer itself in text and finish after the tool queues the reply. For work you need to delegate, queue a short acknowledgment first. Use send_message for later updates. Your final text stays in the internal coordinator Thread.
 Keep member-facing replies short. Follow the Member's reporting instructions for background results, which may need no message.
 Delegate substantive work with spawn; omit agent for a general worker. Integrations, external research and Machine work belong to workers.
 Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll. Trust workers to verify their substantive work; do not repeat it yourself.

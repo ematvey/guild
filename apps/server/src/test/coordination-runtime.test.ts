@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { waitFor } from "./support/wait.js";
 
@@ -227,22 +227,45 @@ describe("configured coordinator conversation", () => {
     stack.mock.setResponses([
       {
         body: call("codemode", {
-          code: `return await tools.send_message(${JSON.stringify({ input_id: input.id, text: "I’ll check the project and report only problems." })});`,
+          code: `await tools.reply(${JSON.stringify({ input_id: input.id, text: "I’ll check the project and report only problems." })}); return await tools.reply(${JSON.stringify({ input_id: input.id, text: "Duplicate direct reply" })});`,
         }),
       },
       { body: final("INTERNAL ONLY") },
     ]);
+    const writeEntry = app.platform.runtime.writeEntry.bind(app.platform.runtime);
+    const lostReceipt = vi.spyOn(app.platform.runtime, "writeEntry").mockImplementationOnce(async (chatId, entry) => {
+      await writeEntry(chatId, entry);
+      throw new Error("lost reply receipt");
+    });
+    try {
+      await app.platform.coordination.tick();
+      await waitFor(async () => {
+        await app.platform.coordination.tick();
+        return lostReceipt.mock.calls.length === 1;
+      }, 20000);
+      expect(
+        (await stack.env.db.query(
+          "SELECT reply_delivered_at FROM agent_coordination_inputs WHERE id=$1",
+          [input.id],
+        )).rows[0]?.reply_delivered_at,
+      ).toBeNull();
+    } finally {
+      lostReceipt.mockRestore();
+    }
+    await stack.env.db.query("UPDATE agent_coordination_inputs SET reply_due_at=now() WHERE id=$1", [input.id]);
     await app.platform.coordination.tick();
-    await waitFor(
-      async () =>
-        (
-          await stack.env.db.query(
-            "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
-            [inbox.chat_id],
-          )
-        ).rowCount! > 0,
-      20000,
-    );
+    expect(
+      (await stack.env.db.query(
+        "SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND reply_delivered_at IS NOT NULL AND reply_text IS NULL",
+        [input.id],
+      )).rowCount,
+    ).toBe(1);
+    expect(
+      (await stack.env.db.query(
+        "SELECT 1 FROM thread_events WHERE chat_id=$1 AND type='assistant_message' AND payload::text LIKE '%report only problems%'",
+        [inbox.chat_id],
+      )).rowCount,
+    ).toBe(1);
     await waitFor(
       async () =>
         (
@@ -279,25 +302,24 @@ describe("configured coordinator conversation", () => {
     stack.mock.setResponses([
       {
         body: call("codemode", {
-          code: `return await tools.send_message(${JSON.stringify({ input_id: next.id, text: "Second acknowledgment delivered." })});`,
+          code: `return await tools.reply(${JSON.stringify({ input_id: next.id, text: "Second acknowledgment delivered." })});`,
         }),
       },
       { body: final("INTERNAL ONLY") },
     ]);
     await app.platform.coordination.tick();
-    await waitFor(
-      async () =>
-        (
-          await stack.env.db.query(
-            "SELECT 1 FROM thread_events WHERE chat_id=$1 AND payload::text LIKE '%Second acknowledgment delivered%'",
-            [inbox.chat_id],
-          )
-        ).rowCount! > 0,
-      20000,
-    );
+    await waitFor(async () => {
+      await app.platform.coordination.tick();
+      return (
+        await stack.env.db.query("SELECT 1 FROM agent_coordination_inputs WHERE id=$1 AND reply_delivered_at IS NOT NULL", [next.id])
+      ).rowCount === 1;
+    }, 20000);
     const rows = await stack.env.db.query<{ payload: unknown }>("SELECT payload FROM thread_events WHERE chat_id=$1", [
       inbox.chat_id,
     ]);
+    expect(JSON.stringify(rows.rows)).toContain("report only problems");
+    expect(JSON.stringify(rows.rows)).toContain("Second acknowledgment delivered.");
+    expect(JSON.stringify(rows.rows)).not.toContain("Duplicate direct reply");
     expect(JSON.stringify(rows.rows)).not.toContain("INTERNAL ONLY");
     const visibleRequest = await stack.env.db.query(
       "SELECT id FROM thread_events WHERE chat_id=$1 AND type='user_message' AND payload->>'content'=$2",

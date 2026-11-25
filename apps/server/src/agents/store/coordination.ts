@@ -152,6 +152,38 @@ export function readCoordinationSource<T extends QueryResultRow = QueryResultRow
   );
 }
 
+export function queueCoordinationReply(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs SET reply_text=$3, reply_due_at=now()
+     WHERE id=$1 AND agent_id=$2 AND kind='request' AND source_thread_id IS NOT NULL
+       AND reply_due_at IS NULL`,
+    values,
+  );
+}
+
+export function claimCoordinationReplies<T extends QueryResultRow>(db: Database) {
+  return db.query<T>(
+    `WITH due AS (
+       SELECT id FROM agent_coordination_inputs
+       WHERE reply_due_at <= now() AND reply_delivered_at IS NULL AND reply_failed_at IS NULL
+       ORDER BY reply_due_at,seq LIMIT 16 FOR UPDATE SKIP LOCKED
+     )
+     UPDATE agent_coordination_inputs i SET reply_due_at=now()+interval '30 seconds'
+     FROM due WHERE i.id=due.id
+     RETURNING i.id,i.agent_id,i.user_id,i.source_thread_id,i.reply_text`,
+  );
+}
+
+export function settleCoordinationReply(db: Database, values: unknown[]) {
+  return db.query(
+    `UPDATE agent_coordination_inputs
+     SET reply_text=NULL, reply_delivered_at=CASE WHEN $2::boolean THEN now() END,
+         reply_failed_at=CASE WHEN NOT $2::boolean THEN now() END
+     WHERE id=$1 AND reply_delivered_at IS NULL AND reply_failed_at IS NULL`,
+    values,
+  );
+}
+
 export function isInternalChat<T extends QueryResultRow = QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(`SELECT 1 FROM chats WHERE id=$1 AND internal`, values);
 }
