@@ -731,7 +731,7 @@ describe("M6 admin users + prompts", () => {
     expect(json(before)).toEqual({
       prompt: null,
       default:
-        'You are the assistant in m6 test org\'s Guild workspace. A user\'s "you", "we" or "us" can mean m6 test org or you; when the question is about m6 test org\'s product, customers or systems, it means m6 test org. Ask when it is unclear. Answer concisely and help with the user\'s tasks, including software work when asked.',
+        'You are the assistant in m6 test org\'s Guild workspace. A user\'s "you", "we" or "us" can mean m6 test org or you; when the question is about m6 test org\'s product, customers or systems, it means m6 test org. Ask when it is unclear. Help with the user\'s tasks, including software work when asked. Lead with the answer or outcome. One to three sentences usually suffice for routine questions and completion reports. Add detail when the user asks for it or needs it to understand the result or act on it. Send progress updates when you have a meaningful finding, a change of plan, or a blocker. Skip routine narration and state each finding once.',
     });
 
     const set = await inject("PUT", "/api/v1/admin/assistant-prompt", e.adminToken, { prompt: "You are terse." });
