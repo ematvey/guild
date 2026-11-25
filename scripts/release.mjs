@@ -593,52 +593,6 @@ async function prunePreviews(apply) {
   else prune();
 }
 
-async function deployPreview(directory, installation = "dev") {
-  const meta = json(path.join(path.resolve(directory), "release.json"));
-  assert(
-    PREVIEW.test(meta.version) && meta.commit === git("rev-parse", "HEAD"),
-    "deploy the preview built from this committed checkout",
-  );
-  await pinRelease(meta.repository, installation, meta.tag, true);
-  const compose = path.join(ROOT, "deploy/compose");
-  const envFile = path.join(compose, ".env");
-  const contents = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
-  writeFileSync(
-    envFile,
-    `${contents
-      .split("\n")
-      .filter((line) => !line.startsWith("GUILD_BUILD_VERSION="))
-      .join("\n")
-      .trimEnd()}\nGUILD_BUILD_VERSION=${meta.version}\n`,
-  );
-  run("docker", ["compose", "build", "server"], { cwd: compose, stdio: "inherit" });
-  run("docker", ["compose", "up", "-d", "server"], { cwd: compose, stdio: "inherit" });
-  for (let attempt = 0; attempt < 60; attempt++) {
-    try {
-      run(
-        "docker",
-        [
-          "compose",
-          "exec",
-          "-T",
-          "server",
-          "node",
-          "-e",
-          'fetch("http://127.0.0.1:8080/api/v1/health").then(r=>r.json()).then(h=>{if(h.version!==process.argv[1])process.exit(1)}).catch(()=>process.exit(1))',
-          meta.version,
-        ],
-        { cwd: compose, stdio: "pipe" },
-      );
-      await pinRelease(meta.repository, installation, meta.tag);
-      await unpinRelease(meta.repository, installation, true);
-      return;
-    } catch (error) {
-      if (attempt === 59) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
-}
-
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   switch (command) {
@@ -714,12 +668,9 @@ async function main() {
     case "configure":
       configure();
       return;
-    case "deploy-preview":
-      await deployPreview(args[0], args[1]);
-      return;
     default:
       console.log(
-        "Usage: node scripts/release.mjs configure | version | preview [build-number] | deploy-preview <directory> [installation] | pin <installation> <tag> | unpin <installation> [--pending] | prune [--apply] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
+        "Usage: node scripts/release.mjs configure | version | preview [build-number] | pin <installation> <tag> | unpin <installation> [--pending] | prune [--apply] | publish <directory> | collect <input> <output> <version> | assemble <directory> <version> <repository> <commit> | check-policy <base> <head> <master> <branch>\nPUBLISH=1 publishes a local preview. Stable publication runs only in the master Release clients workflow.",
       );
   }
 }

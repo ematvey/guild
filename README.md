@@ -33,15 +33,15 @@ records live on your own server. No vendor sees them.
 
 ## Start here
 
-Deploy the server with Docker Compose:
+Deploy the server on Kubernetes with the Helm chart in
+[`deploy/kubernetes`](deploy/kubernetes/README.md): build the server image,
+load it into the cluster, then `helm upgrade --install guild` with your
+values. `deploy/kubernetes/README.md` is the full procedure.
 
 ```bash
-cd deploy/compose
-cp config.env.example config.env
-# set a real master key: openssl rand -hex 32
-# set a real jwt secret:  openssl rand -hex 32
-docker compose up -d --build
-curl -s localhost:8080/api/v1/health     # {"status":"ok"}
+docker build -f Dockerfile.server-ts -t guild-server-ts:<commit> .
+# load the image into the cluster, then install or upgrade the chart
+curl -s https://guild.example.com/api/v1/health     # {"status":"ok"}
 ```
 
 Create the first admin, then add a provider key and a model route:
@@ -98,7 +98,7 @@ The code lives in these places:
 | `packages/genui` | Generated UI component library |
 | `packages/integration-sdk` | Integration plugin contract and CLI |
 | `protocol` | Wire schemas, fixtures and the compatibility check |
-| `deploy/compose` | Docker Compose bundle |
+| `deploy/kubernetes` | Helm chart and cluster manifests |
 
 ## Documentation
 

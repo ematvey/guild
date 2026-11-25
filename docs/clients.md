@@ -119,7 +119,7 @@ Precedence order:
    VITE_DEFAULT_SERVER_URL=https://guild.example.com npm run build
    ```
    (then run the packaging script — the value is inside the shipped binary).
-3. Fallback: `http://localhost:18080`.
+3. Fallback: the installation's public host.
 
 The field stays editable, so any URL can always be typed at login.
 
@@ -216,14 +216,11 @@ CI builds use a generic client: the server address is editable at pairing, and
 the stored paired server controls updates. The same artifacts can serve several
 stacks. Signing and packaging do not publish to a Guild database.
 
-Deploy the matching dev server from the same source commit and artifact directory:
-
-```bash
-node scripts/release.mjs deploy-preview /tmp/guild-releases/0.6.127-dev.42 dev
-```
-
-This records the preview version in the stack’s ignored Compose `.env`, rebuilds the server image with that version, and starts it. The committed version files stay stable. After the server reports the stamped
-version, deployment pins that release for the named installation.
+Deploy the matching server from the same source commit: build the server
+image with `--build-arg GUILD_BUILD_VERSION=<preview version>` and roll the
+installation (`docs/deploy-nuances.md` §1). The committed version files stay
+stable. Once the server reports the stamped version, approve the release on
+that installation.
 
 ### Approving a release on a server
 
@@ -404,9 +401,9 @@ meaning.
 
 ### 8.4 iOS constraints that change the deployment, not the client
 
-- **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The dev
-  and prod stacks serve `http://…:18080` / `:18081`; an iOS client needs a
-  public hostname with a valid certificate in front of them.
+- **HTTPS is mandatory.** App Transport Security blocks plain HTTP. The
+  cluster serves the public host over HTTPS through the tunnel; an iOS client
+  needs that certificate to stay valid.
 - **No iOS build on the Linux host.** `tauri ios build` needs Xcode,
   CocoaPods, and a provisioning profile. The whole release story in §4 is
   "no Mac required" — that stops at iOS. A Mac or a cloud Mac is a new

@@ -1,30 +1,36 @@
 # Deploy — Guild server
 
-Server-side stack: the TS server (`apps/server`, Dockerfile.server-ts),
-host Postgres, ClickHouse, MinIO.
+Server-side installation: the TS server (`apps/server`, Dockerfile.server-ts)
+on Kubernetes, with host Postgres, ClickHouse and S3-compatible storage.
 
-## Run
+The chart and the install procedure live in
+[`kubernetes/README.md`](kubernetes/README.md). This page is the short
+version: image, rollout, bootstrap, client publication.
+
+## Build and roll
 
 ```bash
-cd deploy/compose
-cp config.env.example config.env
-# set a real master key: openssl rand -hex 32
-# set a real jwt secret:  openssl rand -hex 32
-docker compose up -d --build
+docker build -f Dockerfile.server-ts \
+  --build-arg GUILD_BUILD_VERSION=<version> \
+  -t guild-server-ts:<commit> .
+docker save guild-server-ts:<commit> | sudo k3s ctr images import -
+kubectl -n guild-dev set image deploy/guild server=guild-server-ts:<commit>
+kubectl -n guild-dev rollout status deploy/guild --timeout=10m
 ```
 
-Health check: `curl -s localhost:8080/api/v1/health` → `{"status":"ok"}`.
+Health check: `curl -s -H 'Host: <public host>' http://127.0.0.1:30080/api/v1/health`
+→ `{"status":"ok","version":"..."}`. The image serves the web frontend; a
+local `vite build` never reaches it (`docs/deploy-nuances.md` §2).
 
 ## Publish desktop clients
 
-The compose build serves the web frontend but does not build or publish desktop
-installers. After a new deployment, run the client release separately for the
-version in `apps/desktop/src-tauri/tauri.conf.json`. Set the public server URL
-so a fresh install opens with this deployment selected:
+The server build does not build or publish desktop installers. After a new
+deployment, run the client release separately for the version in
+`apps/desktop/src-tauri/tauri.conf.json`. Set the public server URL so a
+fresh install opens with this deployment selected:
 
 ```bash
-cd ../..
-BASE=http://localhost:8080 \
+BASE=https://guild.example.com \
 TOKEN=<admin-session-token> \
 VERSION=<desktop-version> \
 VITE_DEFAULT_SERVER_URL=https://guild.example.com \
@@ -39,7 +45,7 @@ See `docs/clients.md` for toolchain requirements and signing details.
 ## First-run bootstrap
 
 ```bash
-curl -s -X POST localhost:8080/api/v1/auth/bootstrap \
+curl -s -X POST https://guild.example.com/api/v1/auth/bootstrap \
   -H 'content-type: application/json' \
   -d '{"email":"admin@example.org","password":"<password>"}'
 ```
@@ -49,11 +55,11 @@ model routes with the admin API:
 
 ```bash
 TOKEN=...  # from login
-curl -s -X POST localhost:8080/api/v1/admin/gateway/keys \
+curl -s -X POST https://guild.example.com/api/v1/admin/gateway/keys \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"provider":"openai","base_url":"https://api.openai.com","key":"sk-..."}'
 
-curl -s -X PUT localhost:8080/api/v1/admin/gateway/routes \
+curl -s -X PUT https://guild.example.com/api/v1/admin/gateway/routes \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"model":"gpt-4o-mini","provider":"openai","enabled":true,"price_in":0.15,"price_out":0.6}'
 ```
@@ -74,18 +80,13 @@ Routines — runs on a schedule — are documented in `docs/api.md`.
 ## Headless client smoke test
 
 ```bash
-cargo run -p guild-app-server -- login --url http://localhost:8080 \
+cargo run -p guild-app-server -- login --url https://guild.example.com \
   --email admin@example.org --password '<password>'
 cargo run -p guild-app-server -- chat --model gpt-4o-mini "hello"
 ```
 
-## Ports
-
-`GUILD_HTTP_PORT` (default 8080) overrides the published host port if it is
-taken.
-
 ## Teardown
 
 ```bash
-docker compose down -v
+helm -n guild-dev uninstall guild
 ```

@@ -17,8 +17,7 @@ tsconfig.tsbuildinfo
 
 .fixer-prompt.md
 FIX-REPORT.md
-deploy/compose/config.env.bak*
-deploy/compose/.env.bak*
+test.env
 .worktrees/
 
 
