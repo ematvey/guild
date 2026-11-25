@@ -15,6 +15,8 @@ import slack from "./slack/integration.js";
 import github from "./github/integration.js";
 import gitlab from "./gitlab/integration.js";
 import stripe from "./stripe/integration.js";
+import clickhouse from "./guild_clickhouse_mcp/integration.js";
+import postgres from "./guild_postgres_dbhub/integration.js";
 import type { GuildPlugin } from "@guild/integration-sdk";
 
 export const PLUGINS: GuildPlugin[] = [
@@ -30,4 +32,6 @@ export const PLUGINS: GuildPlugin[] = [
   github,
   gitlab,
   stripe,
+  clickhouse,
+  postgres,
 ];
