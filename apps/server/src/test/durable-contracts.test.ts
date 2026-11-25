@@ -695,79 +695,111 @@ describe("durable integration contracts", () => {
     15_000,
   );
 
-  it.each(["managed", "routine"])("rejects unattended %s work without creating a human approval", async (kind) => {
-    const id = await chat();
-    const agentId = crypto.randomUUID();
-    await stack.env.db.query(
-      "INSERT INTO agents(id,org_id,owner_user_id,name,model) VALUES($1,$2,$3,'Unattended test','faux-1')",
-      [agentId, stack.orgId, stack.memberId],
-    );
-    await stack.env.db.query(
-      "INSERT INTO agent_threads(id,agent_id,user_id,chat_id,title,type,coordinator_managed) VALUES($1,$2,$3,$4,'Unattended test',$5,$6)",
-      [
-        crypto.randomUUID(),
-        agentId,
-        stack.memberId,
-        id,
-        kind === "routine" ? "routine" : "subagent",
-        kind === "managed",
-      ],
-    );
-    let executions = 0;
-    const registry = createRegistry();
-    const gate = createApprovalGate({
-      pool: stack.env.db,
-      threads,
-      chats: new ChatStore(stack.env.db),
-      orgKv: new OrgKvStore(stack.env.db),
-      log,
-      execPolicy: {} as never,
-      approvalTimeoutMs: 60000,
-      selfBaseUrl: "",
-      internalKey: null,
-      allowShellTools: true,
-      chatOfConversation: async () => id,
-      currentModel: async () => null,
-      integrations: { gateDecision: async () => "ask" } as never,
-    });
-    registry.install(
-      defineExtension({
-        name: `unattended-${kind}`,
-        hooks: [gate],
-        tools: [
-          defineTool({
-            name: "integration_update",
-            description: "Update an external record",
-            parameters: Type.Object({}),
-            execute: async () => {
-              executions++;
-              return { output: [{ type: "text", text: "updated" }] };
-            },
-          }),
-        ],
-      }),
-    );
-    const faux = fauxProvider();
-    faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("integration_update", {}, { id: "dangerous-call" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("Action rejected; continuing without it."),
-    ]);
-    const models = createModels();
-    models.setProvider(faux.provider);
-    const h = await open(registry, models);
-    try {
-      const c = await h.createConversation(
-        { ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } },
-        context,
+  it.each(["managed", "routine", "coordinator"])(
+    "lets unattended %s work report back without a human approval",
+    async (kind) => {
+      const id = await chat();
+      const agentId = crypto.randomUUID();
+      await stack.env.db.query(
+        "INSERT INTO agents(id,org_id,owner_user_id,name,model) VALUES($1,$2,$3,'Unattended test','faux-1')",
+        [agentId, stack.orgId, stack.memberId],
       );
-      const submitted = await c.submit({ type: "input", content: "Run unattended" }, context);
-      expect((await (await h.submission(submitted.id, context))!.wait(context)).status).toBe("done");
-      expect(executions).toBe(0);
-      expect((await threads.listEvents(stack.orgId, id)).some((e) => e.event.type === "approval_request")).toBe(false);
-    } finally {
-      await h.close(context);
-    }
-  });
+      await stack.env.db.query(
+        "INSERT INTO agent_threads(id,agent_id,user_id,chat_id,title,type,coordinator_managed,execution_role) VALUES($1,$2,$3,$4,'Unattended test',$5,$6,$7)",
+        [
+          crypto.randomUUID(),
+          agentId,
+          stack.memberId,
+          id,
+          kind === "routine" ? "routine" : "subagent",
+          kind === "managed",
+          kind === "coordinator" ? "coordinator" : "thread",
+        ],
+      );
+      let executions = 0;
+      let replies = 0;
+      const classified: string[] = [];
+      const registry = createRegistry();
+      const gate = createApprovalGate({
+        pool: stack.env.db,
+        threads,
+        chats: new ChatStore(stack.env.db),
+        orgKv: new OrgKvStore(stack.env.db),
+        log,
+        execPolicy: {} as never,
+        approvalTimeoutMs: 60000,
+        selfBaseUrl: "",
+        internalKey: null,
+        allowShellTools: true,
+        chatOfConversation: async () => id,
+        currentModel: async () => null,
+        integrations: {
+          gateDecision: async (_conversationId, name) => {
+            classified.push(name);
+            return name === "integration_update" || kind === "coordinator" ? "ask" : undefined;
+          },
+          isReadCall: () => false,
+        },
+      });
+      registry.install(
+        defineExtension({
+          name: `unattended-${kind}`,
+          hooks: [gate],
+          tools: [
+            defineTool({
+              name: "send_message",
+              description: "Reply to the member",
+              parameters: Type.Object({}),
+              execute: async () => {
+                replies++;
+                return { output: [{ type: "text", text: "delivered" }] };
+              },
+            }),
+            defineTool({
+              name: "integration_update",
+              description: "Update an external record",
+              parameters: Type.Object({}),
+              execute: async () => {
+                executions++;
+                return { output: [{ type: "text", text: "updated" }] };
+              },
+            }),
+          ],
+        }),
+      );
+      const faux = fauxProvider();
+      faux.setResponses([
+        ...(kind === "coordinator"
+          ? []
+          : [
+              fauxAssistantMessage(fauxToolCall("integration_update", {}, { id: "dangerous-call" }), {
+                stopReason: "toolUse",
+              }),
+            ]),
+        fauxAssistantMessage(fauxToolCall("send_message", {}, { id: "report-call" }), { stopReason: "toolUse" }),
+        fauxAssistantMessage("Finished."),
+      ]);
+      const models = createModels();
+      models.setProvider(faux.provider);
+      const h = await open(registry, models);
+      try {
+        const c = await h.createConversation(
+          { ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } },
+          context,
+        );
+        const submitted = await c.submit({ type: "input", content: "Run unattended" }, context);
+        expect((await (await h.submission(submitted.id, context))!.wait(context)).status).toBe("done");
+        expect(executions).toBe(0);
+        expect(replies).toBe(1);
+        if (kind === "coordinator") expect(classified).toEqual([]);
+        expect((await threads.listEvents(stack.orgId, id)).some((e) => e.event.type === "approval_request")).toBe(
+          false,
+        );
+      } finally {
+        await h.close(context);
+      }
+    },
+  );
 
   it("blocks a command tool when the conversation has no approval mapping", async () => {
     let executions = 0;

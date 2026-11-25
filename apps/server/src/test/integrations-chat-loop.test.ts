@@ -291,11 +291,13 @@ describe("M8: integrations chat runtime", () => {
       const before = slackPosts;
       const spy = vi.spyOn(integration, "gateDecision").mockImplementation(async (...args) => {
         const result = await original(...args);
-        if (args[1] === "slack_post_message")
+        if (args[1] === "slack_post_message") {
+          expect(await original(args[0], "post_message")).toBeUndefined();
           await stack.env.db.query(
             "UPDATE integrations SET config=jsonb_set(config,'{tools,post_message,approval}','\"always_ask\"') WHERE org_id=$1 AND name='slack'",
             [orgId],
           );
+        }
         return result;
       });
       try {

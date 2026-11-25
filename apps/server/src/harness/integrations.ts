@@ -145,9 +145,10 @@ function parseAutoTool(
 function integrationTarget(
   turns: IntegrationTurn[],
   callName: string,
+  exact = false,
 ): { turn: IntegrationTurn; info: IntegrationToolInfo } | undefined {
   for (const turn of turns) {
-    const info = turn.tools.find((t) => toolMatches(turn.slug, t, callName));
+    const info = turn.tools.find((t) => (exact ? t.spec.name === callName : toolMatches(turn.slug, t, callName)));
     if (info !== undefined) return { turn, info };
   }
   return undefined;
@@ -221,10 +222,6 @@ export class IntegrationsRuntime {
   private readonly approvalClassifications = new Map<number, Map<string, IntegrationGateClassification>>();
   /** Declarations remain stable until the next explicit provisioning. */
   private readonly snapshots = new Map<number, TurnSnapshot>();
-  /** Every integration tool name this runtime has ever registered — the
-   *  cheap gate-classifier short-circuit for coding tools. */
-  private readonly knownToolNames = new Set<string>();
-
   private readonly access: IntegrationAccessStore;
 
   constructor(
@@ -358,7 +355,6 @@ export class IntegrationsRuntime {
       for (const info of turn.tools) {
         if (!toolCurate(turn.rowConfig, info.raw).enabled) continue;
         tools.push(this.integrationTool(info));
-        this.knownToolNames.add(info.spec.name);
       }
     }
     const runtime = this;
@@ -542,19 +538,14 @@ export class IntegrationsRuntime {
     callName: string,
     callId?: string,
   ): Promise<IntegrationGateClassification> {
-    // Cheap path: a name this runtime never registered and no auto-tool
-    // shape cannot be an integration tool — coding tools pay no resolve.
-    // coherence:seam owner=@maintainer until=2027-01-31 reason="shipped clients may still send the int_ prefix"
-    if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
-      return undefined;
-    }
+    const declared = this.snapshots.get(conversationId);
+    // Only registered connector names can enter approval policy. Raw
+    // provider aliases can match unrelated Guild tools.
+    if (declared === undefined || integrationTarget(declared.turns, callName, true) === undefined) return undefined;
     const snapshot = await this.authorizedSnapshot(conversationId);
-    if (snapshot === undefined || snapshot.turns.length === 0) return undefined;
-    if (parseAutoTool(snapshot.turns, callName) !== undefined) return "skip";
-    const target = integrationTarget(snapshot.turns, callName);
+    const target = integrationTarget(snapshot?.turns ?? [], callName, true);
     if (target === undefined) return undefined;
-    const { turn, info } = target;
-    const decision = approvalClass(turn, info);
+    const decision = approvalClass(target.turn, target.info);
     if (callId) {
       let classifications = this.approvalClassifications.get(conversationId);
       if (!classifications) {
@@ -598,7 +589,7 @@ export class IntegrationsRuntime {
       // Handled by the dedicated tools; unreachable here, but fail closed.
       return { content: `unknown server tool ${callName}`, isError: true };
     }
-    const target = integrationTarget(turns, callName);
+    const target = integrationTarget(turns, callName, true);
     if (target === undefined || snapshot === undefined) {
       return { content: `unknown server tool ${callName}`, isError: true };
     }
