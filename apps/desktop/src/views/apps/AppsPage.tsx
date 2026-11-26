@@ -472,17 +472,20 @@ export function AppsPage({
       page
     );
   }
+  const list = (
+    <ListPane
+      apps={apps}
+      route={route}
+      navigate={navigate}
+      me={me?.id ?? null}
+      onCollapse={route.management ? undefined : () => sidebar.setCollapsed(true)}
+    />
+  );
   return (
     <div className="flex h-full min-h-0">
-      <Sidebar collapsed={sidebar.collapsed}>
-        <ListPane
-          apps={apps}
-          route={route}
-          navigate={navigate}
-          me={me?.id ?? null}
-          onCollapse={() => sidebar.setCollapsed(true)}
-        />
-      </Sidebar>
+      {route.management
+        ? <aside className="w-64 shrink-0 border-r bg-sidebar">{list}</aside>
+        : <Sidebar collapsed={sidebar.collapsed}>{list}</Sidebar>}
       <section className="min-w-0 flex-1">{page}</section>
     </div>
   );

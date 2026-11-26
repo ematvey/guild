@@ -48,9 +48,7 @@ import { InstalledDetail } from "./installed";
 import { CatalogLandingPage } from "./landing";
 import { AddOrgMcp } from "./connect-mcp";
 import { CatalogSources, InstallBundle } from "./sources";
-import { CollapseButton } from "../../../desktop/src/views/sidebar/chrome";
 import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../../desktop/src/lib/titlebar";
-import { Sidebar, useSidebar } from "../../../desktop/src/views/sidebar/sidebar";
 
 type Navigate = (next: IntegrationsRoute, options?: { replace?: boolean }) => void;
 
@@ -140,7 +138,6 @@ function ListPane({
   updates,
   catalog,
   loading,
-  onCollapse,
 }: {
   route: IntegrationsRoute;
   navigate: Navigate;
@@ -149,8 +146,6 @@ function ListPane({
   updates: Map<string, AvailableUpdate>;
   catalog: CatalogGroup[];
   loading: boolean;
-  /** Desktop only: collapse the sidebar from its own header. */
-  onCollapse?: () => void;
 }) {
   const view = route.view === "catalog" ? "catalog" : "installed";
   const q = route.view === "installed" || route.view === "catalog" ? route.q : "";
@@ -182,7 +177,6 @@ function ListPane({
       <div {...titleBarDragDeep} className={`flex items-center justify-between gap-2 px-4 ${TOP_ROW}`}>
         <h1 className="text-lg font-semibold">Integrations</h1>
         <span className="flex items-center gap-1">
-          <CollapseButton onCollapse={onCollapse} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -521,7 +515,6 @@ export function IntegrationsPage({
   isMobile: boolean;
 }) {
   const data = useIntegrationsData();
-  const sidebar = useSidebar();
   const items = data.items;
   const installed = useMemo(
     () => (items ?? []).filter((i) => i.configured).sort((a, b) => displayName(a).localeCompare(displayName(b))),
@@ -639,7 +632,6 @@ export function IntegrationsPage({
       updates={updates}
       catalog={catalog}
       loading={loading}
-      onCollapse={() => sidebar.setCollapsed(true)}
     />
   );
 
@@ -686,8 +678,8 @@ export function IntegrationsPage({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <Sidebar collapsed={sidebar.collapsed}>{list}</Sidebar>
-      <main className="flex min-w-0 flex-1 flex-col">
+      <aside className="w-64 shrink-0 border-r bg-sidebar">{list}</aside>
+      <section className="flex min-w-0 flex-1 flex-col" aria-label="Integration details">
         <header
           {...titleBarDragDeep}
           className={`flex shrink-0 items-center gap-3 border-b border-border bg-background px-8 ${TOP_ROW} lg:px-12 2xl:px-16 ${CAPTION_BUTTONS_INSET}`}
@@ -697,7 +689,7 @@ export function IntegrationsPage({
         <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
           <div className="w-full max-w-[90rem] px-8 pb-20 pt-6 lg:px-12 2xl:px-16">{page}</div>
         </div>
-      </main>
+      </section>
     </div>
   );
 }
