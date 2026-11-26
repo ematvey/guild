@@ -52,7 +52,7 @@ function ChatSection({
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-semibold text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-bold text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           {label}
           <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 ${open ? "rotate-90" : ""}`} />
@@ -332,7 +332,7 @@ export const ChatsPanel = memo(function ChatsPanel({
             <button
               type="button"
               onClick={onNewChat}
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground/90 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
               <SquarePen aria-hidden="true" className="size-4 shrink-0" />
               <span>New chat</span>
