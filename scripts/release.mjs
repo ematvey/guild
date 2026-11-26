@@ -298,12 +298,16 @@ async function publishGithub(directory) {
   assert(meta.commit === git("rev-parse", "HEAD"), "release source must be HEAD");
   const expected = assemble(directory, meta.version, meta.repository, meta.commit, meta.source_ref);
   assert(JSON.stringify(expected) === JSON.stringify(meta), "release metadata does not match its assets");
-  // GitHub's by-tag endpoint omits drafts; list releases to resume them.
-  const findRelease = () =>
-    JSON.parse(run("gh", ["api", "--paginate", "--slurp", `repos/${meta.repository}/releases?per_page=100`]))
-      .flat()
-      .find((r) => r.tag_name === meta.tag);
-  let release = findRelease();
+  // The by-tag endpoint omits drafts. Filter each page in gh so unrelated
+  // releases and their asset metadata stay out of Node's subprocess buffer.
+  const match = run("gh", [
+    "api",
+    "--paginate",
+    `repos/${meta.repository}/releases?per_page=100`,
+    "--jq",
+    `.[] | select(.tag_name == ${JSON.stringify(meta.tag)}) | {id, draft}`,
+  ]).trim();
+  let release = match ? JSON.parse(match) : null;
   assert(!release || release.draft, "published releases are immutable; use a new build number");
   const tagCommit = run("git", ["ls-remote", "origin", `refs/tags/${meta.tag}`, `refs/tags/${meta.tag}^{}`])
     .trim()
@@ -573,9 +577,17 @@ async function prunePreviews(apply) {
   const repository = repositoryName();
   const prune = (assertLock = () => {}) => {
     const pins = readPins(repository);
-    const releases = JSON.parse(
-      run("gh", ["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`]),
-    ).flat();
+    const releases = run("gh", [
+      "api",
+      "--paginate",
+      `repos/${repository}/releases?per_page=100`,
+      "--jq",
+      ".[] | select(.prerelease) | {id, tag_name, prerelease, published_at, created_at}",
+    ])
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
     const obsolete = previewCleanup(releases, pins);
     console.log(
       JSON.stringify({ apply, keepNewest: 10, keepDays: 14, pins, delete: obsolete.map((r) => r.tag_name) }, null, 2),
