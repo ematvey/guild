@@ -6,7 +6,7 @@
 
 import { Cron } from "croner";
 import { ApiError } from "../platform/errors.js";
-import { withTransaction, type PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../platform/db.js";
 import {
   countPendingReminders,
   deletePendingOccurrences,
@@ -279,7 +279,7 @@ export async function deleteRoutine(pool: PlatformPool, agentId: string, routine
 /** Inserts one occurrence. `(routine_id, scheduled_for)` is the idempotency
  *  key; a repeated insert returns the existing row. */
 export async function createOccurrence(
-  pool: PlatformPool,
+  pool: PlatformPool | PoolClient,
   routineId: string,
   scheduledFor: Date | string,
 ): Promise<AgentRoutineOccurrence> {

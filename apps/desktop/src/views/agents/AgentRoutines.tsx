@@ -83,15 +83,17 @@ export function AgentRoutines({
       <RoutineDetail agentId={agentId} routineId={routineId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
     );
   }
-  return <RoutineList agentId={agentId} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
+  return <RoutineList agentId={agentId} canManage={canManage} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
 }
 
 function RoutineList({
   agentId,
+  canManage,
   onNavigate,
   onNewRoutine,
 }: {
   agentId: string;
+  canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
 }) {
@@ -120,10 +122,12 @@ function RoutineList({
           Routines run on a schedule in an isolated context. Ask the agent to create or change one.
         </p>
         <div className="flex-1" />
-        <Button size="sm" onClick={() => void start()} disabled={starting}>
-          {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-          New routine
-        </Button>
+        {canManage && (
+          <Button size="sm" onClick={() => void start()} disabled={starting}>
+            {starting ? <Loader2 className="animate-spin" /> : <Plus />}
+            New routine
+          </Button>
+        )}
       </div>
       {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
       {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
@@ -132,13 +136,7 @@ function RoutineList({
         <EmptyState
           icon={Clock}
           title="No routines yet"
-          hint="Start a chat with the agent and describe what should run, when, and in which timezone."
-          action={
-            <Button size="sm" onClick={() => void start()} disabled={starting}>
-              {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-              New routine
-            </Button>
-          }
+          hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
         />
       )}
       {routines !== null && routines.length > 0 && (
@@ -288,14 +286,18 @@ function RoutineDetail({
       <div className="flex flex-wrap items-center gap-2">
         <BackButton onNavigate={onNavigate} agentId={agentId} />
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running}>
-          {running ? <Loader2 className="animate-spin" /> : <Play />}
-          Run now
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => void edit()} disabled={editing}>
-          {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
-          Edit via agent
-        </Button>
+        {canManage && (
+          <>
+            <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running}>
+              {running ? <Loader2 className="animate-spin" /> : <Play />}
+              Run now
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void edit()} disabled={editing}>
+              {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
+              Edit via agent
+            </Button>
+          </>
+        )}
         {canManage && routine.kind === "cron" && (
           <Button variant="outline" size="sm" onClick={() => void toggleSchedule()} disabled={changingSchedule}>
             {routine.enabled ? "Pause" : "Resume"}
@@ -334,6 +336,7 @@ function RoutineDetail({
             <dd className="mt-1">
               <Select
                 value={routine.delivery}
+                disabled={!canManage}
                 onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}
               >
                 <SelectTrigger className="max-w-72" aria-label="Messages go to">

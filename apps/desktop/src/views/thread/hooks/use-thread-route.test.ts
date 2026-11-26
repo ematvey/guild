@@ -208,6 +208,12 @@ describe("commitRoute (history entries per navigation)", () => {
 });
 
 describe("work and Control Center addresses", () => {
+  const fixControlRole = (path: string) => {
+    const route = parseChatRoute(path);
+    const patch = canonicalRoute(route, { role: "member", hasEngine: false, pathname: withoutControlPrefix(path) });
+    return patch ? routePath(applyRoutePatch(route, patch)) : routePath(route);
+  };
+
   it("keeps legacy management links and persists control subpages", () => {
     expect(routePath(parseChatRoute("/settings/users/new"))).toBe("/control/settings/users/new");
     expect(routePath(parseChatRoute("/control/agents/a1/settings"))).toBe("/control/agents/a1/settings");
@@ -215,6 +221,8 @@ describe("work and Control Center addresses", () => {
     expect(routePath(parseChatRoute("/skills/new"))).toBe("/control/skills/new");
     expect(routePath(parseChatRoute("/control/skills"))).toBe("/control/skills");
     expect(routePath(parseChatRoute("/skills"))).toBe("/skills");
+    expect(routePath(parseChatRoute("/control/apps/app1"))).toBe("/control/apps/app1");
+    expect(fixControlRole("/control/apps/app1")).toBe("/apps/app1");
   });
 
   it("keeps personal routines and member settings in the work app", () => {

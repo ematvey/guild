@@ -141,7 +141,7 @@ export const CONTROL_PREFIX = "/control";
 export function isControlRoute(route: ChatRoute): boolean {
   const agent = route.agents;
   return (agent !== null && !(agent.view === "agent" && agent.personalRoutines)) ||
-    route.integrations !== null || route.skills?.management === true ||
+    route.integrations !== null || route.skills?.management === true || route.apps?.management === true ||
     (route.tab === "settings" && isControlSection(route.settingsSection));
 }
 
@@ -309,6 +309,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     };
   }
   if (parts[0] === "apps") {
+    const apps = parseAppsRoute(parts.slice(1));
     return {
       chatId: null,
       projectId: null,
@@ -316,7 +317,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       skills: null,
       agents: null,
       integrations: null,
-      apps: parseAppsRoute(parts.slice(1)),
+      apps: control ? { ...apps, management: true } : apps,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -698,6 +699,7 @@ export function canonicalRoute(route: ChatRoute, ctx: RouteContext): RoutePatch 
     }
   }
   if (route.integrations !== null && ctx.role !== "admin") return { ...CHAT_ROOT, tab: "chats" };
+  if (route.apps?.management && ctx.role !== "admin") return { apps: { appId: route.apps.appId } };
   if (
     route.tab === "settings" &&
     route.overlay === null &&

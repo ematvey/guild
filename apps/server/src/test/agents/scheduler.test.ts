@@ -2,7 +2,7 @@
 // coalescing missed occurrences, retries and auto-disable, and manual runs.
 
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import type { UserRow } from "../../platform/store/identity.js";
 import { AgentStore } from "../../agents/store.js";
@@ -108,6 +108,39 @@ dbDescribe("agent scheduler", () => {
 
   afterAll(async () => {
     await env?.cleanup();
+  });
+
+  it("revalidates a due routine after a concurrent pause", async () => {
+    scheduler = makeScheduler();
+    const routine = await makeRoutine("Pause during materialization");
+    const pool = env!.db;
+    await pool.query("UPDATE agent_routines SET next_run_at = now() - interval '1 minute' WHERE id = $1", [
+      routine.id,
+    ]);
+
+    const client = await pool.connect();
+    let materialization: Promise<void> | undefined;
+    try {
+      await client.query("BEGIN");
+      await client.query("UPDATE agent_routines SET enabled = false, next_run_at = NULL WHERE id = $1", [
+        routine.id,
+      ]);
+      materialization = scheduler.materializeDue();
+      await vi.waitFor(async () => {
+        const waiting = await pool.query(
+          "SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        );
+        expect(waiting.rows).not.toHaveLength(0);
+      });
+      await client.query("COMMIT");
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      await materialization;
+    }
+
+    expect(await getRoutine(pool, agent.id, routine.id)).toMatchObject({ enabled: false, next_run_at: null });
+    expect(await occurrenceStatuses(routine.id)).toEqual([]);
   });
 
   it("materializes missed occurrences and coalesces to the latest one", async () => {

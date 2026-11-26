@@ -23,7 +23,13 @@ export function AppsSurface({
         isMobile={isMobile}
         onOpenChat={onOpenChat}
         navigate={(next, options) =>
-          pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: null, apps: next }, options)
+          pushRoute({
+            ...SURFACE_BASE,
+            skills: null,
+            agents: null,
+            integrations: null,
+            apps: route.management ? { ...next, management: true } : next,
+          }, options)
         }
       />
     </div>

@@ -173,7 +173,7 @@ export async function deletePendingOccurrences(pool: PlatformPool | PoolClient, 
  *  scheduled_for)` is the idempotency key; a repeated insert returns the
  *  existing row. */
 export async function insertOccurrence(
-  pool: PlatformPool,
+  pool: PlatformPool | PoolClient,
   routineId: string,
   scheduledFor: string,
 ): Promise<AgentRoutineOccurrence> {

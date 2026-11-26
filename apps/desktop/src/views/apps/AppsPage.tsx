@@ -324,12 +324,14 @@ function AppHeader({
 
 function OpenApp({
   app,
+  management,
   me,
   isMobile,
   navigate,
   onOpenChat,
 }: {
   app: App;
+  management: boolean;
   me: { id: string; role: string } | null;
   isMobile: boolean;
   navigate: Navigate;
@@ -356,7 +358,7 @@ function OpenApp({
     };
   }, [app.id, app.version, epoch]);
   const isOwner = me !== null && app.owner_user_id === me.id;
-  const canDelete = isOwner || me?.role === "admin";
+  const canDelete = isOwner || (management && me?.role === "admin");
   const [accessOpen, setAccessOpen] = useState(false);
   const current = detail !== null && detail.app.id === app.id ? detail : null;
   return (
@@ -431,6 +433,7 @@ export function AppsPage({
       <OpenApp
         key={open.id}
         app={open}
+        management={route.management === true}
         me={me}
         isMobile={isMobile}
         navigate={navigate}

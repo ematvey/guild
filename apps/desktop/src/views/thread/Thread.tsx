@@ -728,6 +728,8 @@ function ThreadView(props: ThreadProps) {
       onControlTab={(tab) => {
         if (tab === "skill-management") {
           pushRoute({ ...CHAT_ROOT, skills: { ...SKILLS_CATALOG, management: true } });
+        } else if (tab === "app-management") {
+          pushRoute({ ...CHAT_ROOT, apps: { ...APPS_HOME, management: true } });
         } else {
           switchTab(tab);
         }

@@ -15,7 +15,7 @@ export function SettingsPanel({
   /** "admin" turns on the workspace sections, same as the rail menu. */
   role: string;
   inControl: boolean;
-  onControlTab: (tab: "agents" | "activity" | "integrations" | "skill-management") => void;
+  onControlTab: (tab: "agents" | "activity" | "integrations" | "skill-management" | "app-management") => void;
   /** The section rendered in the main pane (inline settings); null = none
    * picked yet. */
   activeSection: string | null;
@@ -48,6 +48,7 @@ export function SettingsPanel({
             {isAdmin && (
               <>
                 <button type="button" className="w-full rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent" onClick={() => onControlTab("integrations")}>Integrations</button>
+                <button type="button" className="w-full rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent" onClick={() => onControlTab("app-management")}>Apps</button>
                 <button type="button" className="w-full rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent" onClick={() => onControlTab("activity")}>Activity</button>
               </>
             )}

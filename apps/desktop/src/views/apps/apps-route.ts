@@ -4,6 +4,7 @@
 
 export interface AppsRoute {
   appId: string | null;
+  management?: true;
 }
 
 export const APPS_HOME: AppsRoute = { appId: null };
