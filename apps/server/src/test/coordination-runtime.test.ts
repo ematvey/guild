@@ -589,7 +589,7 @@ describe("configured coordinator conversation", () => {
       const messages = stack.mock.requests.at(-1)?.body.messages as { role: string; content?: unknown }[];
       const last = messages?.at(-1);
       const content = JSON.stringify(last?.content);
-      if (last?.role === "user" && content?.includes(`<inbox_delivery>Send your visible reply now by calling reply with input_id ${attachmentId}`)) {
+      if (last?.role === "user" && content?.includes(`<inbox_delivery>Handle request ${attachmentId}.`)) {
         return call("codemode", { code: `return await tools.attach_work(${JSON.stringify({
           input_id: attachmentId, chat_id: workerChatId, acknowledgment: "Continuing in the same worker chat.",
         })});` });
