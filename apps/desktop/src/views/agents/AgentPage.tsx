@@ -166,6 +166,7 @@ export function AgentPage({
             <AgentRoutines
               agentId={agent.id}
               routineId={routineId}
+              canManage={manage}
               onNavigate={(next) => {
                 if (next.view === "agent" && next.tab === "routines") onNavigate({ ...next, personalRoutines: true });
               }}
@@ -305,6 +306,7 @@ export function AgentPage({
             <AgentRoutines
               agentId={agent.id}
               routineId={routineId}
+              canManage={manage}
               onNavigate={onNavigate}
               onNewRoutine={newRoutine}
               onEditRoutine={editRoutine}

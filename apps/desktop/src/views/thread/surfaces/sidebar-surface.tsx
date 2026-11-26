@@ -27,7 +27,7 @@ export function SidebarSurface({
   tab: ChatRoute["tab"];
   role: string;
   inControl: boolean;
-  onControlTab: (tab: "agents" | "activity" | "integrations") => void;
+  onControlTab: (tab: "agents" | "activity" | "integrations" | "skill-management") => void;
   /** The chat the main column shows. */
   chatId: string | null;
   projectId: string | null;

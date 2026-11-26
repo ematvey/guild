@@ -236,6 +236,8 @@ export interface SkillDetailProps {
   me: SkillMe;
   onBack: () => void;
   /** Opens the skill editor for this slug. */
+  management: boolean;
+  onManage: () => void;
   onEdit?: (slug: string) => void;
   /** Navigates to another skill's detail (used after a successful fork). */
   onOpenSkill?: (slug: string) => void;
@@ -248,6 +250,8 @@ export function SkillDetail({
   slug,
   me,
   onBack,
+  management,
+  onManage,
   onEdit,
   onOpenSkill,
   file = "SKILL.md",
@@ -375,6 +379,8 @@ export function SkillDetail({
   }
 
   const actions = detailActions(detail, me);
+  const managementActions = new Set(["Edit", "Fork", "Unpublish", "Allow anyone to edit", "Restrict editing"]);
+  const visibleActions = management ? actions : actions.filter((label) => !managementActions.has(label));
   const forkDraft = forkPayload(detail, forkSlug.trim());
   const files = source === null ? null : bundleFilePaths(source);
   const currentPath = files?.includes(selectedFile) ? selectedFile : "SKILL.md";
@@ -438,7 +444,10 @@ export function SkillDetail({
 
   const actionButtons = (
     <>
-      {actions.map((label) =>
+      {!management && actions.some((label) => managementActions.has(label)) && (
+        <Button variant="ghost" size="sm" onClick={onManage}>Manage skill</Button>
+      )}
+      {visibleActions.map((label) =>
         label === "Install" ? (
           <Button
             key={label}

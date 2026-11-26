@@ -133,7 +133,7 @@ export function ThreadHeader({
           <ThreadTitle chatId={chatId} title={title} loading={titleLoading} />
         </div>
       )}
-      {showMenu && (
+      {(showMenu || onMakeRecurring) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -147,7 +147,7 @@ export function ThreadHeader({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-44">
-            {!foreign && (
+            {showMenu && !foreign && (
               <>
                 <DropdownMenuItem
                   onSelect={() => {
@@ -162,11 +162,11 @@ export function ThreadHeader({
                   {archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
                   {archived ? "Unarchive" : "Archive"}
                 </DropdownMenuItem>
-                {onMakeRecurring && (
-                  <DropdownMenuItem onSelect={onMakeRecurring}>Make recurring</DropdownMenuItem>
-                )}
                 <DropdownMenuSeparator />
               </>
+            )}
+            {onMakeRecurring && (
+              <DropdownMenuItem onSelect={onMakeRecurring}>Make recurring</DropdownMenuItem>
             )}
             <DropdownMenuItem
               onSelect={() =>
@@ -176,7 +176,7 @@ export function ThreadHeader({
               <Link2 className="size-4" />
               Copy thread URL
             </DropdownMenuItem>
-            {!foreign && (
+            {showMenu && !foreign && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

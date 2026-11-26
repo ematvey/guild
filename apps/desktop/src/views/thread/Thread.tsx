@@ -19,7 +19,7 @@ import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../..
 import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
-import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
+import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentTabRoute, agentsRailTab } from "../agents/agents-route";
 import { SidebarMenu, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
@@ -32,7 +32,7 @@ import {
   threadAccess,
   threadFacts,
 } from "./status";
-import { CHAT_ROOT, SURFACE_BASE, isControlRoute } from "./route";
+import { CHAT_ROOT, SURFACE_BASE, applyRoutePatch, isControlRoute, type RoutePatch } from "./route";
 import { archivedChatsStore, chatsStore, resetChatStores } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
 import { GenuiHostContext, type GenuiHost } from "../genui/actions";
@@ -691,7 +691,20 @@ function ThreadView(props: ThreadProps) {
     switchTab(tab);
     setOpen(false);
   };
-  const openControl = (section: string) => openExternal(serverUrl() + "/control/settings/" + section);
+  const openControl = (destination: RoutePatch) => {
+    openExternal(serverUrl() + routePath(applyRoutePatch(route, { ...CHAT_ROOT, ...destination })));
+  };
+  const manageAgent = agent.shownAgent?.can_manage ? agent.shownAgent : null;
+  const agentModel = agent.shownAgent?.model;
+  const agentModelUnavailable = !!agentModel && models !== null && !models.some((option) => option.id === agentModel);
+  const configureModels =
+    models?.length === 0 && role === "admin"
+      ? () => openControl({ tab: "settings", settingsSection: "models" })
+      : agentModelUnavailable && manageAgent
+        ? () => openControl({ agents: agentTabRoute(manageAgent.id, "settings") })
+        : agentModelUnavailable && role === "admin"
+          ? () => openControl({ tab: "settings", settingsSection: "models" })
+          : undefined;
   const openSettingsSection = useCallback(
     (id: string) => {
       // Navigation: the section pick owns its /settings/<section> address, so
@@ -713,7 +726,11 @@ function ThreadView(props: ThreadProps) {
       tab={inControl ? "settings" : route.tab}
       inControl={inControl}
       onControlTab={(tab) => {
-        switchTab(tab);
+        if (tab === "skill-management") {
+          pushRoute({ ...CHAT_ROOT, skills: { ...SKILLS_CATALOG, management: true } });
+        } else {
+          switchTab(tab);
+        }
         if (isMobile) setOpen(false);
       }}
       role={role}
@@ -914,7 +931,7 @@ function ThreadView(props: ThreadProps) {
                 onRename={renameOpenChat}
                 onArchiveToggle={headerArchive}
                 onMakeRecurring={
-                  access === "writable" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
+                  viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
                     ? () => {
                       const request = "Help me turn the work in this conversation into a routine. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
                       const draft = composer.promptRef.current;
@@ -928,7 +945,10 @@ function ThreadView(props: ThreadProps) {
 
               {offlineMachineBanner && (
                 <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
-                  {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
+                  {offlineMachineBanner.label} is offline. Tools can run once it reconnects.
+                  <button type="button" className="ml-2 underline" onClick={() => openSettingsSection("machine")}>
+                    Open Machines
+                  </button>
                 </div>
               )}
 
@@ -991,8 +1011,13 @@ function ThreadView(props: ThreadProps) {
                 currentProject={currentProject}
                 localMachineId={localMachineId}
                 setComposerEl={scroll.setComposerEl}
-                onConfigureModels={role === "admin" ? () => openControl("models") : undefined}
-                onManageAgents={() => openExternal(serverUrl() + "/control/agents")}
+                agentModelUnavailable={agentModelUnavailable}
+                onConfigureModels={configureModels}
+                onManageAgents={() => openControl({
+                  agents: manageAgent
+                    ? agentTabRoute(manageAgent.id, "settings")
+                    : AGENTS_DIRECTORY,
+                })}
               />
             </div>
             {previewRef !== null && (

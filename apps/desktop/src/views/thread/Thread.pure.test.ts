@@ -351,6 +351,7 @@ describe("parseChatRoute / chatRoutePath", () => {
     });
     expect(parseChatRoute("/skills/activity").skills).toEqual({
       view: "activity",
+      management: true,
       slug: null,
       editor: null,
     });
@@ -364,6 +365,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       view: "catalog",
       slug: null,
       editor: "new",
+      management: true,
     });
     expect(parseChatRoute("/skills/code-review").skills).toEqual({
       view: "catalog",
@@ -374,6 +376,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       view: "catalog",
       slug: "code-review",
       editor: "code-review",
+      management: true,
     });
     // activity/machine/new are reserved: a slug can never collide with
     // them, so tabs parse without a slug lookup.

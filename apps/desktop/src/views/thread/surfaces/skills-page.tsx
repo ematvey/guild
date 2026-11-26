@@ -23,7 +23,10 @@ export function SkillsPage({
         me={me}
         route={clampSkillsRoute(route, HAS_ENGINE)}
         onNavigate={(next: SkillsRoute, options?: { replace?: boolean }) =>
-          pushRoute({ ...SURFACE_BASE, skills: next }, options)
+          pushRoute({
+            ...SURFACE_BASE,
+            skills: route.management && next.view !== "machine" ? { ...next, management: true } : next,
+          }, options)
         }
       />
     </div>

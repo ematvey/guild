@@ -261,6 +261,7 @@ export function ThreadComposer({
   setComposerEl,
   onManageAgents,
   onConfigureModels,
+  agentModelUnavailable,
 }: {
   assistantInbox: boolean;
   composer: ComposerHandle;
@@ -295,6 +296,7 @@ export function ThreadComposer({
   setComposerEl: (el: HTMLDivElement | null) => void;
   onManageAgents: () => void;
   onConfigureModels?: () => void;
+  agentModelUnavailable: boolean;
 }) {
   const {
     fileStore,
@@ -595,7 +597,7 @@ export function ThreadComposer({
               </Button>
               <ProjectChip chatId={viewChatId} project={currentProject} localMachineId={localMachineId} />
               {!assistantInbox && <ApprovalModeMenu {...approval} />}
-              {models !== null && models.length === 0 && (
+              {(models?.length === 0 || agentModelUnavailable) && (
                 onConfigureModels
                   ? <Button type="button" variant="ghost" size="sm" onClick={onConfigureModels}>Configure models</Button>
                   : <span className="text-muted-foreground">Ask an admin to enable a model</span>

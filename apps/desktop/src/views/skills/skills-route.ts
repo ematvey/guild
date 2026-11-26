@@ -24,6 +24,7 @@ export const SKILL_ENTRY_FILE = "SKILL.md";
  *  with them, so the parser can tell a tab from a detail page without a
  *  lookup. */
 export interface SkillsRoute {
+  management?: true;
   view: "catalog" | "activity" | "machine";
   /** Detail page slug; null on the tab views. */
   slug: string | null;

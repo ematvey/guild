@@ -2,7 +2,7 @@
 // the definition reads and writes and the idempotent occurrence insert.
 // Validation and schedule math live in agents/routines.ts.
 
-import type { PlatformPool } from "../../platform/db.js";
+import type { PlatformPool, PoolClient } from "../../platform/db.js";
 import { pgTimestampToRfc3339, utcText, uuidv7 } from "../../platform/time.js";
 import type {
   AgentRoutine,
@@ -79,13 +79,14 @@ export async function listRoutines(pool: PlatformPool, agentId: string): Promise
 
 /** One routine of an agent, or null. */
 export async function selectRoutine(
-  pool: PlatformPool,
+  pool: PlatformPool | PoolClient,
   agentId: string,
   routineId: string,
+  lock = false,
 ): Promise<AgentRoutine | null> {
   const res = await pool.query<Record<string, unknown>>(
     `SELECT ${ROUTINE_COLUMNS} FROM agent_routines r
-     WHERE r.agent_id = $1 AND r.id = $2`,
+     WHERE r.agent_id = $1 AND r.id = $2${lock ? " FOR UPDATE" : ""}`,
     [agentId, routineId],
   );
   const row = res.rows[0];
@@ -126,7 +127,7 @@ export async function insertRoutine(
 
 /** Rewrites one routine's fields; null when the agent has no such routine. */
 export async function writeRoutine(
-  pool: PlatformPool,
+  pool: PlatformPool | PoolClient,
   agentId: string,
   routineId: string,
   fields: RoutineFields,
@@ -164,7 +165,7 @@ export async function deleteRoutineRow(pool: PlatformPool, agentId: string, rout
 }
 
 /** Drops the routine's pending occurrences. */
-export async function deletePendingOccurrences(pool: PlatformPool, routineId: string): Promise<void> {
+export async function deletePendingOccurrences(pool: PlatformPool | PoolClient, routineId: string): Promise<void> {
   await pool.query(`DELETE FROM agent_routine_occurrences WHERE routine_id = $1 AND status = 'pending'`, [routineId]);
 }
 

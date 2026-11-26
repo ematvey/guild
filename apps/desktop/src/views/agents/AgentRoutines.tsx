@@ -66,19 +66,21 @@ export function scheduleLabel(routine: AgentRoutine): string {
 export function AgentRoutines({
   agentId,
   routineId,
+  canManage,
   onNavigate,
   onNewRoutine,
   onEditRoutine,
 }: {
   agentId: string;
   routineId?: string;
+  canManage: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
 }) {
   if (routineId && routineId !== "new") {
     return (
-      <RoutineDetail agentId={agentId} routineId={routineId} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
+      <RoutineDetail agentId={agentId} routineId={routineId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
     );
   }
   return <RoutineList agentId={agentId} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
@@ -184,11 +186,13 @@ function RoutineList({
 function RoutineDetail({
   agentId,
   routineId,
+  canManage,
   onNavigate,
   onEditRoutine,
 }: {
   agentId: string;
   routineId: string;
+  canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
 }) {
@@ -292,9 +296,11 @@ function RoutineDetail({
           {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
           Edit via agent
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void toggleSchedule()} disabled={changingSchedule}>
-          {routine.enabled ? "Pause" : "Resume"}
-        </Button>
+        {canManage && routine.kind === "cron" && (
+          <Button variant="outline" size="sm" onClick={() => void toggleSchedule()} disabled={changingSchedule}>
+            {routine.enabled ? "Pause" : "Resume"}
+          </Button>
+        )}
       </div>
 
       <Section title="Routine" description="Schedules and prompts are managed in chat.">

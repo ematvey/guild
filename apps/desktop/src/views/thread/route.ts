@@ -141,7 +141,7 @@ export const CONTROL_PREFIX = "/control";
 export function isControlRoute(route: ChatRoute): boolean {
   const agent = route.agents;
   return (agent !== null && !(agent.view === "agent" && agent.personalRoutines)) ||
-    route.integrations !== null ||
+    route.integrations !== null || route.skills?.management === true ||
     (route.tab === "settings" && isControlSection(route.settingsSection));
 }
 
@@ -151,6 +151,7 @@ export function withoutControlPrefix(pathname: string): string {
 }
 
 export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  const control = pathname.startsWith(CONTROL_PREFIX + "/");
   pathname = withoutControlPrefix(pathname);
   const usage = parseUsageQuery(search);
   const raw = pathname
@@ -366,11 +367,12 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1), search);
+    const management = skills.view !== "machine" && (control || skills.editor !== null || skills.view === "activity");
     return {
       chatId: null,
       projectId: null,
       overlay: null,
-      skills,
+      skills: management ? { ...skills, management: true } : skills,
       agents: null,
       integrations: null,
       tab: "chats",

@@ -260,6 +260,8 @@ export function SkillsPanel({
         <SkillDetail
           slug={selected}
           me={me}
+          management={route.management === true}
+          onManage={() => onNavigate({ ...route, management: true })}
           onBack={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: null }))}
           onOpenSkill={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: null }))}
           onEdit={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: slug }))}
@@ -292,18 +294,18 @@ export function SkillsPanel({
             </div>
             <Button
               size="sm"
-              aria-label="New skill"
-              onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new" }))}
+              aria-label={route.management ? "New skill" : "Publish a skill"}
+              onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
             >
               <Plus />
-              New skill
+              {route.management ? "New skill" : "Publish a skill"}
             </Button>
           </>
         }
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
-              {panelTabs(HAS_ENGINE).map(([value, label]) => (
+              {panelTabs(HAS_ENGINE && !route.management).filter(([value]) => value !== "activity" || route.management).map(([value, label]) => (
                 <button
                   key={value}
                   role="tab"
