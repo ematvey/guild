@@ -8,6 +8,7 @@ import {
   Circle,
   EllipsisVertical,
   Loader2,
+  MessageSquare,
   Pencil,
   Pin,
   PinOff,
@@ -187,12 +188,14 @@ export function ChatListItem({
   onPin,
   archiveLabel,
   assistantInbox,
+  showChatIcon,
   routine,
 }: {
   title: string;
   active: boolean;
   status: RowState;
   assistantInbox?: boolean;
+  showChatIcon?: boolean;
   /** The routine whose output this chat is: the row leads with its mark. */
   routine?: string;
   onClick: () => void;
@@ -251,10 +254,12 @@ export function ChatListItem({
           <Repeat
             data-routine-mark
             aria-label={`Routine: ${routine}`}
-            className="size-3.5 shrink-0 text-muted-foreground"
+            className={`${showChatIcon ? "size-4" : "size-3.5"} shrink-0 text-muted-foreground`}
           >
             <title>{`Routine: ${routine}`}</title>
           </Repeat>
+        ) : showChatIcon ? (
+          <MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
         ) : null}
         {title === "" ? (
           <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">

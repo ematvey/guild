@@ -171,13 +171,14 @@ export const ChatsPanel = memo(function ChatsPanel({
     ...grouping.visible.filter((chat) => !chat.assistant_inbox),
     ...Object.entries(grouping.chatsByProject).flatMap(([id, chats]) => (activeProjectIds.has(id) ? chats : [])),
   ].sort(byRecentActivity);
-  const renderChat = (chat: ChatSummary, restricted = false) => {
+  const renderChat = (chat: ChatSummary, { restricted = false, showChatIcon = false } = {}) => {
     const sharedInbox = chat.shared_agent_inbox === true;
     return (
       <ChatListItem
         key={chat.id}
         title={chat.title ?? ""}
         assistantInbox={chat.assistant_inbox}
+        showChatIcon={showChatIcon}
         routine={chat.routine?.name}
         active={chat.id === chatId}
         status={{
@@ -224,7 +225,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     const limit = Math.max(limits[project.id] ?? PROJECT_PAGE_INITIAL, activeIndex + 1);
     const machine = machines?.find((item) => item.machine_id === project.machine_id);
     return (
-      <div key={project.id} className="ml-3">
+      <div key={project.id}>
         <div ref={projectId === project.id ? activeProjectHeader : undefined}>
           <ProjectHeader
             name={project.name}
@@ -250,7 +251,7 @@ export const ChatsPanel = memo(function ChatsPanel({
         {open && (
           <div className="ml-5 space-y-0.5">
             {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
-            {history.slice(0, limit).map((chat) => renderChat(chat, archived))}
+            {history.slice(0, limit).map((chat) => renderChat(chat, { restricted: archived }))}
             {!loadingChats && history.length === 0 && (
               <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
             )}
@@ -272,7 +273,14 @@ export const ChatsPanel = memo(function ChatsPanel({
   const pins = [
     ...recent.flatMap((chat) =>
       chat.pinned_at
-        ? [{ id: chat.id, rank: chat.pin_rank, time: chat.pinned_at, render: () => renderChat(chat) }]
+        ? [
+            {
+              id: chat.id,
+              rank: chat.pin_rank,
+              time: chat.pinned_at,
+              render: () => renderChat(chat, { showChatIcon: true }),
+            },
+          ]
         : [],
     ),
     ...(projects ?? []).flatMap((project) =>
@@ -422,7 +430,7 @@ export const ChatsPanel = memo(function ChatsPanel({
             {!!archivedThreads?.length && (
               <div role="group" aria-label="Archived chats" className="space-y-0.5">
                 <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
-                {archivedThreads.map((chat) => renderChat(chat, true))}
+                {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
               </div>
             )}
           </ChatSection>
