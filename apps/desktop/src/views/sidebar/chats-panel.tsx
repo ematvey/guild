@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Plus, SquarePen } from "lucide-react";
+import { ChevronRight, Plus, SquarePen } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
@@ -46,18 +46,16 @@ function ChatSection({
   children: ReactNode;
 }) {
   return (
-    <section aria-label={label} className="space-y-0.5 pb-3" onDragOver={onDragOver} onDrop={onDrop}>
-      <div
-        className={`flex h-8 items-center gap-1 rounded-md px-1 ${dropTarget ? "ring-1 ring-inset ring-ring/60" : ""}`}
-      >
+    <section aria-label={label} className="space-y-0.5 pb-4" onDragOver={onDragOver} onDrop={onDrop}>
+      <div className={`flex h-9 items-center gap-1 rounded-md ${dropTarget ? "ring-1 ring-inset ring-ring/60" : ""}`}>
         <button
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left text-base font-semibold text-sidebar-foreground/85 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-semibold text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
-          <ChevronRight aria-hidden="true" className={`size-3.5 ${open ? "rotate-90" : ""}`} />
           {label}
+          <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 ${open ? "rotate-90" : ""}`} />
         </button>
         {action}
       </div>
@@ -250,7 +248,7 @@ export const ChatsPanel = memo(function ChatsPanel({
           />
         </div>
         {open && (
-          <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
+          <div className="ml-5 space-y-0.5">
             {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
             {history.slice(0, limit).map((chat) => renderChat(chat, archived))}
             {!loadingChats && history.length === 0 && (
@@ -260,10 +258,9 @@ export const ChatsPanel = memo(function ChatsPanel({
               <button
                 type="button"
                 onClick={() => setLimits((current) => ({ ...current, [project.id]: limit + PROJECT_PAGE_STEP }))}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                className="ml-1.5 mt-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
-                <ChevronDown aria-hidden="true" className="size-3.5" />
-                Show {Math.min(PROJECT_PAGE_STEP, history.length - limit)} more
+                Show more
               </button>
             )}
           </div>
@@ -316,7 +313,7 @@ export const ChatsPanel = memo(function ChatsPanel({
       </div>
       {!loadingChats && (
         <div
-          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3.5 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
+          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
         >
           {assistants.length > 0 && (
             <div role="group" aria-label="Assistant conversations" className="space-y-0.5">

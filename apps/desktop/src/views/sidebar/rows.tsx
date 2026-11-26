@@ -232,10 +232,10 @@ export function ChatListItem({
             }
           : undefined
       }
-      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-sidebar-accent text-sidebar-foreground"
-          : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          : "text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-foreground"
       }`}
     >
       <button
@@ -339,7 +339,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground`}
+      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-foreground`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -351,7 +351,7 @@ export function ProjectHeader({
         onClick={onToggle}
         aria-expanded={open}
         title={folder}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
+        className="flex h-9 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
         {open ? (
           <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
@@ -364,15 +364,15 @@ export function ProjectHeader({
         {machine?.name && (
           <span
             title={machine.name}
-            className="flex min-w-0 items-center gap-1 overflow-hidden text-xs text-muted-foreground/70"
+            className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground"
           >
+            <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
             {machine.online !== undefined &&
               (machine.online ? (
                 <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
               ) : (
                 <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
               ))}
-            <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
           </span>
         )}
         {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
