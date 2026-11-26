@@ -1,14 +1,10 @@
 import { isControlSection } from "../settings/section-nav";
 import { SETTINGS_SECTIONS } from "../settings/settings-catalog";
-import { CloseSidebarButton, CollapseButton } from "./chrome";
-import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 
 export function SettingsPanel({
   role,
   activeSection,
   onSelectSection,
-  onCollapse,
-  onClose,
 }: {
   /** "admin" turns on the workspace sections, same as the rail menu. */
   role: string;
@@ -17,25 +13,12 @@ export function SettingsPanel({
   activeSection: string | null;
   /** A section pick renders that section inline in the main pane. */
   onSelectSection: (id: string) => void;
-  onCollapse?: () => void;
-  /** Mobile drawer only: close the sheet from the panel header. */
-  onClose?: () => void;
 }) {
   const isAdmin = role === "admin";
   const visible = SETTINGS_SECTIONS.filter((s) => (!s.admin || isAdmin) && !isControlSection(s.id));
-  const groups: { key: "user" | "workspace"; label: string }[] = [
-    { key: "user", label: "User" },
-
-  ];
+  const groups: { key: "user" | "workspace"; label: string }[] = [{ key: "user", label: "User" }];
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
-        <span className="font-semibold">Settings</span>
-        <span className="flex items-center gap-1">
-          <CollapseButton onCollapse={onCollapse} />
-          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
-        </span>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {groups.map((g) => {
           const items = visible.filter((s) => s.group === g.key);
@@ -51,7 +34,8 @@ export function SettingsPanel({
                     key={s.id}
                     type="button"
                     onClick={() => onSelectSection(s.id)}
-                    className={`relative flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+                    aria-current={activeSection === s.id ? "page" : undefined}
+                    className={`guild-sidebar-current relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
                       activeSection === s.id
                         ? "bg-sidebar-accent text-sidebar-foreground"
                         : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -60,6 +44,7 @@ export function SettingsPanel({
                     {activeSection === s.id && (
                       <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
                     )}
+                    {s.icon}
                     {s.label}
                   </button>
                 ))}

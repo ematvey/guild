@@ -171,7 +171,6 @@ describe("panels", () => {
         onOpenChat={() => {}}
       />,
     );
-    expect(chats).toContain(">Chats<");
     expect(chats).toContain('aria-label="New chat"');
     expect(chats).toContain('aria-label="Search chats by title"');
     expect(chats).toContain("lucide-square-pen");

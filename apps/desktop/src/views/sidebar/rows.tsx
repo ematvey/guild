@@ -236,7 +236,7 @@ export function ChatListItem({
       }
       className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
-          ? "bg-sidebar-accent text-sidebar-foreground"
+          ? "guild-sidebar-selected bg-sidebar-accent text-sidebar-foreground"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
       }`}
     >
@@ -244,6 +244,7 @@ export function ChatListItem({
         {...dragProps}
         onClick={onClick}
         title={title}
+        aria-current={active ? "page" : undefined}
         type="button"
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >

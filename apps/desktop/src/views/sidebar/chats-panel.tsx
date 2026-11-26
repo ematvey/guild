@@ -14,8 +14,6 @@ import {
   type SidebarGrouping,
 } from "../projects/projects";
 import { ChatListItem, ProjectHeader } from "./rows";
-import { CloseSidebarButton, CollapseButton } from "./chrome";
-import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,10 +51,10 @@ function ChatSection({
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-bold text-sidebar-foreground/85 hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-xs font-medium text-muted-foreground hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
-          {label}
           <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 ${open ? "rotate-90" : ""}`} />
+          {label}
         </button>
         {action}
       </div>
@@ -84,8 +82,6 @@ export const ChatsPanel = memo(function ChatsPanel({
   archivedChats,
   onNewChat,
   onOpenChat,
-  onCollapse,
-  onClose,
   onRenameChat,
   onArchiveChat,
   onUnarchiveChat,
@@ -111,11 +107,6 @@ export const ChatsPanel = memo(function ChatsPanel({
   archivedChats?: ChatSummary[] | null;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
-  /** Desktop only: collapse the sidebar from within its own header. */
-  onCollapse?: () => void;
-  /** Mobile drawer only: close the sheet from the panel header (the
-   *  sheet's built-in corner close is suppressed to keep this row clean). */
-  onClose?: () => void;
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
   onUnarchiveChat?: (id: string) => void;
@@ -319,13 +310,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     .sort(byRecentActivity);
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
-        <span className="font-semibold">Chats</span>
-        <span className="flex items-center gap-1">
-          <CollapseButton onCollapse={onCollapse} />
-          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
-        </span>
-      </div>
+
       <div className="flex shrink-0 items-center gap-1 px-2 pb-2 pt-1">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />

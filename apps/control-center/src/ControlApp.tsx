@@ -244,7 +244,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
                     <a
                       {...nav(item.destination)}
                       aria-current={item.active ? "page" : undefined}
-                      className="control-nav-link flex min-h-8 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:font-medium [&>svg]:size-4 [&>svg]:shrink-0"
+                      className="guild-sidebar-current flex min-h-8 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:font-medium [&>svg]:size-4 [&>svg]:shrink-0"
                     >
                       {item.icon}
                       <span className="truncate">{item.label}</span>
@@ -286,7 +286,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
   );
 
   return (
-    <div className="control-shell flex h-dvh bg-sidebar text-foreground">
+    <div className="guild-sidebar-theme flex h-dvh bg-sidebar text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col text-sidebar-foreground md:flex">{sidebar}</aside>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border md:shadow-sm">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-5">
@@ -299,7 +299,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
             <SheetContent
               side="left"
               aria-describedby={undefined}
-              className="control-shell max-w-[calc(100vw-2rem)] gap-0 bg-sidebar text-sidebar-foreground"
+              className="guild-sidebar-theme max-w-[calc(100vw-2rem)] gap-0 bg-sidebar text-sidebar-foreground"
             >
               <SheetTitle className="sr-only">Control Center navigation</SheetTitle>
               {sidebar}

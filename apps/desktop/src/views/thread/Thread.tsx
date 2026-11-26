@@ -20,7 +20,7 @@ import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
-import { SidebarMenu, type RailTab } from "../sidebar-rail";
+import { SidebarMenu, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
@@ -325,7 +325,8 @@ function ThreadView(props: ThreadProps) {
   // A browser tab reloads into the bundle the server serves, once nothing
   // is in flight: the identity frame names the served bundle on connect and
   // after every deploy. The desktop shell runs its own local bundle.
-  const servedBundle = useWorkspaceIdentity()?.web_bundle;
+  const workspace = useWorkspaceIdentity();
+  const servedBundle = workspace?.web_bundle;
   useEffect(() => {
     if (HAS_SHELL || !webBundleOutdated(servedBundle, runningWebBundle())) return;
     if (busy || threadLoading || outgoingRef.current.size > 0) return;
@@ -654,7 +655,7 @@ function ThreadView(props: ThreadProps) {
       setOpen(false);
       return;
     }
-    if (tab === railTab) {
+    if (tab === railTab && route.agents === null) {
       setOpen(false);
       return;
     }
@@ -704,8 +705,6 @@ function ThreadView(props: ThreadProps) {
       onNewProject={openCreateProject}
       onSelectSection={openSettingsSection}
       onOpenChatDeleted={leaveDeletedChat}
-      onCollapse={isMobile ? undefined : sidebarCollapse}
-      onClose={isMobile ? sidebarClose : undefined}
     />
   );
 
@@ -778,6 +777,7 @@ function ThreadView(props: ThreadProps) {
 
   const menu = (collapsed = false) => (
     <SidebarMenu
+      activeTab={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenSettings={openSettingsSection}
       onOpenControl={() => {
@@ -807,15 +807,16 @@ function ThreadView(props: ThreadProps) {
   );
 
   return (
-    <div ref={shell} data-shell className="fixed inset-0 flex bg-background text-foreground">
+    <div ref={shell} data-shell className="guild-sidebar-theme fixed inset-0 flex bg-background text-foreground">
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent
             side="left"
-            className="w-72 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            className="guild-sidebar-theme w-72 gap-0 bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
             hideClose
           >
-            <SheetTitle className="sr-only">Sidebar</SheetTitle>
+            <SheetTitle className="sr-only">Work sidebar</SheetTitle>
+            <WorkSidebarHeader workspaceName={workspace?.name} onClose={sidebarClose} />
             {sidebar}
             {menu()}
           </SheetContent>
@@ -824,6 +825,7 @@ function ThreadView(props: ThreadProps) {
         menu(true)
       ) : (
         <Sidebar collapsed={false}>
+          <WorkSidebarHeader workspaceName={workspace?.name} onCollapse={sidebarCollapse} />
           {sidebar}
           {menu()}
         </Sidebar>

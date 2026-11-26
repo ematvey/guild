@@ -254,3 +254,25 @@ b {
 /* Focus indication policy: no global suppression. Each component declares its
    own focus styling — interactive components carry outline-none, menus and
    dialogs show focus position via background/selected styles. */
+
+.guild-sidebar-theme {
+  --sidebar: oklch(0.97 0.007 255);
+  --sidebar-foreground: oklch(0.24 0.025 255);
+  --sidebar-accent: oklch(0.93 0.012 255);
+  --guild-sidebar-selection: oklch(0.92 0.034 254);
+  --guild-sidebar-selection-text: oklch(0.37 0.126 255);
+}
+
+.dark .guild-sidebar-theme {
+  --sidebar: oklch(0.19 0.016 255);
+  --sidebar-foreground: oklch(0.94 0.01 255);
+  --sidebar-accent: oklch(0.25 0.023 255);
+  --guild-sidebar-selection: oklch(0.31 0.055 255);
+  --guild-sidebar-selection-text: oklch(0.87 0.068 252);
+}
+
+.guild-sidebar-current[aria-current="page"],
+.guild-sidebar-selected {
+  background: var(--guild-sidebar-selection);
+  color: var(--guild-sidebar-selection-text);
+}

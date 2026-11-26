@@ -19,8 +19,6 @@ export function SidebarSurface({
   onNewProject,
   onSelectSection,
   onOpenChatDeleted,
-  onCollapse,
-  onClose,
 }: {
   tab: ChatRoute["tab"];
   role: string;
@@ -35,8 +33,6 @@ export function SidebarSurface({
   onSelectSection: (id: string) => void;
   /** The shown chat was deleted from its row. */
   onOpenChatDeleted: () => void;
-  onCollapse?: () => void;
-  onClose?: () => void;
 }) {
   const { chats, grouping, archivedRows } = useSidebarRows();
   const projects = projectsStore.use();
@@ -104,8 +100,6 @@ export function SidebarSurface({
         role={role}
         activeSection={settingsSection}
         onSelectSection={onSelectSection}
-        onCollapse={onCollapse}
-        onClose={onClose}
       />
     );
   }
@@ -129,8 +123,6 @@ export function SidebarSurface({
       onPinProject={pinProject}
       onNewChat={onNewChat}
       onOpenChat={onOpenChat}
-      onCollapse={onCollapse}
-      onClose={onClose}
       onRenameChat={renameChatRow}
       onArchiveChat={archiveChatRow}
       onUnarchiveChat={unarchiveChatRow}
