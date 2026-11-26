@@ -1,6 +1,6 @@
 // Projects: a named folder bound to a machine (spec §1/§2).
 
-import type { CreateProjectRequest, Project } from "@guild/wire/rest";
+import type { CreateProjectRequest, Project, UpdateProjectRequest } from "@guild/wire/rest";
 
 import { request } from "./request";
 
@@ -25,9 +25,6 @@ export function createProject(req: CreateProjectRequest): Promise<Project> {
 }
 
 /** Renames/re-binds a project (PUT /projects/{id}). */
-export function updateProject(
-  id: string,
-  patch: { name?: string; folder?: string; machine_id?: string; archived?: boolean },
-): Promise<Project> {
+export function updateProject(id: string, patch: UpdateProjectRequest): Promise<Project> {
   return request<Project>("PUT", `/api/v1/projects/${encodeURIComponent(id)}`, patch);
 }

@@ -86,6 +86,10 @@ pub struct Project {
     pub machine_id: String,
     pub machine_label: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_rank: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -98,6 +102,8 @@ pub struct CreateProjectRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UpdateProjectRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,6 +121,8 @@ pub struct UpdateProjectRequest {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct UpdateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
@@ -122,9 +130,15 @@ pub struct UpdateChatRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chat {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_rank: Option<u32>,
     /// Persistent Assistant inbox, pinned separately from ordinary threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant_inbox: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_agent_inbox: Option<bool>,
     pub id: Uuid,
     pub org_id: Uuid,
     pub user_id: Uuid,

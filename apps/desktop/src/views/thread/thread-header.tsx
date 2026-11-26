@@ -28,6 +28,7 @@ import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
 import { shareableUrl } from "../../lib/session";
 import { ThreadTitle } from "./blocks";
+import type { PickedProject } from "../projects/projects";
 
 export function ThreadHeader({
   isMobile,
@@ -35,6 +36,8 @@ export function ThreadHeader({
   chatId,
   title,
   titleLoading,
+  project,
+  onOpenProject,
   childTree,
   isSubagent,
   showMenu,
@@ -51,6 +54,8 @@ export function ThreadHeader({
   chatId: string | null;
   title: string;
   titleLoading: boolean;
+  project?: PickedProject | null;
+  onOpenProject?: (id: string) => void;
   childTree: ChatTree | null;
   isSubagent: boolean;
   /** The chat menu: a user thread that still exists. */
@@ -95,7 +100,36 @@ export function ThreadHeader({
       {isSubagent && childTree?.parent ? (
         <ChildThreadHeader tree={childTree} onBack={onOpenChat} />
       ) : (
-        <ThreadTitle chatId={chatId} title={title} loading={titleLoading} />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {project && (
+            <>
+              <a
+                href={`/project/${encodeURIComponent(project.id)}`}
+                title={project.name}
+                className="max-w-[45%] shrink-0 truncate rounded-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => {
+                  if (
+                    !onOpenProject ||
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return;
+                  event.preventDefault();
+                  onOpenProject(project.id);
+                }}
+              >
+                {project.name}
+              </a>
+              <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+                /
+              </span>
+            </>
+          )}
+          <ThreadTitle chatId={chatId} title={title} loading={titleLoading} />
+        </div>
       )}
       {showMenu && (
         <DropdownMenu>

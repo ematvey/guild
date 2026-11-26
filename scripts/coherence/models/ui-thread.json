@@ -171,7 +171,7 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
+      "where": "apps/desktop/src/views/sidebar/chats-panel.tsx",
       "concept": "project",
       "role": "ui"
     },
@@ -251,7 +251,7 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
+      "where": "apps/desktop/src/views/sidebar/chats-panel.tsx",
       "concept": "machine",
       "role": "ui"
     },
@@ -297,11 +297,6 @@
     },
     {
       "where": "apps/desktop/src/views/sidebar/chats-panel.tsx",
-      "concept": "chat-list",
-      "role": "ui"
-    },
-    {
-      "where": "apps/desktop/src/views/sidebar/work-panel.tsx",
       "concept": "chat-list",
       "role": "ui"
     },

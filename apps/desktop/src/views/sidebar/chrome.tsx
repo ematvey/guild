@@ -5,7 +5,7 @@ import { DesktopTooltip } from "../../components/desktop-tooltip";
 
 /** Row title that fades out at the right edge when it overflows (instead
  * of an ellipsis); also used by the composer's project chip in WebChat. */
-export function FadeTitle({ text }: { text: string }) {
+export function FadeTitle({ text, fadeWidth = 22 }: { text: string; fadeWidth?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [overflowing, setOverflowing] = useState(false);
 
@@ -21,13 +21,13 @@ export function FadeTitle({ text }: { text: string }) {
 
   const fade = overflowing
     ? {
-        maskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
-        WebkitMaskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
+        maskImage: `linear-gradient(to right, black calc(100% - ${fadeWidth}px), transparent)`,
+        WebkitMaskImage: `linear-gradient(to right, black calc(100% - ${fadeWidth}px), transparent)`,
       }
     : undefined;
 
   return (
-    <span ref={ref} className="block min-w-0 flex-1 whitespace-nowrap" style={fade}>
+    <span ref={ref} className="block min-w-0 flex-1 overflow-hidden whitespace-nowrap" style={fade}>
       {text}
     </span>
   );
