@@ -1,9 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { Button } from "@guild/ui/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@guild/ui/components/dropdown-menu";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@guild/ui/components/sheet";
+import { Avatar } from "@guild/ui/components/avatar";
+import {
+  Activity,
+  ArrowUpRight,
+  Bot,
+  ChevronRight,
+  ChevronsUpDown,
+  LayoutGrid,
+  LogOut,
+  Package,
+  PanelLeft,
+  Plug,
+} from "lucide-react";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 import { WebLogin, type Profile } from "../../desktop/src/components/web-login";
 import { ThemeProvider } from "../../desktop/src/theme";
+import { avatarChip } from "../../desktop/src/lib/format";
 import { apiLogout, apiMe } from "../../desktop/src/lib/api/servers";
 import { clearToken, setToken } from "../../desktop/src/lib/session";
 import { resetSessionState } from "../../desktop/src/lib/session-reset";
@@ -56,6 +79,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
   const admin = role === "admin";
   const workspace = useWorkspaceIdentity();
   const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const { route, pushRoute } = useThreadRoute({ role });
   const routeRef = useRef(route);
   routeRef.current = route;
@@ -130,80 +154,167 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         pushRoute(patch);
+        setDrawerOpen(false);
       },
     };
   };
-  const navStyle = "flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 hover:bg-accent aria-[current=page]:bg-accent";
   const viewer = { email: profile.email, displayName: profile.display_name, role };
   const displayAgent = route.agents?.view !== "agent" || !route.agents.personalRoutines;
+  const settings = (ids: string[]) =>
+    SECTIONS.filter(({ id, admin: restricted }) => ids.includes(id) && (!restricted || admin)).map(
+      ({ id, label, icon }) => ({
+        label,
+        icon,
+        active: route.settingsSection === id,
+        destination: { tab: "settings", settingsSection: id } satisfies RoutePatch,
+      }),
+    );
+  const groups = [
+    {
+      label: "Workspace",
+      items: [
+        ...settings(["general"]),
+        {
+          label: "Agents",
+          icon: <Bot />,
+          active: route.agents !== null && !["activity", "run", "trace", "chat"].includes(route.agents.view),
+          destination: { agents: AGENTS_DIRECTORY },
+        },
+        { label: "Skills", icon: <Package />, active: !!route.skills, destination: { skills: CATALOG } },
+        ...(admin ? [{ label: "Apps", icon: <LayoutGrid />, active: !!route.apps, destination: { apps: APPS } }] : []),
+      ],
+    },
+    {
+      label: "Configuration",
+      items: [
+        ...(admin
+          ? [
+              {
+                label: "Integrations",
+                icon: <Plug />,
+                active: !!route.integrations,
+                destination: { integrations: INTEGRATIONS_HOME },
+              },
+            ]
+          : []),
+        ...settings(["models", "mcp", "assistant", "gateway", "registry"]),
+      ],
+    },
+    { label: "Access", items: settings(["users", "teams", "sso", "security"]) },
+    {
+      label: "Monitoring",
+      items: admin
+        ? [
+            {
+              label: "Activity",
+              icon: <Activity />,
+              active: route.agents !== null && ["activity", "run", "trace", "chat"].includes(route.agents.view),
+              destination: { agents: AGENTS_ACTIVITY },
+            },
+            ...settings(["usage"]),
+          ]
+        : [],
+    },
+  ];
+  const activeGroup = groups.find(({ items }) => items.some(({ active }) => active));
+  const activePage = activeGroup?.items.find(({ active }) => active)?.label;
+  const accountLabel = member?.display_name ?? profile.display_name ?? profile.email;
 
-  return (
-    <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+  const sidebar = (
+    <>
+      <div className="flex h-16 shrink-0 items-center gap-3 px-4">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+          <img src="/brand/guild-icon-light.svg" alt="" className="size-5 dark:hidden" />
+          <img src="/brand/guild-icon-dark.svg" alt="" className="hidden size-5 dark:block" />
+        </span>
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold">Control Center</h1>
+          <span className="block truncate text-sm font-semibold">Control Center</span>
           {workspace?.name && <span className="block truncate text-xs text-muted-foreground">{workspace.name}</span>}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button asChild variant="outline" size="sm">
-            <a href="/chats">Open Work</a>
-          </Button>
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            Sign out
-          </Button>
-        </div>
-      </header>
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <nav
-          aria-label="Control Center"
-          className="flex shrink-0 gap-1 overflow-auto border-b p-2 text-sm md:w-52 md:flex-col md:border-b-0 md:border-r"
-        >
-          <a
-            {...nav({ agents: AGENTS_DIRECTORY })}
-            className={navStyle}
-            aria-current={
-              route.agents?.view === "agent" || route.agents?.view === "directory" || route.agents?.view === "new"
-                ? "page"
-                : undefined
-            }
-          >
-            Agents
-          </a>
-          <a {...nav({ skills: CATALOG })} className={navStyle} aria-current={route.skills ? "page" : undefined}>
-            Skills
-          </a>
-          {admin && (
-            <>
-              <a
-                {...nav({ integrations: INTEGRATIONS_HOME })}
-                className={navStyle}
-                aria-current={route.integrations ? "page" : undefined}
-              >
-                Integrations
-              </a>
-              <a {...nav({ apps: APPS })} className={navStyle} aria-current={route.apps ? "page" : undefined}>
-                Apps
-              </a>
-              <a
-                {...nav({ agents: AGENTS_ACTIVITY })}
-                className={navStyle}
-                aria-current={route.agents?.view === "activity" ? "page" : undefined}
-              >
-                Activity
-              </a>
-            </>
-          )}
-          {SECTIONS.filter((section) => !section.admin || admin).map(({ id, label }) => (
-            <a
-              key={id}
-              {...nav({ tab: "settings", settingsSection: id })}
-              className={navStyle}
-              aria-current={route.settingsSection === id ? "page" : undefined}
-            >
-              {label}
-            </a>
+      </div>
+      <nav aria-label="Control Center navigation" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-3">
+        {groups
+          .filter(({ items }) => items.length > 0)
+          .map(({ label, items }) => (
+            <section key={label} aria-label={label}>
+              <h2 className="mb-1 px-2 text-xs font-medium text-muted-foreground">{label}</h2>
+              <ul className="space-y-0.5">
+                {items.map((item) => (
+                  <li key={item.label}>
+                    <a
+                      {...nav(item.destination)}
+                      aria-current={item.active ? "page" : undefined}
+                      className="control-nav-link flex min-h-8 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:font-medium [&>svg]:size-4 [&>svg]:shrink-0"
+                    >
+                      {item.icon}
+                      <span className="truncate">{item.label}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
           ))}
-        </nav>
+      </nav>
+      <div className="shrink-0 space-y-2 border-t border-border p-3">
+        <Button asChild variant="ghost" size="sm" className="w-full justify-between px-2 text-muted-foreground">
+          <a href="/chats">
+            Open Work <ArrowUpRight />
+          </a>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-auto w-full justify-start gap-2 px-2 py-1.5" aria-label="Account menu">
+              <Avatar
+                src={member?.avatar_url ?? profile.avatar_url}
+                fallback={avatarChip(accountLabel)}
+                className="size-7"
+              />
+              <span className="min-w-0 flex-1 truncate text-left text-sm">{accountLabel}</span>
+              <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" className="w-56">
+            <DropdownMenuLabel className="truncate">{profile.email}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={signOut}>
+              <LogOut className="size-4" /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="control-shell flex h-dvh bg-sidebar text-foreground">
+      <aside className="hidden w-60 shrink-0 flex-col text-sidebar-foreground md:flex">{sidebar}</aside>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl md:border md:border-border md:shadow-sm">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-5">
+          <Sheet open={isMobile && drawerOpen} onOpenChange={setDrawerOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-8 md:hidden" aria-label="Open navigation">
+                <PanelLeft />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="left"
+              aria-describedby={undefined}
+              className="control-shell max-w-[calc(100vw-2rem)] gap-0 bg-sidebar text-sidebar-foreground"
+            >
+              <SheetTitle className="sr-only">Control Center navigation</SheetTitle>
+              {sidebar}
+            </SheetContent>
+          </Sheet>
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <span className="truncate text-muted-foreground">{activeGroup?.label ?? "Control Center"}</span>
+            {activePage && (
+              <>
+                <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate font-medium">{activePage}</span>
+              </>
+            )}
+          </div>
+        </header>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
           {route.agents && displayAgent && (
             <AgentsPage
