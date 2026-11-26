@@ -3,7 +3,7 @@
 // together.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openExternal } from "../../../lib/open-external";
-import { HAS_ENGINE, HAS_SHELL, serverUrl } from "../../../lib/session";
+import { HAS_ENGINE, HAS_SHELL, installState, installSurface, serverUrl } from "../../../lib/session";
 import {
   applyRoutePatch,
   canonicalRoute,
@@ -87,6 +87,12 @@ export function useThreadRoute({ role }: { role: string }) {
       const path = routePath(resolved);
       if (HAS_SHELL) {
         if (!options?.replace) openExternal(serverUrl() + path);
+        return;
+      }
+      if (installState(installSurface()) === "installed") {
+        // Keep the handoff in the click gesture. Route normalization can
+        // show the explicit launch button when a management link lands here.
+        if (!options?.replace) openExternal(serverUrl() + path, { link: true });
         return;
       }
       if (options?.replace) {

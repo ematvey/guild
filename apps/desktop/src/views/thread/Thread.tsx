@@ -662,7 +662,7 @@ function ThreadView(props: ThreadProps) {
     setOpen(false);
   };
   const openControl = (destination: RoutePatch) => {
-    openExternal(serverUrl() + routePath(applyRoutePatch(route, { ...CHAT_ROOT, ...destination })));
+    openExternal(serverUrl() + routePath(applyRoutePatch(route, { ...CHAT_ROOT, ...destination })), { link: true });
   };
   const manageAgent = agent.shownAgent?.can_manage ? agent.shownAgent : null;
   const agentModel = agent.shownAgent?.model;
@@ -735,7 +735,7 @@ function ThreadView(props: ThreadProps) {
     controlRoute ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
         <div className="m-auto flex flex-col items-center gap-4 p-4">
-          <Button onClick={() => openExternal(serverUrl() + routePath(route))}>Open Control Center</Button>
+          <Button onClick={() => openExternal(serverUrl() + routePath(route), { link: true })}>Open Control Center</Button>
           <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
         </div>
       </RoutePage>
