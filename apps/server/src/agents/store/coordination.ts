@@ -404,6 +404,38 @@ export function retryCoordinationWork(db: Database, values: unknown[]) {
   );
 }
 
+export function recentCoordinationWork(db: Database, agentId: string, memberId: string) {
+  return db.query<{
+    agent_id: string;
+    chat_id: string;
+    title: string | null;
+    accepted_scope: string;
+    run_status: string | null;
+    work_report_state: string | null;
+    work_report_summary: string | null;
+  }>(
+    `SELECT worker.agent_id,worker.chat_id,worker.title,left(work.accepted_scope,1600) AS accepted_scope,
+            latest.status AS run_status,report.work_report_state,left(report.work_report_summary,1000) AS work_report_summary
+     FROM agent_coordination_inputs work
+     JOIN agent_threads worker ON worker.source_input_id=work.id
+       AND worker.user_id=work.user_id AND worker.agent_id=work.accepted_agent_id
+     JOIN chats chat ON chat.id=worker.chat_id AND chat.deleted_at IS NULL AND NOT chat.internal
+     LEFT JOIN LATERAL (
+       SELECT status,created_at FROM agent_runs WHERE thread_id=worker.id
+       ORDER BY created_at DESC,id DESC LIMIT 1
+     ) latest ON true
+     LEFT JOIN LATERAL (
+       SELECT work_report_state,work_report_summary FROM agent_runs
+       WHERE thread_id=worker.id AND work_report_state IS NOT NULL
+       ORDER BY created_at DESC,id DESC LIMIT 1
+     ) report ON true
+     WHERE work.agent_id=$1 AND work.user_id=$2 AND work.accepted_scope IS NOT NULL
+       AND worker.coordinator_managed AND worker.closed_at IS NULL
+     ORDER BY latest.created_at DESC NULLS LAST,work.seq DESC LIMIT 5`,
+    [agentId, memberId],
+  );
+}
+
 export function acceptedWorkForThread<T extends QueryResultRow>(db: Database, values: unknown[]) {
   return db.query<T>(
     `SELECT i.id,i.agent_id,i.accepted_scope FROM agent_threads t JOIN agent_coordination_inputs i ON i.id=t.source_input_id

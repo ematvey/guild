@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
-import { pendingReflectionInputs } from "../agents/store/coordination.js";
+import { pendingReflectionInputs, recentCoordinationWork } from "../agents/store/coordination.js";
 import { waitFor } from "./support/wait.js";
 
 const final = (text: string) =>
@@ -572,6 +572,8 @@ describe("configured coordinator conversation", () => {
     const workerChatId = (await stack.env.db.query(
       "SELECT chat_id FROM agent_threads WHERE id=$1", [workerThreadId],
     )).rows[0]?.chat_id as string;
+    expect((await recentCoordinationWork(stack.env.db, agentId, randomUUID())).rows).toEqual([]);
+    expect(stack.mock.requests.some(({ body }) => JSON.stringify(body).includes("Distinguish an unavailable tool"))).toBe(true);
     const attachedMessage = randomUUID();
     const attachment = await app.inject({
       method: "POST", url: `/api/v1/agents/${agentId}/threads/${inbox.thread_id}/turns`, headers,
@@ -590,6 +592,10 @@ describe("configured coordinator conversation", () => {
       const last = messages?.at(-1);
       const content = JSON.stringify(last?.content);
       if (last?.role === "user" && content?.includes(`<inbox_delivery>Handle request ${attachmentId}.`)) {
+        expect(content).toContain("<recent_member_work>");
+        expect(content).toContain(accepted.task);
+        expect(content).toContain("Need project access");
+        expect(content).toContain(`/thread/${workerChatId}`);
         return call("codemode", { code: `return await tools.attach_work(${JSON.stringify({
           input_id: attachmentId, chat_id: workerChatId, acknowledgment: "Continuing in the same worker chat.",
         })});` });
