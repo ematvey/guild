@@ -399,7 +399,7 @@
      "role": "domain"
     },
     {
-     "where": "apps/desktop/src/views/integrations/installed.tsx",
+     "where": "apps/control-center/src/integrations/installed.tsx",
      "role": "ui"
     }
    ],
@@ -407,7 +407,7 @@
     {
      "from": "domain",
      "to": "ui",
-     "at": "apps/desktop/src/views/integrations/installed.tsx"
+     "at": "apps/control-center/src/integrations/installed.tsx"
     }
    ]
   },

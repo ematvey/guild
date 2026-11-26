@@ -14,7 +14,7 @@ vi.mock("./agent-model", () => ({
   ModelName: () => null,
 }));
 
-import { AgentCreate, reachableStep } from "./AgentCreate";
+import { AgentCreate, reachableStep } from "../../../../control-center/src/agents/AgentCreate";
 
 describe("AgentCreate step address", () => {
   it("replaces a deep link past the empty name step with the name step", async () => {

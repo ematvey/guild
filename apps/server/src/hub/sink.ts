@@ -8,6 +8,7 @@
 // wakes the writer. Enqueue is synchronous (no await before the push), so
 // messages keep their send order without a lock.
 
+import type { TicketIdentity } from "./tickets.js";
 import type { WsServerMsg } from "./protocol.js";
 
 export type SocketOutput =
@@ -18,6 +19,21 @@ export type SocketOutput =
   | { kind: "pong"; payload: Buffer };
 
 export const SOCKET_HIGH_WATER = 4096;
+
+export const SURFACE_FRAMES = {
+  work: new Set<WsServerMsg["type"]>([
+    "hello", "pong", "auth_required", "displaced", "error", "workspace_identity", "member_profile", "model_list",
+    "agent_list", "agent_run", "agent_threads", "agent_routines", "skill_catalog", "app_list", "org_event",
+    "thread_list", "chat_status", "thread_events", "sync_begin", "thread_state", "sync_done", "live_frame",
+    "subagent_tree", "machine_status", "archived_thread_list", "project_list", "machine_list", "chat_tree",
+    "chat_row", "context_usage",
+  ]),
+  control: new Set<WsServerMsg["type"]>([
+    "hello", "pong", "auth_required", "displaced", "error", "workspace_identity", "member_profile", "model_list",
+    "agent_list", "integration_access", "agent_run", "agent_threads", "agent_routines", "agent_coordination",
+    "activity_run", "activity_run_unavailable", "activity_conversation", "skill_catalog", "app_list", "org_event",
+  ]),
+};
 
 export interface BacklogState {
   /** Latched: the writer must disconnect even while stalled on a write. */
@@ -56,7 +72,7 @@ export class SocketSink {
   private lastPong: Buffer | null = null;
   private notifyWriter: (() => void) | null = null;
 
-  constructor(features: Iterable<string> = []) {
+  constructor(features: Iterable<string> = [], private readonly surface?: TicketIdentity["surface"]) {
     this.features = new Set(features);
   }
 
@@ -81,6 +97,10 @@ export class SocketSink {
 
   enqueue(output: SocketOutput): boolean {
     if (this.dead) return false;
+    if (output.kind === "message" || output.kind === "sync_message") {
+      const tag = output.msg.type;
+      if (this.surface && !SURFACE_FRAMES[this.surface].has(tag)) return true;
+    }
     this.pending += 1;
     this.queue.push(output);
     if (this.pending > SOCKET_HIGH_WATER) {

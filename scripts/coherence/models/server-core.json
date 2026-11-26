@@ -209,7 +209,7 @@
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/integrations/integrations-api.ts",
+          "where": "apps/control-center/src/integrations/integrations-api.ts",
           "role": "ui"
         },
         {
@@ -247,15 +247,15 @@
           "role": "domain"
         },
         {
-          "where": "apps/desktop/src/views/agents/TraceDetail.tsx",
+          "where": "apps/control-center/src/agents/TraceDetail.tsx",
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/agents/trace-views.tsx",
+          "where": "apps/control-center/src/agents/trace-views.tsx",
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/agents/span-detail.tsx",
+          "where": "apps/control-center/src/agents/span-detail.tsx",
           "role": "ui"
         }
       ],

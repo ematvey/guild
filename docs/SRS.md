@@ -389,6 +389,8 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
   `/api/v1/admin/{approval-policy-prompt,assistant-prompt}`.
 - WebSocket: `POST /api/v1/ws/ticket`, `GET /api/v1/ws` (upgrade).
 
+Work and Control Center use the namespaced HTTP and member socket contracts in [API examples](api.md#application-contracts). A ticket minted by one contract is accepted by its own upgrade route. The engine and installed clients use the compatibility endpoints listed above.
+
 ## 9. Daemon JSON-RPC verbs
 
 **SRS-34 — Engine protocol verbs.**

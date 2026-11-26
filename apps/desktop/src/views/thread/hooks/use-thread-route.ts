@@ -83,8 +83,17 @@ export function useThreadRoute({ role }: { role: string }) {
   // stable, so callbacks built on it keep their identity across renders.
   const pushRoute = useCallback<PushRoute>((next, options) => {
     const resolved = applyRoutePatch(routeRef.current, next);
-    if (HAS_SHELL && isControlRoute(resolved) && !options?.replace) {
-      openExternal(serverUrl() + routePath(resolved));
+    if (import.meta.env.MODE !== "control" && isControlRoute(resolved)) {
+      const path = routePath(resolved);
+      if (HAS_SHELL) {
+        if (!options?.replace) openExternal(serverUrl() + path);
+        return;
+      }
+      if (options?.replace) {
+        if (window.location.pathname + window.location.search !== path) window.location.replace(path);
+      } else {
+        window.location.assign(path);
+      }
       return;
     }
     commitRoute(window.history, `${window.location.pathname}${window.location.search}`, resolved, options);

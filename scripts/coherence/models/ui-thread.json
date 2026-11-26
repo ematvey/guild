@@ -186,12 +186,12 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/AssistantSection.tsx",
+      "where": "apps/control-center/src/settings/AssistantSection.tsx",
       "concept": "approval",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/AssistantSection.tsx",
+      "where": "apps/control-center/src/settings/AssistantSection.tsx",
       "concept": "admin-prompt",
       "role": "ui"
     },
@@ -211,27 +211,27 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
+      "where": "apps/control-center/src/settings/GatewaySection.tsx",
       "concept": "api-key",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
+      "where": "apps/control-center/src/settings/GatewaySection.tsx",
       "concept": "gateway-route",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/ModelsSection.tsx",
+      "where": "apps/control-center/src/settings/ModelsSection.tsx",
       "concept": "gateway-route",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/model-providers.tsx",
+      "where": "apps/control-center/src/settings/model-providers.tsx",
       "concept": "gateway-route",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/model-routes.tsx",
+      "where": "apps/control-center/src/settings/model-routes.tsx",
       "concept": "gateway-route",
       "role": "ui"
     },
@@ -256,32 +256,32 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/McpSection.tsx",
+      "where": "apps/control-center/src/settings/McpSection.tsx",
       "concept": "user-mcp-server",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/RegistrySection.tsx",
+      "where": "apps/control-center/src/settings/RegistrySection.tsx",
       "concept": "registry-item",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/SsoSection.tsx",
+      "where": "apps/control-center/src/settings/SsoSection.tsx",
       "concept": "oidc-config",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/TeamsSection.tsx",
+      "where": "apps/control-center/src/settings/TeamsSection.tsx",
       "concept": "team",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/UsageSection.tsx",
+      "where": "apps/control-center/src/settings/UsageSection.tsx",
       "concept": "usage-event",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/settings/sections/UsersSection.tsx",
+      "where": "apps/control-center/src/settings/UsersSection.tsx",
       "concept": "user",
       "role": "ui"
     },

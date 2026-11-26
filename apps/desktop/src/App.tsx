@@ -1,4 +1,4 @@
-import { beginOidcLogin } from "./lib/oidc-login";
+import { WebLogin, type Profile } from "./components/web-login";
 import { useUpdateStatus } from "./lib/api/releases";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -10,8 +10,7 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { HAS_ENGINE, HAS_SHELL, SERVER_URL_KEY, clearToken, setToken } from "./lib/session";
-import { apiLogin, apiLogout, apiMe } from "./lib/api/servers";
-import { request } from "./lib/api/request";
+import { apiLogout, apiMe } from "./lib/api/servers";
 import { timeoutAfter } from "./lib/timeout";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
@@ -29,107 +28,6 @@ function defaultServerUrl(): string {
   } catch {
     return BAKED_URL;
   }
-}
-
-/// Web-mode login (chat app served by the guild-server): same-origin auth,
-/// session token persisted to localStorage.
-
-type Profile = {
-  email: string;
-  role: string;
-  display_name?: string;
-  avatar_url?: string;
-  onboarded?: boolean;
-};
-
-function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [sso, setSso] = useState<{ org_id: string } | null>(null);
-  // SSO-first sign-in: the password form stays hidden until the user asks
-  // for it, so the IdP button is the only default path.
-  const [showPassword, setShowPassword] = useState(false);
-
-  // SSO availability is public: the sign-in page offers the IdP button when
-  // the org has OIDC configured.
-  useEffect(() => {
-    request<{ configured?: boolean; org_id?: string }>("GET", "/api/v1/auth/oidc/status")
-      .then((v) => {
-        if (v?.configured && v.org_id) setSso({ org_id: v.org_id });
-      })
-      .catch(() => {});
-  }, []);
-
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      // web mode is always same-origin (served by guild-server); an absolute
-      // default would go cross-origin when tunneled (e.g. Moshi) and trip CORS
-      const user = await apiLogin(window.location.origin, email, password);
-      onLoggedIn(user);
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-xl">Guild</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {sso && !showPassword ? (
-            <>
-              <Button onClick={() => (window.location.href = beginOidcLogin(sso.org_id))}>Continue with SSO</Button>
-              <button
-                className="text-center text-xs text-muted-foreground outline-none hover:text-foreground"
-                onClick={() => setShowPassword(true)}
-              >
-                Use login and password
-              </button>
-            </>
-          ) : (
-            <>
-              <Input
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-              />
-              <Input
-                placeholder="Password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-              />
-              {error && <p className="text-base text-destructive">{error}</p>}
-              <Button onClick={submit} disabled={busy}>
-                {busy ? "Signing in…" : "Sign in"}
-              </Button>
-              {sso && (
-                <button
-                  className="text-center text-xs text-muted-foreground outline-none hover:text-foreground"
-                  onClick={() => {
-                    setShowPassword(false);
-                    setError(null);
-                  }}
-                >
-                  Use SSO instead
-                </button>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
 }
 
 /// Tauri (desktop) mode: engine login, then the full agent view.

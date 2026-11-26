@@ -380,7 +380,7 @@ export function SkillDetail({
 
   const actions = detailActions(detail, me);
   const managementActions = new Set(["Edit", "Fork", "Unpublish", "Allow anyone to edit", "Restrict editing"]);
-  const visibleActions = management ? actions : actions.filter((label) => !managementActions.has(label));
+  const visibleActions = import.meta.env.MODE === "control" && management ? actions : actions.filter((label) => !managementActions.has(label));
   const forkDraft = forkPayload(detail, forkSlug.trim());
   const files = source === null ? null : bundleFilePaths(source);
   const currentPath = files?.includes(selectedFile) ? selectedFile : "SKILL.md";
@@ -481,7 +481,7 @@ export function SkillDetail({
           >
             {label}
           </Button>
-        ) : label === "Edit" ? (
+        ) : import.meta.env.MODE !== "control" ? null : label === "Edit" ? (
           <Button
             key={label}
             variant="outline"
@@ -743,7 +743,7 @@ export function SkillDetail({
             </div>
           </div>
 
-          {forkOpen && (
+          {import.meta.env.MODE === "control" && forkOpen && (
             <div className="mt-3.5 rounded-lg border border-border bg-card p-2.5">
               <p className="mb-1.5 text-sm text-muted-foreground">
                 Fork {detail.slug}

@@ -5,7 +5,7 @@ import { UserBadge } from "../components/user-badge";
 import { ServerMenuItems } from "./server-menu";
 import type { ChatRoute } from "./thread/route";
 
-export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "apps" | "integrations";
+export type RailTab = ChatRoute["tab"] | "skills" | "apps";
 
 export function SidebarMenu({
   onTabChange,
@@ -19,7 +19,6 @@ export function SidebarMenu({
   onOpenDevice,
   onSignOut,
   onAddWorkspace,
-  inControl,
   collapsed = false,
   onExpand,
 }: {
@@ -34,7 +33,6 @@ export function SidebarMenu({
   onOpenDevice: () => void;
   onSignOut: () => void;
   onAddWorkspace?: (baseUrl?: string) => void;
-  inControl: boolean;
   collapsed?: boolean;
   onExpand?: () => void;
 }) {
@@ -55,8 +53,6 @@ export function SidebarMenu({
           </>
         )}
         <DropdownMenuItem onClick={() => onTabChange("chats")}>Chats</DropdownMenuItem>
-        {!inControl && (
-          <>
             <DropdownMenuItem onClick={() => onTabChange("skills")}>Skills</DropdownMenuItem>
             <DropdownMenuItem onClick={() => onTabChange("apps")}>Apps</DropdownMenuItem>
             {onOpenRoutines && <DropdownMenuItem onClick={onOpenRoutines}>Routines</DropdownMenuItem>}
@@ -65,8 +61,6 @@ export function SidebarMenu({
             <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenHelp}>Help</DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenControl}>Control Center</DropdownMenuItem>
-          </>
-        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
           Sign out

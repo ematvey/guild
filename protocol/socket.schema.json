@@ -5,6 +5,10 @@
   "description": "The frame vocabulary of the member and machine socket. This schema is the contract: crates/protocol/src/ws.rs (Rust) and packages/wire/src/types.ts (TypeScript) are hand-written from it and tested against protocol/fixtures. Every frame is a JSON object tagged by `type`; the tag is a `const` in each variant, so `oneOf` discriminates. `additionalProperties: false` is deliberate: a new field is a contract change, not a client surprise. Absent means the sender omitted the key; `null` means the sender sent a JSON null. The two are not interchangeable. A row type that also crosses the REST surface is referenced by the REST schema's `$id`, never copied here. The root is an index of the definitions: validate a payload against a `$defs` entry, never against the root.",
   "type": "object",
   "properties": {
+    "WorkServerFrame": { "$ref": "#/$defs/WorkServerFrame" },
+    "ControlServerFrame": { "$ref": "#/$defs/ControlServerFrame" },
+    "WorkClientFrame": { "$ref": "#/$defs/WorkClientFrame" },
+    "ControlClientFrame": { "$ref": "#/$defs/ControlClientFrame" },
     "Uuid": { "$ref": "#/$defs/Uuid" },
     "Json": { "$ref": "#/$defs/Json" },
     "ServerFrame": { "$ref": "#/$defs/ServerFrame" },
@@ -74,6 +78,30 @@
     "Uuid": { "type": "string", "format": "uuid" },
     "Json": {},
 
+    "WorkServerFrame": {
+      "allOf": [
+        {"$ref": "#/$defs/ServerFrame"},
+        {"properties": {"type": {"enum": ["hello", "pong", "auth_required", "displaced", "error", "workspace_identity", "member_profile", "model_list", "agent_list", "agent_run", "agent_threads", "agent_routines", "skill_catalog", "app_list", "org_event", "thread_list", "chat_status", "thread_events", "sync_begin", "thread_state", "sync_done", "live_frame", "subagent_tree", "machine_status", "archived_thread_list", "project_list", "machine_list", "chat_tree", "chat_row", "context_usage"]}}}
+      ]
+    },
+    "ControlServerFrame": {
+      "allOf": [
+        {"$ref": "#/$defs/ServerFrame"},
+        {"properties": {"type": {"enum": ["hello", "pong", "auth_required", "displaced", "error", "workspace_identity", "member_profile", "model_list", "agent_list", "integration_access", "agent_run", "agent_threads", "agent_routines", "agent_coordination", "activity_run", "activity_run_unavailable", "activity_conversation", "skill_catalog", "app_list", "org_event"]}}}
+      ]
+    },
+    "WorkClientFrame": {
+      "allOf": [
+        {"$ref": "#/$defs/ClientFrame"},
+        {"properties": {"type": {"enum": ["ping", "sync", "read"]}, "run_id": false, "activity_chat_id": false, "coordination_agent_id": false}}
+      ]
+    },
+    "ControlClientFrame": {
+      "allOf": [
+        {"$ref": "#/$defs/ClientFrame"},
+        {"properties": {"type": {"enum": ["ping", "sync"]}, "chat_id": {"type": "null"}}}
+      ]
+    },
     "ServerFrame": {
       "oneOf": [
         { "$ref": "#/$defs/Hello" },

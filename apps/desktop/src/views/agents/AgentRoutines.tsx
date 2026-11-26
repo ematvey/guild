@@ -3,7 +3,7 @@ import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
+import { createAgentThread, sendAgentTurn, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
@@ -61,6 +61,47 @@ export function scheduleLabel(routine: AgentRoutine): string {
       : "Once";
   }
   return `${humanSchedule(routine.schedule ?? "")} · ${routine.timezone}`;
+}
+
+export function AgentRoutinesPage({ agentId, routineId, canManage, onNavigate, onOpenChat }: {
+  agentId: string;
+  routineId?: string;
+  canManage: boolean;
+  onNavigate: (route: AgentsRoute) => void;
+  onOpenChat: (chatId: string) => void;
+}) {
+  /** Routines are written in chat: open a fresh thread and hand the agent the
+   *  intent, so the schedule, prompt and later changes all live in the
+   *  transcript instead of a form. */
+  const startRoutineThread = async (title: string, message: string) => {
+    const row = await createAgentThread(agentId, title);
+    await sendAgentTurn(agentId, { thread_id: row.id, message });
+    onOpenChat(row.chat_id);
+  };
+
+  const newRoutine = () =>
+    startRoutineThread(
+      "New routine",
+      "I want to create a new routine. Ask me what it should do, how often it should run " +
+        "(for example weekdays at 09:00), and the timezone. Once I answer, create it with " +
+        "create_routine and show me the human-readable schedule.",
+    );
+
+  const editRoutine = (routine: AgentRoutine) => {
+    const current =
+      routine.kind === "once"
+        ? `once on ${routine.run_at ? new Date(routine.run_at).toLocaleString() : "an unset date"}`
+        : `${humanSchedule(routine.schedule ?? "")} (${routine.timezone})`;
+    return startRoutineThread(
+      `Edit routine: ${routine.name}`,
+      `I want to change the routine "${routine.name}" (${routine.id}). Its current schedule is ` +
+        `${current}. Ask me what to change, then update it with update_routine. If I ask to remove ` +
+        "it, use delete_routine. Describe schedule changes in plain language, not cron.",
+    );
+  };
+
+  return <AgentRoutines agentId={agentId} routineId={routineId} canManage={canManage}
+    onNavigate={onNavigate} onNewRoutine={newRoutine} onEditRoutine={editRoutine} />;
 }
 
 export function AgentRoutines({

@@ -112,6 +112,14 @@ export type ParsedClientMsg =
   | (WsClientMsg & { type: "sync"; chat_id: string | null })
   | (WsClientMsg & { type: "tool_result"; images: string[]; meta: Json | null });
 
+export function acceptsSurfaceFrame(surface: "work" | "control", frame: ParsedClientMsg): boolean {
+  if (frame.type === "ping") return true;
+  if (surface === "control") return frame.type === "sync" && frame.chat_id === null;
+  if (frame.type === "read") return true;
+  return frame.type === "sync" && frame.run_id === undefined &&
+    frame.activity_chat_id === undefined && frame.coordination_agent_id === undefined;
+}
+
 /** One client frame: the shared wire parser checks the JSON and the tag;
  *  the fields are checked here, since the text is untrusted. A frame with
  *  a malformed field is discarded whole. */

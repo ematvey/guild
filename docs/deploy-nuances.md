@@ -26,6 +26,8 @@ gitignored `test.env` at the repository root.
 
 ## 1. Build and deploy the server
 
+The image builds and embeds the Work frontend and the Control Center independently. The server serves Work at `/` and Control Center at `/control`. For local builds, run `npm run build --workspace apps/desktop` and `npm run build:control`. The Tauri build embeds the Work output.
+
 Set `version` to the product version for a stable release or to the intended
 preview version for a develop installation. Set `image` to an immutable image
 reference that identifies this build. Build the image from a clean checkout.

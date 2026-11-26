@@ -20,8 +20,8 @@ import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
 import { avatarChip } from "../../lib/format";
 import { compareVersions } from "./version";
 import { count } from "../../lib/format";
-import { SkillEditor } from "./SkillEditor";
-import { ActivityFeed } from "./ActivityFeed";
+import { SkillEditor } from "../../../../control-center/src/skills/SkillEditor";
+import { ActivityFeed } from "../../../../control-center/src/skills/ActivityFeed";
 import LocalSkills from "./LocalSkills";
 import { skillsPageState, withCatalogQuery, withSkillFile, type SkillsRoute } from "./skills-route";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
@@ -235,7 +235,7 @@ export function SkillsPanel({
   const empty =
     skills === null ? null : skillsEmptyState(query, filtered.length, filterKind !== "all" || query.trim() !== "");
 
-  if (editor !== null) {
+  if (import.meta.env.MODE === "control" && editor !== null) {
     return (
       <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col">
         <SkillEditor
@@ -294,11 +294,11 @@ export function SkillsPanel({
             </div>
             <Button
               size="sm"
-              aria-label={route.management ? "New skill" : "Publish a skill"}
+              aria-label={import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
               onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
             >
               <Plus />
-              {route.management ? "New skill" : "Publish a skill"}
+              {import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
             </Button>
           </>
         }
@@ -358,7 +358,7 @@ export function SkillsPanel({
           list and detail panes don't stretch absurdly on wide monitors */}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
-          {tab === "activity" && <ActivityFeed />}
+          {import.meta.env.MODE === "control" && tab === "activity" && <ActivityFeed />}
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
             <div className="flex flex-col gap-1.5">

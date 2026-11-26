@@ -25,7 +25,7 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   // API routes and streams pass through untouched.
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || /^\/control(?:\/|$)/.test(url.pathname)) return;
   event.respondWith(
     (async () => {
       try {
@@ -72,7 +72,8 @@ self.addEventListener("notificationclick", (event) => {
       const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of all) {
         // Same origin: focus the open app instead of opening a second one.
-        if (new URL(client.url).origin === self.location.origin) {
+        const clientUrl = new URL(client.url);
+        if (clientUrl.origin === self.location.origin && !/^\/control(?:\/|$)/.test(clientUrl.pathname)) {
           await client.focus();
           if ("navigate" in client) {
             try {

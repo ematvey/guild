@@ -119,7 +119,7 @@
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/settings/sections/RegistrySection.tsx",
+          "where": "apps/control-center/src/settings/RegistrySection.tsx",
           "role": "ui"
         }
       ],
@@ -127,7 +127,7 @@
         {
           "from": "wire",
           "to": "ui",
-          "at": "apps/desktop/src/views/settings/sections/RegistrySection.tsx"
+          "at": "apps/control-center/src/settings/RegistrySection.tsx"
         }
       ]
     },
@@ -219,12 +219,12 @@
       "role": "domain"
     },
     {
-      "where": "apps/desktop/src/views/agents/ActivityPage.tsx",
+      "where": "apps/control-center/src/agents/ActivityPage.tsx",
       "concept": "agent-run",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/agents/AgentCreate.tsx",
+      "where": "apps/control-center/src/agents/AgentCreate.tsx",
       "concept": "agent",
       "role": "ui"
     },
@@ -234,7 +234,7 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/agents/AgentsDirectory.tsx",
+      "where": "apps/control-center/src/agents/AgentsDirectory.tsx",
       "concept": "agent",
       "role": "ui"
     },
@@ -264,7 +264,7 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/skills/ActivityFeed.tsx",
+      "where": "apps/control-center/src/skills/ActivityFeed.tsx",
       "concept": "org-event",
       "role": "ui"
     },
@@ -274,7 +274,7 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/skills/SkillEditor.tsx",
+      "where": "apps/control-center/src/skills/SkillEditor.tsx",
       "concept": "skill",
       "role": "ui"
     },
@@ -304,7 +304,7 @@
       "role": "wire"
     },
     {
-      "where": "apps/desktop/src/views/agents/ActivityPage.tsx",
+      "where": "apps/control-center/src/agents/ActivityPage.tsx",
       "concept": "trace",
       "role": "ui"
     },
@@ -314,12 +314,12 @@
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/agents/AgentFiles.tsx",
+      "where": "apps/control-center/src/agents/AgentFiles.tsx",
       "concept": "agent-workspace-file",
       "role": "ui"
     },
     {
-      "where": "apps/desktop/src/views/agents/AgentThreadList.tsx",
+      "where": "apps/control-center/src/agents/AgentThreadList.tsx",
       "concept": "agent-thread",
       "role": "ui"
     },
@@ -369,7 +369,7 @@
       "reason": "presentational"
     },
     {
-      "where": "apps/desktop/src/views/agents/AgentsPanel.tsx",
+      "where": "apps/control-center/src/agents/AgentsPanel.tsx",
       "reason": "infrastructure"
     },
     {

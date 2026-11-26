@@ -34,6 +34,7 @@ describe("loadConfig", () => {
       selfBaseUrl: "http://127.0.0.1:8080",
       faroUrl: DEFAULT_FARO_URL,
       webDistDir: path.resolve(process.cwd(), "../desktop/dist"),
+      controlDistDir: path.resolve(process.cwd(), "../control-center/dist"),
       poolMax: 10,
       dataDir: path.resolve("./data"),
       agentWorkspaceRoot: "/workspaces",

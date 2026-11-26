@@ -12,7 +12,6 @@ function menu(extra: Partial<Parameters<typeof SidebarMenu>[0]> = {}) {
       email="member@example.com"
       onOpenDevice={() => {}}
       onSignOut={() => {}}
-      inControl={false}
       {...extra}
     />,
   );

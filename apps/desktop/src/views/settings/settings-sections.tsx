@@ -1,203 +1,24 @@
-//! Guild settings sections: the section catalog plus the inline pane the
-//! rail's Settings tab renders in the main column. User sections for
-//! everyone; org sections appear for admins.
-
-import {
-  Bell,
-  Bot,
-  Building2,
-  Cpu,
-  Info,
-  KeyRound,
-  Layers,
-  Palette,
-  Sparkles,
-  User,
-  Users,
-  ShieldCheck,
-  UsersRound,
-  Waypoints,
-} from "lucide-react";
-import type { UsageQuery } from "./usage-route";
-import { canonicalSettings, isAdminSection, type SettingsSectionId } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "../../components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
 import { MachineSection } from "./sections/MachineSection";
-import { GatewaySection } from "./sections/GatewaySection";
 import { AboutSection } from "./sections/AboutSection";
-import { AssistantSection } from "./sections/AssistantSection";
-import GeneralSection from "./sections/GeneralSection";
-import UsageSection from "./sections/UsageSection";
-import UsersSection from "./sections/UsersSection";
-import TeamsSection from "./sections/TeamsSection";
-import ModelsSection from "./sections/ModelsSection";
-import McpSection from "./sections/McpSection";
-import SsoSection from "./sections/SsoSection";
-import SecuritySection from "./sections/SecuritySection";
-import RegistrySection from "./sections/RegistrySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 
-// No "releases" pane: desktop releases are dev-controlled, not
-// admin-controlled.
-type SectionId = SettingsSectionId;
-
-export interface SectionDef {
-  id: SectionId;
-  label: string;
-  icon: React.ReactNode;
-  group: "user" | "workspace";
-  /** Admin-only, from `isAdminSection`: hidden from a member's nav and
-   *  never rendered for one. */
-  admin: boolean;
-}
-
-/// The section catalog: the sidebar rail's Settings tab nav plus the inline
-/// main-pane rendering.
-export const SETTINGS_SECTIONS: SectionDef[] = (
-  [
-    { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
-    { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
-    { id: "notifications", label: "Notifications", icon: <Bell className="size-4" />, group: "user" },
-    { id: "machine", label: "Machines", icon: <Cpu className="size-4" />, group: "user" },
-    { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
-    { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
-    { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace" },
-    { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace" },
-    { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace" },
-    { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace" },
-    { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace" },
-    { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace" },
-    { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
-    { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace" },
-    { id: "security", label: "Security", icon: <ShieldCheck className="size-4" />, group: "workspace" },
-    { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace" },
-  ] satisfies Omit<SectionDef, "admin">[]
-).map((s) => ({ ...s, admin: isAdminSection(s.id) }));
-
-/// Section content for embedding outside the overlay: the sidebar rail's
-/// Settings tab renders this pane in the main column. An unknown id, or an
-/// admin section for a non-admin viewer, renders the default section.
-export function SettingsSectionPane({
-  sectionId,
-  email,
-  role,
-  detail,
-  onDetailChange,
-  usage,
-  onUsageChange,
-}: {
-  sectionId: string;
-  email: string;
-  /** The viewer's workspace role, as the session reported it. */
-  role: string;
-  detail: string | null;
-  onDetailChange: (detail: string | null) => void;
-  usage: UsageQuery;
-  onUsageChange: (usage: UsageQuery) => void;
-}) {
-  // The pane renders the section the canonical address names, so a member
-  // on an admin address sees (and fetches for) the default section only.
-  const shownId = canonicalSettings(sectionId, null, role).section;
-  const def = SETTINGS_SECTIONS.find((s) => s.id === shownId) ?? SETTINGS_SECTIONS[0];
-  return (
-    <SectionPane
-      def={def}
-      email={email}
-      role={role}
-      detail={shownId === sectionId ? detail : null}
-      onDetailChange={onDetailChange}
-      usage={usage}
-      onUsageChange={onUsageChange}
-    />
-  );
-}
-
-function SectionPane({
-  def,
-  email,
-  role,
-  detail,
-  onDetailChange,
-  usage,
-  onUsageChange,
-}: {
-  def: SectionDef;
-  email: string;
-  role: string;
-  detail: string | null;
-  onDetailChange: (detail: string | null) => void;
-  usage: UsageQuery;
-  onUsageChange: (usage: UsageQuery) => void;
-}) {
+export function SettingsSectionPane({ sectionId, email, role }: { sectionId: string; email: string; role: string }) {
+  const content = {
+    account: <AccountSection email={email} role={role} />,
+    appearance: <AppearanceSection />,
+    notifications: <NotificationsSection />,
+    machine: <MachineSection />,
+    about: <AboutSection />,
+  };
+  const section = sectionId as keyof typeof content;
   return (
     <div className="mx-auto max-w-4xl px-4 pb-6 sm:px-8 sm:pb-8">
-      <SectionBody
-        id={def.id}
-        email={email}
-        role={role}
-        detail={detail}
-        onDetailChange={onDetailChange}
-        usage={usage}
-        onUsageChange={onUsageChange}
-      />
+      {Object.hasOwn(content, section) ? content[section] : content.account}
     </div>
   );
-}
-
-function SectionBody({
-  id,
-  email,
-  role,
-  detail,
-  onDetailChange,
-  usage,
-  onUsageChange,
-}: {
-  id: SectionId;
-  email: string;
-  role: string;
-  detail: string | null;
-  onDetailChange: (detail: string | null) => void;
-  usage: UsageQuery;
-  onUsageChange: (usage: UsageQuery) => void;
-}) {
-  switch (id) {
-    case "general":
-      return <GeneralSection />;
-    case "account":
-      return <AccountSection email={email} role={role} />;
-    case "appearance":
-      return <AppearanceSection />;
-    case "notifications":
-      return <NotificationsSection />;
-    case "machine":
-      return <MachineSection />;
-    case "gateway":
-      return <GatewaySection />;
-    case "usage":
-      return (
-        <UsageSection detail={detail} onDetailChange={onDetailChange} usage={usage} onUsageChange={onUsageChange} />
-      );
-    case "assistant":
-      return <AssistantSection />;
-    case "users":
-      return <UsersSection detail={detail} onDetailChange={onDetailChange} />;
-    case "teams":
-      return <TeamsSection detail={detail} onDetailChange={onDetailChange} />;
-    case "models":
-      return <ModelsSection detail={detail} onDetailChange={onDetailChange} />;
-    case "mcp":
-      return <McpSection detail={detail} onDetailChange={onDetailChange} />;
-    case "sso":
-      return <SsoSection />;
-    case "security":
-      return <SecuritySection />;
-    case "registry":
-      return <RegistrySection detail={detail} onDetailChange={onDetailChange} />;
-    case "about":
-      return <AboutSection />;
-  }
 }
 
 function AccountSection({ email, role }: { email: string; role: string }) {

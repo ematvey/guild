@@ -12,7 +12,7 @@ import {
   slugError,
   type EditorForm,
   type ReviewBase,
-} from "./SkillEditor";
+} from "../../../../control-center/src/skills/SkillEditor";
 import { filePathError } from "./skill-files";
 
 const base: EditorForm = {

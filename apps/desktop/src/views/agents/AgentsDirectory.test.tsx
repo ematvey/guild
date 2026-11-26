@@ -3,7 +3,7 @@
 // can see it, not just the meta line.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentRow } from "./AgentsDirectory";
+import { AgentRow } from "../../../../control-center/src/agents/AgentsDirectory";
 import { makeAgent } from "./test-fixtures";
 
 afterEach(cleanup);

@@ -15,7 +15,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
 }));
 
 import { applyActivityRun, clearAgentState, runFinishes } from "./agents-store";
-import { RunDetailPage } from "./TraceDetail";
+import { RunDetailPage } from "../../../../control-center/src/agents/TraceDetail";
 
 const running: AgentRun = makeRun({ agent_name: "Echo", started_at: "2026-11-01T00:00:00Z" });
 

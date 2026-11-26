@@ -183,16 +183,16 @@ describe("panels", () => {
   });
 
   it("hides admin-only settings sections from a member", () => {
-    const html = renderToStaticMarkup(<SettingsPanel inControl={false} onControlTab={() => {}} role="member" activeSection={null} onSelectSection={() => {}} />);
+    const html = renderToStaticMarkup(<SettingsPanel role="member" activeSection={null} onSelectSection={() => {}} />);
     expect(html).toContain("User");
     expect(html).not.toContain("Workspace");
   });
 
-  it("shows the workspace group to an admin and marks the active section", () => {
+  it("keeps work settings focused for admins and marks the active section", () => {
     const html = renderToStaticMarkup(
-      <SettingsPanel inControl onControlTab={() => {}} role="admin" activeSection="general" onSelectSection={() => {}} />,
+      <SettingsPanel role="admin" activeSection="appearance" onSelectSection={() => {}} />,
     );
-    expect(html).toContain("Workspace");
+    expect(html).not.toContain("Workspace");
     expect(html).toContain("bg-sidebar-accent");
   });
 });

@@ -3,6 +3,7 @@
 // caller supplies the two checks — who may read the item, and who may change
 // its list — so the route itself knows nothing about either kind.
 
+import { isWorkRequest } from "./client-contract.js";
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
@@ -16,7 +17,7 @@ export interface AccessGuards {
   /** The caller's level on the item, or null when they cannot see it. */
   level: (user: UserRow, id: string) => Promise<AccessLevel | null>;
   /** Refuses a caller who may not change the item's list. */
-  manage: (user: UserRow, id: string) => Promise<void>;
+  manage: (user: UserRow, id: string, work?: boolean) => Promise<void>;
 }
 
 export function registerAccessRoutes(
@@ -46,7 +47,7 @@ export function registerAccessRoutes(
     const user = await requireUser(auth, req);
     const kind = parseAccessKind((req.params as Record<string, string>)["kind"]);
     const id = parseUuidParam(req, "id");
-    await guards[kind].manage(user, id);
+    await guards[kind].manage(user, id, isWorkRequest(req));
     await access.replace(user.org_id, kind, id, parseAccessInput(req.body));
     return sendJson(reply, {
       entries: await access.entries(user.org_id, kind, id),

@@ -4,7 +4,7 @@
 // thread or the device dialog is, so deep links, reloads and back/forward
 // land exactly where the user was.
 
-import type { EditorMode } from "./SkillEditor";
+import type { EditorMode } from "../../../../control-center/src/skills/SkillEditor";
 import type { SkillFilterKind, SkillSortKey } from "./SkillsPanel";
 
 /** The catalog list's search, filter and sort (`?q=&filter=&sort=`). */

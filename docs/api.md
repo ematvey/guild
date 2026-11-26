@@ -4,10 +4,18 @@ HTTP examples for the org server. They assume the server runs on
 `http://localhost:8080`. `$TOKEN` is a member session token from
 `POST /api/v1/auth/login`.
 
-The examples below cover supported external use. Control Center pages use
-the management routes shipped with the server. Those UI routes can evolve
-with the Control Center. Supported desktop builds have their own server
-compatibility requirements.
+## Application contracts
+
+| App | HTTP base | Live session |
+| --- | --- | --- |
+| Work, including the desktop webview | `/api/v1/work` | `POST /api/v1/work/ws/ticket` and `GET /api/v1/work/ws` |
+| Control Center | `/api/v1/control` | `POST /api/v1/control/ws/ticket` and `GET /api/v1/control/ws` |
+
+Work serves chat, projects, machine use and pairing, approvals, member app use, skill installation, and personal routines. Control serves agent setup, integration and registry management, skill publishing, workspace policy, usage and activity. Identity and the catalog operations used by both clients have an address in each contract. Each route applies the permissions of the same signed-in member. A route outside a namespace is absent from that namespace.
+
+A socket ticket is valid on its issuing contract. Work receives chat, project and machine state. Control receives management state and selected Activity views. Both receive the member, workspace, models, agents, Apps and skills relevant to their surfaces. The `WorkClientFrame`, `WorkServerFrame`, `ControlClientFrame`, and `ControlServerFrame` definitions in [the socket schema](../protocol/socket.schema.json) specify the frames each contract accepts and sends.
+
+The unprefixed `/api/v1` endpoints remain the compatibility contract for installed desktop builds, the native engine, and existing external callers. The examples below use that contract. OpenAI- and Anthropic-compatible requests retain their gateway addresses.
 
 ## Headless client
 

@@ -19,7 +19,7 @@ import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../..
 import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
-import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentTabRoute, agentsRailTab } from "../agents/agents-route";
+import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
 import { SidebarMenu, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
@@ -43,9 +43,7 @@ import { SidebarSurface } from "./surfaces/sidebar-surface";
 import { RoutePage } from "./surfaces/route-page";
 import { SettingsPage } from "./surfaces/settings-page";
 import { SkillsPage } from "./surfaces/skills-page";
-import { AgentsPage } from "./surfaces/agents-page";
-import { IntegrationsSurface } from "./surfaces/integrations-page";
-import { INTEGRATIONS_HOME } from "../integrations/integrations-route";
+import { AgentRoutinesPage } from "../agents/AgentRoutines";
 import { AppsSurface } from "./surfaces/apps-page";
 import { APPS_HOME } from "../apps/apps-route";
 import { routePath, useThreadRoute } from "./hooks/use-thread-route";
@@ -306,13 +304,7 @@ function ThreadView(props: ThreadProps) {
   sendRef.current = outgoing.send;
   const genuiHost = useMemo<GenuiHost>(() => ({ send: (text) => void sendRef.current("normal", text) }), []);
   const recoverMissingChatRef = useRef<() => void>(() => {});
-  const activityRunId = route.agents?.view === "run" ? route.agents.runId : null;
-  const activityChatId = route.agents?.view === "chat" ? route.agents.chatId : null;
-  const coordinationAgentId = route.agents?.view === "agent" && route.agents.tab === "activity" ? route.agents.agentId : null;
   const { socketRef } = useMemberSocket({
-    coordinationAgentId,
-    runId: activityRunId,
-    activityChatId,
     signOut,
     thread,
     outgoing: { outgoingRef, observedUserIdsRef: composer.observedUserIdsRef, settleOutgoing: outgoing.settleOutgoing },
@@ -415,7 +407,7 @@ function ThreadView(props: ThreadProps) {
   }, [chatId]);
   useEffect(() => {
     socketRef.current?.resync();
-  }, [chatId, activityRunId, activityChatId, coordinationAgentId, socketRef]);
+  }, [chatId, socketRef]);
 
   // The composer belongs to the displayed chat, not the route target: a
   // pending swap keeps the old transcript and its draft until the one
@@ -604,18 +596,8 @@ function ThreadView(props: ThreadProps) {
   // the created thread.
   const holdingFirstSend = outgoing.pendingSubmitId !== null && chatId === null;
 
-  const railTab: RailTab =
-    route.skills !== null
-      ? "skills"
-      : route.integrations !== null
-        ? "integrations"
-        : (route.apps ?? null) !== null
-          ? "apps"
-          : route.agents !== null
-            ? agentsRailTab(route.agents)
-            : route.tab;
+  const railTab: RailTab = route.skills ? "skills" : route.apps ? "apps" : route.tab;
   const controlRoute = isControlRoute(route);
-  const inControl = controlRoute && !HAS_SHELL;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
@@ -628,8 +610,8 @@ function ThreadView(props: ThreadProps) {
         ...route,
         tab: tab === "settings" ? tab : "chats",
         skills: tab === "skills" ? SKILLS_CATALOG : null,
-        agents: tab === "agents" ? AGENTS_DIRECTORY : tab === "activity" ? AGENTS_ACTIVITY : null,
-        integrations: tab === "integrations" ? INTEGRATIONS_HOME : null,
+        agents: null,
+        integrations: null,
         apps: tab === "apps" ? APPS_HOME : null,
       },
       isMobile,
@@ -643,18 +625,6 @@ function ThreadView(props: ThreadProps) {
     }
     if (tab === "skills") {
       pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG, agents: null, integrations: null });
-      return;
-    }
-    if (tab === "integrations") {
-      pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: INTEGRATIONS_HOME });
-      return;
-    }
-    if (tab === "agents") {
-      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_DIRECTORY });
-      return;
-    }
-    if (tab === "activity") {
-      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_ACTIVITY });
       return;
     }
     // Panel tabs navigate too: each owns its address, back/forward walks
@@ -679,12 +649,12 @@ function ThreadView(props: ThreadProps) {
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: RailTab) => {
-    if (tab === "agents" || tab === "activity" || tab === "skills" || tab === "integrations" || tab === "apps") {
+    if (tab === "skills" || tab === "apps") {
       switchTab(tab);
       setOpen(false);
       return;
     }
-    if (tab === railTab && !inControl) {
+    if (tab === railTab) {
       setOpen(false);
       return;
     }
@@ -723,18 +693,7 @@ function ThreadView(props: ThreadProps) {
   // it would sit on top of the header's new-thread plus).
   const sidebar = (
     <SidebarSurface
-      tab={inControl ? "settings" : route.tab}
-      inControl={inControl}
-      onControlTab={(tab) => {
-        if (tab === "skill-management") {
-          pushRoute({ ...CHAT_ROOT, skills: { ...SKILLS_CATALOG, management: true } });
-        } else if (tab === "app-management") {
-          pushRoute({ ...CHAT_ROOT, apps: { ...APPS_HOME, management: true } });
-        } else {
-          switchTab(tab);
-        }
-        if (isMobile) setOpen(false);
-      }}
+      tab={route.tab}
       role={role}
       chatId={viewChatId}
       projectId={route.projectId}
@@ -773,26 +732,27 @@ function ThreadView(props: ThreadProps) {
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
   const routePage =
-    controlRoute && HAS_SHELL ? (
+    controlRoute ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
         <div className="m-auto flex flex-col items-center gap-4 p-4">
           <Button onClick={() => openExternal(serverUrl() + routePath(route))}>Open Control Center</Button>
           <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
         </div>
       </RoutePage>
-    ) : route.agents !== null ? (
-      <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
-        <AgentsPage
-          route={route.agents}
-          viewer={{ email, displayName, role }}
-          pushRoute={pushRoute}
-          onOpenChat={openChat}
-          onRefreshConversation={() => socketRef.current?.resync()}
-        />
-      </RoutePage>
-    ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (
-      <RoutePage isMobile={isMobile} title="Integrations" onOpenDrawer={openDrawer}>
-        <IntegrationsSurface route={route.integrations} isMobile={isMobile} pushRoute={pushRoute} />
+    ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
+      <RoutePage isMobile={isMobile} title="Routines" onOpenDrawer={openDrawer}>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+          <h1 className="mb-4 text-lg font-semibold">Routines</h1>
+          {agent.agentsList === null ? <p>Loading routines…</p> :
+            agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
+              <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
+                canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
+                onNavigate={(next) => {
+                  if (next.view === "agent" && next.tab === "routines") {
+                    pushRoute({ ...CHAT_ROOT, agents: { ...next, personalRoutines: true } });
+                  }
+                }} />}
+        </div>
       </RoutePage>
     ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (
       <RoutePage isMobile={isMobile} title="Apps" onOpenDrawer={openDrawer}>
@@ -810,11 +770,8 @@ function ThreadView(props: ThreadProps) {
       <RoutePage isMobile={isMobile} title="Settings" onOpenDrawer={openDrawer}>
         <SettingsPage
           section={settingsSection}
-          detail={route.settingsDetail}
-          usage={route.usage}
           email={email}
           role={role}
-          pushRoute={pushRoute}
         />
       </RoutePage>
     ) : null;
@@ -844,7 +801,6 @@ function ThreadView(props: ThreadProps) {
       onOpenDevice={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "device" } })}
       onSignOut={signOut}
       onAddWorkspace={onAddWorkspace}
-      inControl={inControl}
       collapsed={collapsed}
       onExpand={() => sidebarState.setCollapsed(false)}
     />

@@ -21,7 +21,8 @@ Product surfaces:
 - **Web UI** — served by the org server; a browser tab is a full chat client
   with the same work navigation as the desktop app.
 - **Control Center** — role-scoped web app for workspace and agent setup,
-  integration configuration, usage, and administrative activity.
+  integration configuration, usage, and administrative activity. It is built
+  independently and served at `/control`. The desktop ships the Work frontend.
 - **Headless CLI / engine callers** — scripts and tools that drive the local
   backend process over the engine protocol.
 

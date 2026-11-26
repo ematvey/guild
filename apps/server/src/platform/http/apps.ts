@@ -14,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, queryParam, requireUser, sendJson } from "./error.js";
+import { isWorkRequest } from "./client-contract.js";
 import type { AppRow, AppStore } from "../store/apps.js";
 import { AppFunctionError, appFunctionClass, bindAppFunction, type AppFunction } from "../domain/app-functions.js";
 import { IntegrationAccessStore } from "../store/integration-access.js";
@@ -352,7 +353,12 @@ export function registerAppRoutes(app: FastifyInstance, auth: IdentityCtx, gatew
   // `DELETE /api/v1/apps/{id}` — the owner, or an admin for a shared App.
   app.delete("/api/v1/apps/:id", async (req, reply) => {
     const user = await requireUser(auth, req);
-    await apps.delete(user.org_id, parseUuidParam(req, "id"), user);
+    const id = parseUuidParam(req, "id");
+    if (isWorkRequest(req) && user.role === "admin") {
+      const row = await apps.getVisible(user.org_id, id, user);
+      if (row.owner_user_id !== user.id) throw ApiError.forbidden("manage shared apps in the Control Center");
+    }
+    await apps.delete(user.org_id, id, user);
     return sendJson(reply, { deleted: true });
   });
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildIntegrationConfig, initialDraft } from "./configuration";
-import type { FieldSpec } from "./integrations-api";
+import { buildIntegrationConfig, initialDraft } from "../../../../control-center/src/integrations/configuration";
+import type { FieldSpec } from "../../../../control-center/src/integrations/integrations-api";
 
 const fields: FieldSpec[] = [
   { name: "api_key", kind: "secret", required: true },

@@ -14,7 +14,7 @@ vi.mock("../../../lib/session", () => ({
 }));
 
 import { applyWorkspaceIdentity, clearWorkspaceIdentity, type WorkspaceIdentity } from "../../../lib/workspace-store";
-import GeneralSection, { followPushedName } from "./GeneralSection";
+import GeneralSection, { followPushedName } from "../../../../../control-center/src/settings/GeneralSection";
 import { AboutSection } from "./AboutSection";
 
 function identity(name: string, telemetry: boolean): WorkspaceIdentity {
