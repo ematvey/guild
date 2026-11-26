@@ -54,6 +54,11 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
   );
 }
 
+const ROW_FOCUS =
+  "has-[>button:focus-visible]:ring-1 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring";
+const PIN_INDICATOR =
+  "size-3 shrink-0 text-muted-foreground group-hover/row:hidden group-focus-within/row:hidden group-has-[[data-state=open]]/row:hidden pointer-coarse:hidden";
+
 const ROW_BUTTON =
   "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
 const ROW_ACTIONS =
@@ -226,7 +231,7 @@ export function ChatListItem({
             }
           : undefined
       }
-      className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-sidebar-accent text-sidebar-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -237,7 +242,7 @@ export function ChatListItem({
         onClick={onClick}
         title={title}
         type="button"
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
         {assistantInbox ? (
           <Circle aria-hidden="true" className="size-4 shrink-0" />
@@ -257,7 +262,7 @@ export function ChatListItem({
         ) : (
           <span className="min-w-0 flex-1 truncate">{title}</span>
         )}
-        {onPin && pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
+        {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
         <RowStatus status={status} />
       </button>
       {hasActions && (
@@ -333,7 +338,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className="@container group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -345,7 +350,7 @@ export function ProjectHeader({
         onClick={onToggle}
         aria-expanded={open}
         title={folder}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
         {open ? (
           <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
@@ -367,7 +372,7 @@ export function ProjectHeader({
             <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
           </span>
         )}
-        {onPin && pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
+        {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
         <RowStatus status={status} />
       </button>
       <div className={ROW_ACTIONS}>
