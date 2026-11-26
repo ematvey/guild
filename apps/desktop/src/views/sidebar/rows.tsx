@@ -11,7 +11,6 @@ import {
   MessageCircle,
   Pencil,
   Pin,
-  PinOff,
   Plus,
   Repeat,
   Trash2,
@@ -71,7 +70,7 @@ function PinButton({ pinned, onPin }: { pinned?: boolean; onPin?: () => void }) 
   const label = pinned ? "Unpin" : "Pin";
   return (
     <button type="button" className={ROW_BUTTON} aria-label={label} title={label} onClick={onPin}>
-      <Pin aria-hidden="true" className={`size-3.5 ${pinned ? "fill-current" : ""}`} />
+      <Pin aria-hidden="true" className="size-3.5 fill-current" />
     </button>
   );
 }
@@ -106,7 +105,7 @@ function RowActions({
       <DropdownMenuContent align="end" className="min-w-32">
         {onPin && (
           <DropdownMenuItem onSelect={onPin}>
-            {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+            <Pin aria-hidden="true" className="size-4 fill-current" />
             {pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
         )}
@@ -268,7 +267,7 @@ export function ChatListItem({
         ) : (
           <FadeTitle text={title} fadeWidth={10} />
         )}
-        {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
+        {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
         <RowStatus status={status} />
       </button>
       {hasActions && (
@@ -380,7 +379,7 @@ export function ProjectHeader({
               ))}
           </span>
         )}
-        {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
+        {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
         <RowStatus status={status} />
       </button>
       <div className={ROW_ACTIONS}>
