@@ -22,6 +22,7 @@ export interface ProjectRow {
   created_at: string;
   machine_label: string | null;
   pinned_at?: string;
+  pin_rank?: number;
 }
 
 const ROW_COLUMNS =
@@ -29,7 +30,7 @@ const ROW_COLUMNS =
   utcText("p.created_at") +
   " AS created_at, " +
   utcText("p.pinned_at") +
-  " AS pinned_at, " +
+  " AS pinned_at, p.pin_rank, " +
   "coalesce(m.label, p.machine_id) AS machine_label";
 const ROW_FROM = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
@@ -43,6 +44,7 @@ function row(r: Record<string, unknown>): ProjectRow {
     machine_id: r.machine_id as string,
     created_at: pgTimestampToRfc3339(r.created_at as string),
     ...(typeof r.pinned_at === "string" ? { pinned_at: pgTimestampToRfc3339(r.pinned_at) } : {}),
+    ...(typeof r.pin_rank === "number" ? { pin_rank: r.pin_rank } : {}),
     machine_label: (r.machine_label as string | null) ?? null,
   };
 }
@@ -164,7 +166,8 @@ export class ProjectStore {
             "WHEN $6::bool THEN now() " +
             "ELSE NULL END, " +
             "pinned_at = CASE WHEN $8::bool IS NULL THEN pinned_at " +
-            "WHEN $8::bool THEN COALESCE(pinned_at, clock_timestamp()) ELSE NULL END " +
+            "WHEN $8::bool THEN COALESCE(pinned_at, clock_timestamp()) ELSE NULL END, " +
+            "pin_rank = CASE WHEN $8::bool = false THEN NULL ELSE pin_rank END " +
             "WHERE org_id = $1 AND id = $2 AND user_id = $7 RETURNING id",
           [orgId, projectId, name, folder, machineId, archived, userId, pinned ?? null],
         );

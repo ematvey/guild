@@ -525,6 +525,7 @@
       "additionalProperties": false,
       "properties": {
         "pinned_at": { "$ref": "#/$defs/DateTime" },
+        "pin_rank": { "type": "integer", "minimum": 0 },
         "id": { "$ref": "#/$defs/Uuid" },
         "name": { "type": "string" },
         "folder": {
@@ -762,6 +763,7 @@
       "additionalProperties": false,
       "properties": {
         "pinned_at": { "$ref": "#/$defs/DateTime" },
+        "pin_rank": { "type": "integer", "minimum": 0 },
         "assistant_inbox": {
           "type": "boolean",
           "description": "Persistent Assistant inbox; pinned separately from ordinary Threads."

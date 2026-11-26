@@ -53,6 +53,10 @@ export async function listChats(): Promise<ChatSummary[] | null> {
 
 /// Renames and/or archives a chat. Archived chats drop out of `listChats`
 /// but direct links still resolve; `archived: false` unarchives.
+export async function reorderSidebarPin(id: string, anchorId: string, after: boolean): Promise<void> {
+  await request("POST", `/api/v1/sidebar/pins/${encodeURIComponent(id)}/order`, { anchor_id: anchorId, after });
+}
+
 export async function updateChat(id: string, patch: UpdateChatRequest): Promise<void> {
   await request<unknown>("PATCH", thread(id), patch);
 }

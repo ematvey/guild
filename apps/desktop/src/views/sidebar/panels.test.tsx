@@ -103,9 +103,9 @@ describe("ProjectHeader", () => {
     expect(html).not.toContain("bg-muted-foreground/40");
   });
 
-  it("rotates the chevron when open and offers the project's new chat", () => {
+  it("shows an open folder when expanded and offers the project's new chat", () => {
     const html = renderToStaticMarkup(<ProjectHeader {...base} open onNewChat={() => {}} />);
-    expect(html).toContain("rotate-90");
+    expect(html).toContain("lucide-folder-open");
     expect(html).toContain("New chat in this project");
   });
 });

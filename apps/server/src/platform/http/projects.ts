@@ -28,6 +28,7 @@ function projectJson(p: ProjectRow): string {
     machine_id: p.machine_id,
     machine_label: p.machine_label,
     created_at: p.created_at,
+    ...(p.pin_rank !== undefined ? { pin_rank: p.pin_rank } : {}),
     ...(p.pinned_at ? { pinned_at: p.pinned_at } : {}),
   };
   return JSON.stringify(out);

@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type HTMLAttributes } from "react";
 import {
   Archive,
   ArchiveRestore,
-  ChevronRight,
+  Folder,
+  FolderOpen,
   Circle,
   EllipsisVertical,
   Loader2,
@@ -20,7 +21,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { FadeTitle } from "./chrome";
 
 /** Inline rename field: Enter or blur commits, Esc cancels; `onDone(null)`
  * means "no change". */
@@ -55,19 +55,15 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
 }
 
 const ROW_BUTTON =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring group-hover/row:opacity-100 group-focus-within/row:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100";
+  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+const ROW_ACTIONS =
+  "flex max-w-0 shrink-0 items-center overflow-hidden group-hover/row:max-w-none group-focus-within/row:max-w-none group-has-[[data-state=open]]/row:max-w-none pointer-coarse:max-w-none";
 
 function PinButton({ pinned, onPin }: { pinned?: boolean; onPin?: () => void }) {
   if (!onPin) return null;
   const label = pinned ? "Unpin" : "Pin";
   return (
-    <button
-      type="button"
-      className={`${ROW_BUTTON} ${pinned ? "opacity-100" : ""}`}
-      aria-label={label}
-      title={label}
-      onClick={onPin}
-    >
+    <button type="button" className={ROW_BUTTON} aria-label={label} title={label} onClick={onPin}>
       <Pin aria-hidden="true" className={`size-3.5 ${pinned ? "fill-current" : ""}`} />
     </button>
   );
@@ -181,6 +177,7 @@ export function ChatListItem({
   onArchive,
   onDelete,
   pinned,
+  dragProps,
   onPin,
   archiveLabel,
   assistantInbox,
@@ -197,6 +194,7 @@ export function ChatListItem({
   onArchive?: () => void;
   onDelete?: () => void;
   pinned?: boolean;
+  dragProps?: Pick<HTMLAttributes<HTMLButtonElement>, "draggable" | "onDragStart" | "onDragEnd">;
   onPin?: () => void;
   /** Row-menu label for the archive action ("Unarchive" in the Archived
    * section); defaults to "Archive". */
@@ -235,6 +233,7 @@ export function ChatListItem({
       }`}
     >
       <button
+        {...dragProps}
         onClick={onClick}
         title={title}
         type="button"
@@ -256,22 +255,25 @@ export function ChatListItem({
             New thread
           </span>
         ) : (
-          <FadeTitle text={title} />
+          <span className="min-w-0 flex-1 truncate">{title}</span>
         )}
+        {onPin && pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
         <RowStatus status={status} />
       </button>
-      {!assistantInbox && <PinButton pinned={pinned} onPin={onPin} />}
       {hasActions && (
-        <RowActions
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-          onRename={onRename ? () => setEditing(true) : undefined}
-          onArchive={onArchive}
-          onDelete={onDelete}
-          archiveLabel={archiveLabel}
-          pinned={pinned}
-          onPin={onPin}
-        />
+        <div className={ROW_ACTIONS}>
+          <PinButton pinned={pinned} onPin={onPin} />
+          <RowActions
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            onRename={onRename ? () => setEditing(true) : undefined}
+            onArchive={onArchive}
+            onDelete={onDelete}
+            archiveLabel={archiveLabel}
+            pinned={pinned}
+            onPin={onPin}
+          />
+        </div>
       )}
     </div>
   );
@@ -289,6 +291,7 @@ export function ProjectHeader({
   onArchive,
   onNewChat,
   pinned,
+  dragProps,
   onPin,
   archiveLabel,
 }: {
@@ -310,6 +313,7 @@ export function ProjectHeader({
   archiveLabel?: string;
   onNewChat?: () => void;
   pinned?: boolean;
+  dragProps?: Pick<HTMLAttributes<HTMLButtonElement>, "draggable" | "onDragStart" | "onDragEnd">;
   onPin?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -329,57 +333,66 @@ export function ProjectHeader({
   }
   return (
     <div
-      className="group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      className="@container group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
       }}
     >
       <button
+        {...dragProps}
         type="button"
         onClick={onToggle}
         aria-expanded={open}
         title={folder}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-        <span className="flex min-w-10 flex-1 overflow-hidden">
-          <FadeTitle text={name} />
-        </span>
+        {open ? (
+          <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
+        ) : (
+          <Folder aria-hidden="true" className="size-4 shrink-0" />
+        )}
+        <span className="min-w-10 flex-1 truncate">{name}</span>
         {machine?.name && (
-          <span className="flex min-w-0 items-center gap-1 overflow-hidden text-xs text-muted-foreground/70">
+          <span
+            title={machine.name}
+            className="flex min-w-0 items-center gap-1 overflow-hidden text-xs text-muted-foreground/70"
+          >
             {machine.online !== undefined &&
               (machine.online ? (
                 <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
               ) : (
                 <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
               ))}
-            <span className="max-w-20 truncate">{machine.name}</span>
+            <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
           </span>
         )}
+        {onPin && pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
         <RowStatus status={status} />
       </button>
-      {onNewChat && (
-        <button
-          type="button"
-          title="New chat in this project"
-          aria-label="New chat in this project"
-          className={ROW_BUTTON}
-          onClick={onNewChat}
-        >
-          <Plus aria-hidden="true" className="size-4" />
-        </button>
-      )}
-      <PinButton pinned={pinned} onPin={onPin} />
-      <RowActions
-        open={menuOpen}
-        onOpenChange={setMenuOpen}
-        onRename={() => setEditing(true)}
-        onArchive={onArchive}
-        archiveLabel={archiveLabel}
-        pinned={pinned}
-        onPin={onPin}
-      />
+      <div className={ROW_ACTIONS}>
+        {onNewChat && (
+          <button
+            type="button"
+            title="New chat in this project"
+            aria-label="New chat in this project"
+            className={ROW_BUTTON}
+            onClick={onNewChat}
+          >
+            <Plus aria-hidden="true" className="size-4" />
+          </button>
+        )}
+        <PinButton pinned={pinned} onPin={onPin} />
+        <RowActions
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          onRename={() => setEditing(true)}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          pinned={pinned}
+          onPin={onPin}
+        />
+      </div>
     </div>
   );
 }

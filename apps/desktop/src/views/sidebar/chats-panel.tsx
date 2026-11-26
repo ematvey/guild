@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Plus, SquarePen } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
@@ -31,22 +31,30 @@ function ChatSection({
   open,
   onToggle,
   action,
+  dropTarget,
+  onDragOver,
+  onDrop,
   children,
 }: {
   label: string;
   open: boolean;
   onToggle: () => void;
   action?: ReactNode;
+  dropTarget?: boolean;
+  onDragOver?: (event: DragEvent<HTMLElement>) => void;
+  onDrop?: (event: DragEvent<HTMLElement>) => void;
   children: ReactNode;
 }) {
   return (
-    <section aria-label={label} className="space-y-0.5 pb-3">
-      <div className="flex h-8 items-center gap-1 px-1">
+    <section aria-label={label} className="space-y-0.5 pb-3" onDragOver={onDragOver} onDrop={onDrop}>
+      <div
+        className={`flex h-8 items-center gap-1 rounded-md px-1 ${dropTarget ? "ring-1 ring-inset ring-ring/60" : ""}`}
+      >
         <button
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left text-base font-semibold text-sidebar-foreground/85 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <ChevronRight aria-hidden="true" className={`size-3.5 ${open ? "rotate-90" : ""}`} />
           {label}
@@ -70,6 +78,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   onArchiveProject,
   onUnarchiveProject,
   onPinChat,
+  onReorderPin,
   onPinProject,
   loadingChats,
   chatId,
@@ -93,6 +102,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   onRenameProject?: (id: string, name: string) => void;
   onArchiveProject?: (id: string) => void;
   onUnarchiveProject?: (id: string) => void;
+  onReorderPin?: (id: string, anchorId: string, after: boolean) => void;
   onPinChat?: (id: string, pinned: boolean) => void;
   onPinProject?: (id: string, pinned: boolean) => void;
   /** True while the chat list is still loading (skeleton rows). */
@@ -117,6 +127,29 @@ export const ChatsPanel = memo(function ChatsPanel({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+
+  const [dragged, setDragged] = useState<{ id: string; kind: "chat" | "project"; pinned: boolean } | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; after: boolean } | null>(null);
+
+  const finishDrag = () => {
+    setDragged(null);
+    setDropHint(null);
+  };
+  const dragProps = (id: string, kind: "chat" | "project", pinned: boolean) => ({
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLElement>) => {
+      event.stopPropagation();
+      event.dataTransfer.setData("application/x-guild-sidebar-row", id);
+      event.dataTransfer.effectAllowed = pinned ? "move" : "copy";
+      setDragged({ id, kind, pinned });
+    },
+    onDragEnd: finishDrag,
+  });
+  const allowDrop = (event: DragEvent<HTMLElement>) => {
+    if (!dragged || !event.dataTransfer.types.includes("application/x-guild-sidebar-row")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = dragged.pinned ? "move" : "copy";
+  };
 
   const activeProject = projects?.find((project) => project.id === projectId);
   const archivedProject = archivedProjects?.find((project) => project.id === projectId);
@@ -153,6 +186,11 @@ export const ChatsPanel = memo(function ChatsPanel({
         unread: !!chat.unread && !chat.archived,
         blocked: !!chat.blocked,
       }}
+      dragProps={
+        !restricted && !chat.archived && !chat.assistant_inbox && onPinChat
+          ? dragProps(chat.id, "chat", !!chat.pinned_at)
+          : undefined
+      }
       pinned={!!chat.pinned_at}
       onPin={!restricted && !chat.assistant_inbox && onPinChat ? () => onPinChat(chat.id, !chat.pinned_at) : undefined}
       onClick={() => onOpenChat(chat.id)}
@@ -177,7 +215,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     const limit = Math.max(limits[project.id] ?? PROJECT_PAGE_INITIAL, activeIndex + 1);
     const machine = machines?.find((item) => item.machine_id === project.machine_id);
     return (
-      <div key={project.id}>
+      <div key={project.id} className="ml-3">
         <div ref={projectId === project.id ? activeProjectHeader : undefined}>
           <ProjectHeader
             name={project.name}
@@ -194,6 +232,7 @@ export const ChatsPanel = memo(function ChatsPanel({
             onRename={(name) => onRenameProject?.(project.id, name)}
             onArchive={() => (archived ? onUnarchiveProject : onArchiveProject)?.(project.id)}
             archiveLabel={archived ? "Unarchive" : undefined}
+            dragProps={!archived && onPinProject ? dragProps(project.id, "project", !!project.pinned_at) : undefined}
             pinned={!!project.pinned_at}
             onPin={!archived && onPinProject ? () => onPinProject(project.id, !project.pinned_at) : undefined}
             onNewChat={!archived && onNewChatInProject ? () => onNewChatInProject(project) : undefined}
@@ -224,12 +263,32 @@ export const ChatsPanel = memo(function ChatsPanel({
 
   const pins = [
     ...recent.flatMap((chat) =>
-      chat.pinned_at ? [{ id: chat.id, time: chat.pinned_at, render: () => renderChat(chat) }] : [],
+      chat.pinned_at
+        ? [{ id: chat.id, rank: chat.pin_rank, time: chat.pinned_at, render: () => renderChat(chat) }]
+        : [],
     ),
     ...(projects ?? []).flatMap((project) =>
-      project.pinned_at ? [{ id: project.id, time: project.pinned_at, render: () => renderProject(project) }] : [],
+      project.pinned_at
+        ? [{ id: project.id, rank: project.pin_rank, time: project.pinned_at, render: () => renderProject(project) }]
+        : [],
     ),
-  ].sort((a, b) => b.time.slice(0, -1).localeCompare(a.time.slice(0, -1)) || a.id.localeCompare(b.id));
+  ].sort(
+    (a, b) =>
+      (a.rank ?? -1) - (b.rank ?? -1) ||
+      b.time.slice(0, -1).localeCompare(a.time.slice(0, -1)) ||
+      a.id.localeCompare(b.id),
+  );
+  const dropOnPinned = (event: DragEvent<HTMLElement>, anchorId = pins[0]?.id, after = false) => {
+    if (!dragged || event.dataTransfer.getData("application/x-guild-sidebar-row") !== dragged.id) return;
+    event.preventDefault();
+    if (dragged.pinned) {
+      if (anchorId && anchorId !== dragged.id) onReorderPin?.(dragged.id, anchorId, after);
+    } else {
+      (dragged.kind === "chat" ? onPinChat : onPinProject)?.(dragged.id, true);
+    }
+    setSections((current) => ({ ...current, pinned: true }));
+    finishDrag();
+  };
   const unpinnedProjects = projects?.filter((project) => !project.pinned_at);
   const archivedThreads = archivedChats?.filter((chat) => !chat.project_id || !archivedProjectIds.has(chat.project_id));
   return (
@@ -269,11 +328,49 @@ export const ChatsPanel = memo(function ChatsPanel({
         className="min-h-0 flex-1 overflow-y-auto px-2"
         onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
       >
-        {pins.length > 0 && (
-          <ChatSection label="Pinned" open={sections.pinned} onToggle={() => toggleSection("pinned")}>
-            {pins.map((pin) => pin.render())}
-          </ChatSection>
-        )}
+        <ChatSection
+          label="Pinned"
+          open={sections.pinned}
+          dropTarget={!!dragged && !dropHint}
+          onToggle={() => toggleSection("pinned")}
+          onDragOver={(event) => {
+            allowDrop(event);
+            if (dropHint) setDropHint(null);
+          }}
+          onDrop={dropOnPinned}
+        >
+          {pins.map((pin) => (
+            <div
+              key={pin.id}
+              className="relative"
+              onDragOver={(event) => {
+                if (!dragged?.pinned || dragged.id === pin.id || !onReorderPin) return;
+                event.stopPropagation();
+                allowDrop(event);
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const after = event.clientY >= bounds.top + bounds.height / 2;
+                if (dropHint?.id !== pin.id || dropHint.after !== after) setDropHint({ id: pin.id, after });
+              }}
+              onDragLeave={(event) => {
+                if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                  setDropHint(null);
+                }
+              }}
+              onDrop={(event) => {
+                if (!dragged?.pinned) return;
+                event.stopPropagation();
+                dropOnPinned(event, pin.id, dropHint?.id === pin.id && dropHint.after);
+              }}
+            >
+              {dropHint?.id === pin.id && (
+                <div
+                  className={`pointer-events-none absolute inset-x-1 z-20 h-0.5 rounded bg-ring ${dropHint.after ? "bottom-0" : "top-0"}`}
+                />
+              )}
+              {pin.render()}
+            </div>
+          ))}
+        </ChatSection>
         <ChatSection
           label="Projects"
           open={sections.projects}
@@ -285,9 +382,9 @@ export const ChatsPanel = memo(function ChatsPanel({
                 title="New project"
                 aria-label="New project"
                 onClick={() => {
-                setSections((current) => ({ ...current, projects: true }));
-                onNewProject();
-              }}
+                  setSections((current) => ({ ...current, projects: true }));
+                  onNewProject();
+                }}
                 className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <Plus aria-hidden="true" className="size-4" />

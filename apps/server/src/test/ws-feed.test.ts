@@ -1224,6 +1224,48 @@ describe("member-socket feed", () => {
         );
       }
     }
+    const chat = await createChat("Reorder with a project");
+    await pin(true);
+    const chatPin = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { pinned: true },
+    });
+    expect(chatPin.statusCode).toBe(200);
+    const reorder = (token: string) =>
+      stack.env.app.inject({
+        method: "POST",
+        url: `/api/v1/sidebar/pins/${project.id}/order`,
+        headers: auth(token),
+        payload: { anchor_id: chat.id, after: false },
+      });
+    expect((await reorder(stack.adminToken)).statusCode).toBe(404);
+    expect((await reorder(stack.memberToken)).statusCode).toBe(200);
+    for (const client of [ws, other]) {
+      const projects = await waitFrame(
+        client,
+        (f) =>
+          f.type === "project_list" &&
+          (f.projects as { id: string; pin_rank?: number }[]).some(
+            (row) => row.id === project.id && row.pin_rank !== undefined,
+          ),
+      );
+      const threads = await waitFrame(
+        client,
+        (f) =>
+          f.type === "thread_list" &&
+          (f.chats as { id: string; pin_rank?: number }[]).some(
+            (row) => row.id === chat.id && row.pin_rank !== undefined,
+          ),
+      );
+      const rank = (projects.projects as { id: string; pin_rank: number }[]).find(
+        (row) => row.id === project.id,
+      )!.pin_rank;
+      expect((threads.chats as { id: string; pin_rank: number }[]).find((row) => row.id === chat.id)?.pin_rank).toBe(
+        rank + 1,
+      );
+    }
     other.end();
     ws.end();
   });

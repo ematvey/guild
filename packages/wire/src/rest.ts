@@ -651,6 +651,7 @@ export interface MessageAudio {
 /** One project: a named folder bound to a machine. */
 export interface Project {
   pinned_at?: string;
+  pin_rank?: number;
   id: string;
   name: string;
   /** Windows path; UNC (`\\wsl.localhost\…`) for a WSL distro folder. */
@@ -755,6 +756,7 @@ export type ThreadType = "user" | "subagent" | "routine";
 
 export interface Chat {
   pinned_at?: string;
+  pin_rank?: number;
   /** Persistent Assistant inbox; pinned separately from ordinary Threads. */
   assistant_inbox?: boolean;
   id: string;

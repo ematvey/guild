@@ -43,6 +43,7 @@ export function SidebarSurface({
   const archivedProjects = archivedProjectsStore.use();
   const machines = useMachines();
   const {
+    reorderPin,
     pinChat,
     pinProject,
     renameChat,
@@ -123,6 +124,7 @@ export function SidebarSurface({
       onRenameProject={renameProjectRow}
       onArchiveProject={archiveProjectRow}
       onUnarchiveProject={unarchiveProjectRow}
+      onReorderPin={reorderPin}
       onPinChat={pinChat}
       onPinProject={pinProject}
       onNewChat={onNewChat}

@@ -88,6 +88,8 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_rank: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -130,6 +132,8 @@ pub struct UpdateChatRequest {
 pub struct Chat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_rank: Option<u32>,
     /// Persistent Assistant inbox, pinned separately from ordinary threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant_inbox: Option<bool>,

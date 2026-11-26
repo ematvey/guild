@@ -3,7 +3,7 @@
 // workspace lists, so no list is re-read here.
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { deleteChat as deleteChatRequest, updateChat } from "../../../lib/api/chats";
+import { deleteChat as deleteChatRequest, reorderSidebarPin, updateChat } from "../../../lib/api/chats";
 import { updateProject } from "../../../lib/api/projects";
 import { ApiError } from "../../../lib/api/request";
 
@@ -81,7 +81,16 @@ export function useChatActions() {
     }
   }, []);
 
+  const reorderPin = useCallback(async (id: string, anchorId: string, after: boolean) => {
+    try {
+      await reorderSidebarPin(id, anchorId, after);
+    } catch (error) {
+      failed("Could not reorder the pin", error);
+    }
+  }, []);
+
   return {
+    reorderPin,
     pinChat,
     pinProject,
     renameChat,
