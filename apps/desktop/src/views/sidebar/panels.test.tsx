@@ -8,7 +8,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ChatListItem, ProjectHeader } from "./rows";
 import { ChatsPanel } from "./chats-panel";
 import { SettingsPanel } from "./settings-panel";
-import { WorkPanel } from "./work-panel";
 
 const idle = { generating: false, unread: false };
 
@@ -104,9 +103,9 @@ describe("ProjectHeader", () => {
     expect(html).not.toContain("bg-muted-foreground/40");
   });
 
-  it("rotates the chevron when open and offers the project's new chat", () => {
+  it("shows an open folder when expanded and offers the project's new chat", () => {
     const html = renderToStaticMarkup(<ProjectHeader {...base} open onNewChat={() => {}} />);
-    expect(html).toContain("rotate-90");
+    expect(html).toContain("lucide-folder-open");
     expect(html).toContain("New chat in this project");
   });
 });
@@ -163,7 +162,9 @@ describe("panels", () => {
   it("names each tab and offers the new-chat control", () => {
     const chats = renderToStaticMarkup(
       <ChatsPanel
-        grouping={{ visible: [], chatsByProject: {} } as any}
+        grouping={sidebarGrouping([])}
+        projects={[]}
+        onNewProject={() => {}}
         loadingChats={false}
         chatId={null}
         onNewChat={() => {}}
@@ -175,21 +176,9 @@ describe("panels", () => {
     expect(chats).toContain("lucide-square-pen");
     expect(chats).toContain("No conversations yet.");
 
-    const work = renderToStaticMarkup(
-      <WorkPanel
-        grouping={{ visible: [], chatsByProject: {} } as any}
-        archivedGrouping={{ visible: [], chatsByProject: {} } as any}
-        loadingChats={false}
-        loadingArchivedChats={false}
-        projects={[]}
-        chatId={null}
-        onOpenChat={() => {}}
-        onNewProject={() => {}}
-      />,
-    );
-    expect(work).toContain(">Projects<");
-    expect(work).toContain("New project");
-    expect(work).toContain("No projects yet.");
+    expect(chats).toContain(">Projects<");
+    expect(chats).toContain("New project");
+    expect(chats).toContain('aria-label="Projects"');
   });
 
   it("hides admin-only settings sections from a member", () => {

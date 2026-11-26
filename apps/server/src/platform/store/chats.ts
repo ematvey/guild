@@ -53,6 +53,9 @@ export interface ChatIdentity {
 export interface ChatListRow {
   /** The persistent Assistant inbox, distinct from ordinary Threads. */
   assistant_inbox?: boolean;
+  shared_agent_inbox?: boolean;
+  pinned_at?: string;
+  pin_rank?: number;
   id: string;
   org_id: string;
   user_id: string;
@@ -158,12 +161,15 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
           WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
+    ${utcText("c.pinned_at")} AS pinned_at, c.pin_rank,
+    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox' AND a.is_personal) AS assistant_inbox,
+    (xt.execution_role = 'inbox' AND NOT a.is_personal) AS shared_agent_inbox,
     c.archived_at IS NOT NULL AS archived,
     c.deleted_at IS NOT NULL AS deleted,
     rt.id AS routine_id, rt.name AS routine_name
   FROM chats c
   LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+  LEFT JOIN agents a ON a.id = xt.agent_id
   LEFT JOIN agent_routines rt ON rt.id = xt.routine_id
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
@@ -338,10 +344,13 @@ export class ChatStore {
                     WHERE d.chat_id = e.chat_id AND d.type = 'approval_decision'
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
-              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
+              ${utcText("c.pinned_at")} AS pinned_at, c.pin_rank,
+              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox' AND a.is_personal) AS assistant_inbox,
+              (xt.execution_role = 'inbox' AND NOT a.is_personal) AS shared_agent_inbox,
               true AS archived, false AS deleted
        FROM chats c
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+       LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN working_chats wc ON wc.chat_id = c.id
        LEFT JOIN projects pr ON pr.id = c.project_id
        LEFT JOIN machines m ON m.machine_id = pr.machine_id
@@ -497,11 +506,17 @@ export class ChatStore {
     caller: UserRow,
     title: string | null | undefined,
     archived: boolean | null | undefined,
+    pinned?: boolean,
   ): Promise<ChatRow> {
     const row = await withTransaction(this.pool, async (client) => {
       const locked = await client.query(
-        "SELECT id FROM chats WHERE org_id = $1 AND id = $2 AND user_id = $3 AND deleted_at IS NULL FOR UPDATE",
-        [orgId, chatId, caller.id],
+        `SELECT c.id FROM chats c
+         WHERE c.org_id = $1 AND c.id = $2 AND c.user_id = $3 AND c.deleted_at IS NULL
+           AND ($4::bool IS NULL OR (${USER_THREAD} AND NOT EXISTS (
+             SELECT 1 FROM agent_threads inbox WHERE inbox.chat_id = c.id AND inbox.execution_role = 'inbox'
+           )))
+         FOR UPDATE`,
+        [orgId, chatId, caller.id, pinned ?? null],
       );
       if (locked.rowCount === 0) throw ApiError.notFound("no such chat");
       const res = await client.query<Record<string, unknown>>(
@@ -509,12 +524,16 @@ export class ChatStore {
            archived_at = CASE
              WHEN $4::bool IS NULL THEN archived_at
              WHEN $4::bool THEN now()
-             ELSE NULL END
+             ELSE NULL END,
+           pinned_at = CASE WHEN $6::bool IS NULL THEN pinned_at
+                            WHEN $6::bool THEN COALESCE(pinned_at, clock_timestamp())
+                            ELSE NULL END,
+           pin_rank = CASE WHEN $6::bool = false THEN NULL ELSE pin_rank END
          WHERE org_id = $1 AND id = $2
          RETURNING id, org_id, user_id, title,
            ${utcText("created_at")} AS created_at,
            machine_id, machine_label, generating, project_id`,
-        [orgId, chatId, title ?? null, archived ?? null, title !== undefined],
+        [orgId, chatId, title ?? null, archived ?? null, title !== undefined, pinned ?? null],
       );
       if (archived === true) {
         await client.query(
@@ -522,14 +541,59 @@ export class ChatStore {
           [chatId],
         );
       }
+      await client.query("SELECT pg_notify('guild_workspace', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: caller.id, chat_id: chatId, parts: CHAT_LIST_PARTS }),
+      ]);
       return res.rows[0]!;
     });
-    // A rename or archive moves the sidebar lists: the workspace push
-    // carries the new title, or the row's move into the archived list.
-    await this.pool.query("SELECT pg_notify('guild_workspace', $1)", [
-      JSON.stringify({ org_id: orgId, user_id: row.user_id as string, chat_id: chatId, parts: CHAT_LIST_PARTS }),
-    ]);
     return rowToChat(row);
+  }
+
+  /** Moves a member's pin relative to another pin across both row types.
+   *  Lock projects first, in the same order as project writes that touch chats.
+   *  A pin added concurrently keeps its implicit position above ranked pins. */
+  async reorderPin(orgId: string, userId: string, id: string, anchorId: string, after: boolean): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT id FROM projects WHERE org_id = $1 AND user_id = $2 AND pinned_at IS NOT NULL ORDER BY id FOR UPDATE",
+        [orgId, userId],
+      );
+      await client.query(
+        "SELECT id FROM chats WHERE org_id = $1 AND user_id = $2 AND pinned_at IS NOT NULL AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+        [orgId, userId],
+      );
+      const { rows } = await client.query<{ id: string; kind: "chat" | "project" }>(
+        `SELECT id, 'chat' AS kind, pin_rank, pinned_at FROM chats
+         WHERE org_id = $1 AND user_id = $2 AND pinned_at IS NOT NULL AND deleted_at IS NULL
+         UNION ALL
+         SELECT id, 'project' AS kind, pin_rank, pinned_at FROM projects
+         WHERE org_id = $1 AND user_id = $2 AND pinned_at IS NOT NULL
+         ORDER BY pin_rank ASC NULLS FIRST, pinned_at DESC, id ASC`,
+        [orgId, userId],
+      );
+      const source = rows.find((row) => row.id === id);
+      const ordered = rows.filter((row) => row !== source);
+      const anchor = ordered.findIndex((row) => row.id === anchorId);
+      if (!source || anchor === -1) throw ApiError.notFound("no such sidebar pin");
+      ordered.splice(anchor + Number(after), 0, source);
+      for (const [table, kind] of [
+        ["projects", "project"],
+        ["chats", "chat"],
+      ] as const) {
+        const ranks = ordered.flatMap((row, rank) => (row.kind === kind ? [{ id: row.id, rank }] : []));
+        if (!ranks.length) continue;
+        await client.query(
+          `UPDATE ${table} AS item SET pin_rank = ranked.rank
+           FROM jsonb_to_recordset($3::jsonb) AS ranked(id uuid, rank integer)
+           WHERE item.org_id = $1 AND item.user_id = $2 AND item.id = ranked.id
+             AND item.pinned_at IS NOT NULL AND item.pin_rank IS DISTINCT FROM ranked.rank`,
+          [orgId, userId, JSON.stringify(ranks)],
+        );
+      }
+      await client.query("SELECT pg_notify('guild_workspace', $1)", [
+        JSON.stringify({ org_id: orgId, user_id: userId, parts: ["chats", "archived", "projects"] }),
+      ]);
+    });
   }
 
   /** Soft-deletes the caller's own chat and its agent-thread subtree. A
@@ -1018,6 +1082,9 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     project_machine_label: (r.project_machine_label as string | null) ?? null,
     last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
     type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
+    ...(typeof r.pinned_at === "string" ? { pinned_at: pgTimestampToRfc3339(r.pinned_at) } : {}),
+    ...(typeof r.pin_rank === "number" ? { pin_rank: r.pin_rank } : {}),
+    ...(r.shared_agent_inbox === true ? { shared_agent_inbox: true } : {}),
     ...(r.assistant_inbox === true ? { assistant_inbox: true } : {}),
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),

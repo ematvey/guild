@@ -524,6 +524,8 @@
       "required": ["id", "name", "folder", "machine_id", "machine_label", "created_at"],
       "additionalProperties": false,
       "properties": {
+        "pinned_at": { "$ref": "#/$defs/DateTime" },
+        "pin_rank": { "type": "integer", "minimum": 0 },
         "id": { "$ref": "#/$defs/Uuid" },
         "name": { "type": "string" },
         "folder": {
@@ -760,9 +762,15 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "pinned_at": { "$ref": "#/$defs/DateTime" },
+        "pin_rank": { "type": "integer", "minimum": 0 },
         "assistant_inbox": {
           "type": "boolean",
-          "description": "Persistent Assistant inbox; pinned separately from ordinary Threads."
+          "description": "The Member’s personal Assistant inbox, fixed above the scrolling Threads."
+        },
+        "shared_agent_inbox": {
+          "type": "boolean",
+          "description": "The Member’s inbox with a non-personal Agent."
         },
         "id": { "$ref": "#/$defs/Uuid" },
         "org_id": { "$ref": "#/$defs/Uuid" },
@@ -1483,6 +1491,7 @@
       "required": [],
       "additionalProperties": false,
       "properties": {
+        "pinned": { "type": "boolean", "description": "Omitted when unchanged." },
         "title": { "type": "string", "description": "Omitted when unchanged." },
         "archived": { "type": "boolean", "description": "Omitted when unchanged." }
       }
@@ -1493,6 +1502,7 @@
       "required": [],
       "additionalProperties": false,
       "properties": {
+        "pinned": { "type": "boolean", "description": "Omitted when unchanged." },
         "name": { "type": "string", "description": "Omitted when unchanged." },
         "folder": { "type": "string", "description": "Omitted when unchanged." },
         "machine_id": { "type": "string", "description": "Omitted when unchanged." },

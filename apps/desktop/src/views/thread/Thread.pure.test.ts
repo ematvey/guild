@@ -264,16 +264,12 @@ describe("parseChatRoute / chatRoutePath", () => {
     for (const path of [
       "/chats",
       "/chats/new",
-      "/work",
-      "/work/new",
       "/thread/abc-123",
       "/thread/abc-123/device",
-      "/work/device",
       "/project/p1",
       "/project/p1/new",
       "/project/p1/thread/abc-123",
       "/chats/device",
-      "/work/device",
       "/settings",
       "/settings/models",
       "/settings/models/my-slug",
@@ -301,21 +297,21 @@ describe("parseChatRoute / chatRoutePath", () => {
     // each panel tab owns a top-level URL; a tab root is no chat open, and
     // /new is the addressed scratch composer
     expect(parseChatRoute("/chats")).toMatchObject({ chatId: null, tab: "chats", newChat: false });
-    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "work", newChat: false });
+    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "chats", newChat: false });
     expect(parseChatRoute("/chats/new")).toMatchObject({ chatId: null, tab: "chats", newChat: true });
-    expect(parseChatRoute("/work/new")).toMatchObject({ chatId: null, tab: "work", newChat: true });
+    expect(parseChatRoute("/work/new")).toMatchObject({ chatId: null, tab: "chats", newChat: true });
     expect(parseChatRoute("/settings")).toMatchObject({
       chatId: null,
       overlay: null,
       tab: "settings",
     });
-    // a project filter implies the Work tab; /new on it is the project's
+    // a project route keeps the Chats tab; /new on it is the project's
     // scratch composer with the pick implied by the URL
-    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work", newChat: false });
+    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "chats", newChat: false });
     expect(parseChatRoute("/project/p1/new")).toMatchObject({
       chatId: null,
       projectId: "p1",
-      tab: "work",
+      tab: "chats",
       newChat: true,
     });
     // a sectioned settings URL deep-links the tab's section
@@ -538,7 +534,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       skills: null,
       agents: null,
       integrations: null,
-      tab: "work",
+      tab: "chats",
       settingsSection: null,
       settingsDetail: null,
       usage: DEFAULT_USAGE,
@@ -551,7 +547,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       skills: null,
       agents: null,
       integrations: null,
-      tab: "work",
+      tab: "chats",
       settingsSection: null,
       settingsDetail: null,
       usage: DEFAULT_USAGE,
@@ -580,8 +576,8 @@ describe("parseChatRoute / chatRoutePath", () => {
     // between it and open threads, a reload restores it, and the
     // project-bound form carries the pick in the URL.
     expect(chatRoutePath(null, null, null, null, "chats", null, null, true)).toBe("/chats/new");
-    expect(chatRoutePath(null, null, null, null, "work", null, null, true)).toBe("/work/new");
-    expect(chatRoutePath(null, "p1", null, null, "work", null, null, true)).toBe("/project/p1/new");
+    expect(roundTrip("/work/new")).toBe("/chats/new");
+    expect(chatRoutePath(null, "p1", null, null, "chats", null, null, true)).toBe("/project/p1/new");
     // the segment never survives a chat or overlay (chatless surfaces only)
     expect(chatRoutePath("c1", null, null, null, "chats", null, null, true)).toBe("/thread/c1");
     expect(chatRoutePath(null, null, { kind: "device" }, null, "chats", null, null, true)).toBe("/chats/device");
@@ -1375,7 +1371,7 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
   });
 
   it("the other desktop tabs keep the panel sidebar and the chat thread", () => {
-    for (const tab of ["chats", "work", "settings"] as ChatRoute["tab"][]) {
+    for (const tab of ["chats", "settings"] as ChatRoute["tab"][]) {
       expect(tabPaneLayout(route(tab), false)).toEqual({
         aside: true,
         mainPane: tab === "settings" ? "settingsPage" : "chat",
@@ -1387,7 +1383,6 @@ describe("tabPaneLayout (route → sidebar/pane layout)", () => {
   it("mobile shows the surface the URL names, with no aside", () => {
     const cases: [ReturnType<typeof route>, string][] = [
       [route("chats"), "chat"],
-      [route("work"), "chat"],
       [route("settings"), "settingsPage"],
       [route("chats", { view: "catalog", slug: null, editor: null }), "skillsPage"],
       [route("chats", null, { view: "directory" }), "agentsPage"],

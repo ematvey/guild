@@ -2,9 +2,9 @@
 // The Projects panel's archived fold-out: an archived project opens onto the
 // chats archived with it, which the live chat list does not carry.
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { WorkPanel } from "./work-panel";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { ChatsPanel } from "./chats-panel";
 import { sidebarGrouping } from "../projects/projects";
 import type { ChatSummary } from "../../lib/api/chats";
 import type { Project } from "../../lib/api/projects";
@@ -29,15 +29,15 @@ const chat = (id: string, title: string, projectId: string | null): ChatSummary 
 
 afterEach(cleanup);
 
-describe("WorkPanel archived section", () => {
+describe("ChatsPanel archived section", () => {
   it("folds an archived project out to its archived chats", () => {
     const archived = project("p-arch", "old-notes");
     render(
-      <WorkPanel
+      <ChatsPanel
         grouping={sidebarGrouping([chat("c-live", "Live chat", null)])}
-        archivedGrouping={sidebarGrouping([chat("c-arch", "Archived chat", archived.id)])}
+        archivedChats={[chat("c-arch", "Archived chat", archived.id)]}
         loadingChats={false}
-        loadingArchivedChats={false}
+        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -55,11 +55,11 @@ describe("WorkPanel archived section", () => {
   it("says a project is empty only when its archived chats are gone", () => {
     const archived = project("p-arch", "old-notes");
     render(
-      <WorkPanel
+      <ChatsPanel
         grouping={sidebarGrouping([])}
-        archivedGrouping={sidebarGrouping([])}
+        archivedChats={[]}
         loadingChats={false}
-        loadingArchivedChats={false}
+        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -71,4 +71,41 @@ describe("WorkPanel archived section", () => {
     fireEvent.click(screen.getByText("old-notes"));
     expect(screen.getByText("No chats yet.")).toBeDefined();
   });
+});
+
+it("shows synced pins, keeps project threads in Recent, and hides archived project threads there", () => {
+  const liveProject = { ...project("active", "Active folder"), pinned_at: "2026-01-01T00:00:00Z" };
+  const oldProject = project("old", "Archived folder");
+  const liveChat = {
+    ...chat("live", "Active conversation", liveProject.id),
+    archived: false,
+    pinned_at: "2026-01-02T00:00:00Z",
+  };
+  const hidden = {
+    ...chat("hidden", "Hidden conversation", oldProject.id),
+    archived: false,
+    pinned_at: liveChat.pinned_at,
+  };
+  const onPinChat = vi.fn();
+  render(
+    <ChatsPanel
+      grouping={sidebarGrouping([liveChat, hidden])}
+      projects={[liveProject]}
+      archivedProjects={[oldProject]}
+      loadingChats={false}
+      chatId={liveChat.id}
+      projectId={liveProject.id}
+      onNewChat={() => {}}
+      onOpenChat={() => {}}
+      onPinChat={onPinChat}
+    />,
+  );
+  const pinned = within(screen.getByRole("region", { name: "Pinned" }));
+  const recent = within(screen.getByRole("region", { name: "Recent" }));
+  expect(pinned.getAllByText("Active conversation")).toHaveLength(2);
+  expect(recent.getByText("Active conversation")).toBeDefined();
+  expect(screen.queryByText("Hidden conversation")).toBeNull();
+  expect(screen.getAllByText("Active folder")).toHaveLength(1);
+  fireEvent.click(recent.getByRole("button", { name: "Unpin" }));
+  expect(onPinChat).toHaveBeenCalledWith(liveChat.id, false);
 });

@@ -234,6 +234,18 @@ export function registerChatsRoutes(
   app.post("/api/v1/chats/:id/read", markThreadRead);
   app.post("/api/v1/threads/:id/read", markThreadRead);
 
+  app.post("/api/v1/sidebar/pins/:id/order", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const id = parseUuidParam(req, "id");
+    const body = requireJsonBody(req);
+    const anchorId = optionalUuidField(body, "anchor_id");
+    if (!anchorId || anchorId === id || typeof body["after"] !== "boolean") {
+      throw ApiError.badRequest("an anchor pin and a boolean after field are required");
+    }
+    await chats.chats.reorderPin(user.org_id, user.id, id, anchorId, body["after"]);
+    return sendJson(reply, { ok: true });
+  });
+
   const patchThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
@@ -250,7 +262,9 @@ export function registerChatsRoutes(
           ? rawTitle.trim()
           : null;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
-    await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null);
+    const pinned = body["pinned"];
+    if (pinned !== undefined && typeof pinned !== "boolean") throw ApiError.badRequest("pinned must be a boolean");
+    await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null, pinned);
     if (archived === true) {
       // Archiving closes the agent-thread subtree first: descendants stop
       // and deliveries stop. Then the in-flight generation is ended, or an

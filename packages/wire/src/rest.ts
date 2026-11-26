@@ -650,6 +650,8 @@ export interface MessageAudio {
 
 /** One project: a named folder bound to a machine. */
 export interface Project {
+  pinned_at?: string;
+  pin_rank?: number;
   id: string;
   name: string;
   /** Windows path; UNC (`\\wsl.localhost\…`) for a WSL distro folder. */
@@ -753,8 +755,11 @@ export interface TriggerSpec {
 export type ThreadType = "user" | "subagent" | "routine";
 
 export interface Chat {
+  pinned_at?: string;
+  pin_rank?: number;
   /** Persistent Assistant inbox; pinned separately from ordinary Threads. */
   assistant_inbox?: boolean;
+  shared_agent_inbox?: boolean;
   id: string;
   org_id: string;
   user_id: string;
@@ -862,12 +867,14 @@ export interface CreateChatRequest {
 
 /** `PATCH /api/v1/chats/{id}` body. Only present fields change. */
 export interface UpdateChatRequest {
+  pinned?: boolean;
   title?: string;
   archived?: boolean;
 }
 
 /** `PATCH /api/v1/projects/{id}` body. Only present fields change. */
 export interface UpdateProjectRequest {
+  pinned?: boolean;
   name?: string;
   folder?: string;
   machine_id?: string;

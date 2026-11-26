@@ -50,7 +50,10 @@ const TextBlock = memo(function TextBlock({
 }) {
   const placement = useMemo(() => ({ streaming: live, answer }), [live, answer]);
   return (
-    <div className="group">
+    <div
+      data-agent-message
+      className="group [&+[data-agent-message]]:border-t [&+[data-agent-message]]:border-border/70 [&+[data-agent-message]]:pt-5"
+    >
       <div className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}>
         <GenuiPlacementContext.Provider value={placement}>
           <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>
@@ -290,7 +293,7 @@ export function ThreadPane({
         >
           <div
             ref={scroll.setContentEl}
-            className={`${CHAT_COLUMN_CLASS} space-y-5 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground`}
+            className={`${CHAT_COLUMN_CLASS} space-y-6 px-4 pt-6 text-base text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground`}
             style={{ paddingBottom: scroll.composerH + 48 }}
           >
             {hasMore && (

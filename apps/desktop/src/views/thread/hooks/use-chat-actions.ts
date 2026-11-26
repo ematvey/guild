@@ -3,7 +3,7 @@
 // workspace lists, so no list is re-read here.
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { deleteChat as deleteChatRequest, updateChat } from "../../../lib/api/chats";
+import { deleteChat as deleteChatRequest, reorderSidebarPin, updateChat } from "../../../lib/api/chats";
 import { updateProject } from "../../../lib/api/projects";
 import { ApiError } from "../../../lib/api/request";
 
@@ -66,5 +66,39 @@ export function useChatActions() {
     }
   }, []);
 
-  return { renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject };
+  const pinChat = useCallback(async (id: string, pinned: boolean) => {
+    try {
+      await updateChat(id, { pinned });
+    } catch (error) {
+      failed(pinned ? "Could not pin the chat" : "Could not unpin the chat", error);
+    }
+  }, []);
+  const pinProject = useCallback(async (id: string, pinned: boolean) => {
+    try {
+      await updateProject(id, { pinned });
+    } catch (error) {
+      failed(pinned ? "Could not pin the project" : "Could not unpin the project", error);
+    }
+  }, []);
+
+  const reorderPin = useCallback(async (id: string, anchorId: string, after: boolean) => {
+    try {
+      await reorderSidebarPin(id, anchorId, after);
+    } catch (error) {
+      failed("Could not reorder the pin", error);
+    }
+  }, []);
+
+  return {
+    reorderPin,
+    pinChat,
+    pinProject,
+    renameChat,
+    archiveChat,
+    unarchiveChat,
+    deleteChat,
+    renameProject,
+    archiveProject,
+    unarchiveProject,
+  };
 }

@@ -4,7 +4,7 @@
 import { HAS_ENGINE } from "../session";
 import { clientId, machineId } from "../machine-rpc";
 import type { MessageAttachmentMeta } from "../thread-events";
-import type { Chat, ChatTree, SubagentNode, ThreadType } from "@guild/wire/rest";
+import type { Chat, ChatTree, SubagentNode, ThreadType, UpdateChatRequest } from "@guild/wire/rest";
 import { ApiError, request, requestResponse } from "./request";
 
 const thread = (chatId: string) => `/api/v1/threads/${encodeURIComponent(chatId)}`;
@@ -53,7 +53,11 @@ export async function listChats(): Promise<ChatSummary[] | null> {
 
 /// Renames and/or archives a chat. Archived chats drop out of `listChats`
 /// but direct links still resolve; `archived: false` unarchives.
-export async function updateChat(id: string, patch: { title?: string; archived?: boolean }): Promise<void> {
+export async function reorderSidebarPin(id: string, anchorId: string, after: boolean): Promise<void> {
+  await request("POST", `/api/v1/sidebar/pins/${encodeURIComponent(id)}/order`, { anchor_id: anchorId, after });
+}
+
+export async function updateChat(id: string, patch: UpdateChatRequest): Promise<void> {
   await request<unknown>("PATCH", thread(id), patch);
 }
 

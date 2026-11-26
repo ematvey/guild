@@ -3,7 +3,6 @@
 // has its own fixed address (the AGENTS.md convention). Routes:
 //   /chats[/new]               — the Chats tab (default; "/" aliases);
 //                                /new is the addressed scratch composer
-//   /work[/new]                — the Work tab, with its scratch composer
 //   /thread/<id>?preview=<kind>:<id>[&full=1]
 //                              — the thread with its preview pane open on
 //                                one file (`attachment` or `artifact`); full
@@ -12,7 +11,7 @@
 //   /thread/<id>               — open thread (the only thread address; an
 //                                agent thread's /agents/<id>/threads/<tid>
 //                                form redirects here)
-//   /project/<id>              — sidebar filtered to one project (Work tab)
+//   /project/<id>              — Chats with the project expanded
 //   /project/<id>/new          — scratch composer pre-picked to the project
 //   /project/<id>/thread/<cid> — open thread within its project view
 //   /install                   — the "Add to Home Screen" guide (the
@@ -82,7 +81,7 @@ export function writeAddress(
 export type ChatOverlay = { kind: "device" } | { kind: "onboard" } | { kind: "install" } | null;
 export interface ChatRoute {
   chatId: string | null;
-  /** Sidebar project filter (deep-linked /project/<id>). */
+  /** Project context (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
   /** The skills page route, or null when the URL is not a skills one. */
@@ -93,9 +92,9 @@ export interface ChatRoute {
   integrations: IntegrationsRoute | null;
   /** The Apps page route; absent or null when the URL is not one. */
   apps?: AppsRoute | null;
-  /** Which rail panel tab the URL names: /chats, /work or /settings. */
-  tab: "chats" | "work" | "settings";
-  /** The addressed scratch composer: /chats/new, /work/new or
+  /** Which rail panel tab the URL names: /chats or /settings. */
+  tab: "chats" | "settings";
+  /** The addressed scratch composer: /chats/new or
    *  /project/<id>/new. False on tab roots, open threads and other tabs. */
   newChat: boolean;
   /** Settings-tab section/detail named by the URL (/settings/<section>/
@@ -217,20 +216,13 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       usage,
     };
   }
-  // The rail's panel tabs own top-level addresses: /chats (the default),
-  // /work, and /settings (bare, or with a deep-linked section). Tab picks
-  // navigate, so back/forward and reloads restore the tab like any other
-  // route state.
-  let tab: ChatRoute["tab"] = "chats";
-  if (parts[0] === "chats" || parts[0] === "work") {
-    tab = parts[0];
-    parts.shift();
-  }
+  // Both chat entry paths resolve to the Chats panel.
+  const tab = "chats" as const;
+  if (parts[0] === "chats" || parts[0] === "work") parts.shift();
   let chatId: string | null = null;
   let projectId: string | null = null;
   if (parts[0] === "project" && parts[1]) {
     projectId = parts[1];
-    tab = "work";
     parts.splice(0, 2);
   }
   if (parts[0] === "thread" && parts[1]) {
@@ -504,8 +496,7 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   // parse of a surface URL agrees. Keeping the tab the surface was opened
   // from would leave route state that the URL does not spell.
   const onSurface = sk !== null || ag !== null || ig !== null || ap !== null;
-  // A project-bound address implies the Work tab (the parse agrees).
-  const tab = onSurface ? "chats" : (next.tab ?? (projectId ? "work" : route.tab));
+  const tab = onSurface ? "chats" : (next.tab ?? (projectId ? "chats" : route.tab));
   // The scratch composer is chatless: it drops with any open thread,
   // overlay, skills page or agents page, and never rides on Settings.
   const newChat =
@@ -619,22 +610,18 @@ export const chatRoutePath = (
   if (apps !== null) return appsRoutePath(apps);
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) return skillsRoutePath(skills);
-  // The scratch composer is a chatless surface: the project-bound form
-  // implies the Work tab, the bare form rides on /chats/new or /work/new.
-  // An overlay URL never carries the segment (the dialog is chatless too).
+  // The scratch composer can carry an explicit project binding.
   if (overlay === null && chatId === null && newChat && tab !== "settings") {
     if (projectId) return `/project/${encodeURIComponent(projectId)}/new`;
-    return tab === "work" ? "/work/new" : "/chats/new";
+    return "/chats/new";
   }
   const base = projectId
     ? `/project/${encodeURIComponent(projectId)}${chatId ? `/thread/${encodeURIComponent(chatId)}` : ""}`
     : chatId
       ? `/thread/${encodeURIComponent(chatId)}`
-      : tab === "work"
-        ? "/work"
-        : tab === "settings"
-          ? "/settings"
-          : "/chats";
+      : tab === "settings"
+        ? "/settings"
+        : "/chats";
   if (overlay?.kind === "onboard") {
     // Chat-independent top-level route: any thread/project prefix drops.
     // /help deep links share the address (the guide is the help page).

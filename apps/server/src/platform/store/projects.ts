@@ -21,12 +21,16 @@ export interface ProjectRow {
   machine_id: string;
   created_at: string;
   machine_label: string | null;
+  pinned_at?: string;
+  pin_rank?: number;
 }
 
 const ROW_COLUMNS =
   "p.id, p.org_id, p.user_id, p.name, p.folder, p.machine_id, " +
   utcText("p.created_at") +
   " AS created_at, " +
+  utcText("p.pinned_at") +
+  " AS pinned_at, p.pin_rank, " +
   "coalesce(m.label, p.machine_id) AS machine_label";
 const ROW_FROM = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
@@ -39,6 +43,8 @@ function row(r: Record<string, unknown>): ProjectRow {
     folder: r.folder as string,
     machine_id: r.machine_id as string,
     created_at: pgTimestampToRfc3339(r.created_at as string),
+    ...(typeof r.pinned_at === "string" ? { pinned_at: pgTimestampToRfc3339(r.pinned_at) } : {}),
+    ...(typeof r.pin_rank === "number" ? { pin_rank: r.pin_rank } : {}),
     machine_label: (r.machine_label as string | null) ?? null,
   };
 }
@@ -142,6 +148,7 @@ export class ProjectStore {
     folder: string | null,
     machineId: string | null,
     archived: boolean | null,
+    pinned?: boolean,
   ): Promise<ProjectRow> {
     const updated = await withTransaction(this.pool, async (client) => {
       let id: string;
@@ -157,9 +164,12 @@ export class ProjectStore {
             "archived_at = CASE " +
             "WHEN $6::bool IS NULL THEN archived_at " +
             "WHEN $6::bool THEN now() " +
-            "ELSE NULL END " +
+            "ELSE NULL END, " +
+            "pinned_at = CASE WHEN $8::bool IS NULL THEN pinned_at " +
+            "WHEN $8::bool THEN COALESCE(pinned_at, clock_timestamp()) ELSE NULL END, " +
+            "pin_rank = CASE WHEN $8::bool = false THEN NULL ELSE pin_rank END " +
             "WHERE org_id = $1 AND id = $2 AND user_id = $7 RETURNING id",
-          [orgId, projectId, name, folder, machineId, archived, userId],
+          [orgId, projectId, name, folder, machineId, archived, userId, pinned ?? null],
         );
         if (updRes.rows.length === 0) throw ApiError.notFound("no such project");
         id = updRes.rows[0]!.id as string;
@@ -169,12 +179,13 @@ export class ProjectStore {
         }
         throw error;
       }
-      await client.query(
-        "UPDATE chats SET machine_id = p.machine_id, machine_label = coalesce(m.label, p.machine_id) " +
-          "FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id " +
-          "WHERE p.id = $1 AND chats.project_id = p.id",
-        [id],
-      );
+      if (machineId !== null)
+        await client.query(
+          "UPDATE chats SET machine_id = p.machine_id, machine_label = coalesce(m.label, p.machine_id) " +
+            "FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id " +
+            "WHERE p.id = $1 AND chats.project_id = p.id",
+          [id],
+        );
       await this.notifyWorkspace(client, orgId, userId);
       return id;
     });
