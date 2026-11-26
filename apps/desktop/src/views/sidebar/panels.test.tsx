@@ -172,7 +172,8 @@ describe("panels", () => {
       />,
     );
     expect(chats).toContain(">Chats<");
-    expect(chats).toContain(">New chat<");
+    expect(chats).toContain('aria-label="New chat"');
+    expect(chats).toContain('aria-label="Search chats by title"');
     expect(chats).toContain("lucide-square-pen");
     expect(chats).toContain("No conversations yet.");
 

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ChevronRight, Plus, SquarePen } from "lucide-react";
+import { ChevronRight, Plus, Search, SquarePen } from "lucide-react";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
+import { Input } from "@guild/ui/components/input";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
 import type { Project } from "../../lib/api/projects";
@@ -121,6 +122,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   onDeleteChat?: (id: string) => void;
 }) {
   const [scrolled, setScrolled] = useState(false);
+  const [search, setSearch] = useState("");
   const [sections, setSections] = useState({ pinned: true, projects: false, recent: true, archived: false });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [limits, setLimits] = useState<Record<string, number>>({});
@@ -307,133 +309,161 @@ export const ChatsPanel = memo(function ChatsPanel({
   };
   const unpinnedProjects = projects?.filter((project) => !project.pinned_at);
   const archivedThreads = archivedChats?.filter((chat) => !chat.project_id || !archivedProjectIds.has(chat.project_id));
+  const query = search.trim().toLocaleLowerCase();
+  const matches = query === "" ? [] : [
+    ...grouping.visible,
+    ...Object.values(grouping.chatsByProject).flat(),
+    ...(archivedChats ?? []),
+  ]
+    .filter((chat) => (chat.title ?? "").toLocaleLowerCase().includes(query))
+    .sort(byRecentActivity);
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
       <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
-        {/* The workspace switcher lives on the rail's first button; the panel
-            header names the tab. A new chat is its own row under the
-            assistant, not a header button. */}
         <span className="font-semibold">Chats</span>
         <span className="flex items-center gap-1">
           <CollapseButton onCollapse={onCollapse} />
           {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
         </span>
       </div>
-      {!loadingChats && (
+      <div className="flex shrink-0 items-center gap-1 px-2 pb-2 pt-1">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            type="search"
+            aria-label="Search chats by title"
+            placeholder="Search chats"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="h-8 pl-8"
+          />
+        </div>
+        <DesktopTooltip label="New chat" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
+          <button
+            type="button"
+            aria-label="New chat"
+            onClick={onNewChat}
+            className="grid size-8 shrink-0 place-items-center rounded-md text-sidebar-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <SquarePen aria-hidden="true" className="size-4" />
+          </button>
+        </DesktopTooltip>
+      </div>
+      {query === "" && assistants.length > 0 && (
         <div
-          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
+          role="group"
+          aria-label="Assistant conversations"
+          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3 pt-1 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
         >
-          {assistants.length > 0 && (
-            <div role="group" aria-label="Assistant conversations" className="space-y-0.5">
-              {assistants.map((chat) => renderChat(chat))}
-            </div>
-          )}
-          <DesktopTooltip label="New chat" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
-            <button
-              type="button"
-              onClick={onNewChat}
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            >
-              <SquarePen aria-hidden="true" className="size-4 shrink-0" />
-              <span>New chat</span>
-            </button>
-          </DesktopTooltip>
+          {assistants.map((chat) => renderChat(chat))}
         </div>
       )}
       <div
         className="min-h-0 flex-1 overflow-y-auto px-2"
         onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
       >
-        <ChatSection
-          label="Pinned"
-          open={sections.pinned}
-          dropTarget={!!dragged && !dropHint}
-          onToggle={() => toggleSection("pinned")}
-          onDragOver={(event) => {
-            allowDrop(event);
-            if (dropHint) setDropHint(null);
-          }}
-          onDrop={dropOnPinned}
-        >
-          {pins.map((pin) => (
-            <div
-              key={pin.id}
-              className="relative"
+        {query !== "" ? (
+          <section aria-label="Chat search results" className="space-y-0.5">
+            {loadingChats && <SkeletonRows rows={3} />}
+            {!loadingChats && matches.length === 0 && (
+              <p className="px-2 py-1 text-sm text-muted-foreground">No matching chats.</p>
+            )}
+            {matches.map((chat) => renderChat(chat, { restricted: true, showChatIcon: true }))}
+          </section>
+        ) : (
+          <>
+            <ChatSection
+              label="Pinned"
+              open={sections.pinned}
+              dropTarget={!!dragged && !dropHint}
+              onToggle={() => toggleSection("pinned")}
               onDragOver={(event) => {
-                if (!dragged?.pinned || dragged.id === pin.id || !onReorderPin) return;
-                event.stopPropagation();
                 allowDrop(event);
-                const bounds = event.currentTarget.getBoundingClientRect();
-                const after = event.clientY >= bounds.top + bounds.height / 2;
-                if (dropHint?.id !== pin.id || dropHint.after !== after) setDropHint({ id: pin.id, after });
+                if (dropHint) setDropHint(null);
               }}
-              onDragLeave={(event) => {
-                if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-                  setDropHint(null);
-                }
-              }}
-              onDrop={(event) => {
-                if (!dragged?.pinned) return;
-                event.stopPropagation();
-                dropOnPinned(event, pin.id, dropHint?.id === pin.id && dropHint.after);
-              }}
+              onDrop={dropOnPinned}
             >
-              {dropHint?.id === pin.id && (
+              {pins.map((pin) => (
                 <div
-                  className={`pointer-events-none absolute inset-x-1 z-20 h-0.5 rounded bg-ring ${dropHint.after ? "bottom-0" : "top-0"}`}
-                />
+                  key={pin.id}
+                  className="relative"
+                  onDragOver={(event) => {
+                    if (!dragged?.pinned || dragged.id === pin.id || !onReorderPin) return;
+                    event.stopPropagation();
+                    allowDrop(event);
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    const after = event.clientY >= bounds.top + bounds.height / 2;
+                    if (dropHint?.id !== pin.id || dropHint.after !== after) setDropHint({ id: pin.id, after });
+                  }}
+                  onDragLeave={(event) => {
+                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                      setDropHint(null);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    if (!dragged?.pinned) return;
+                    event.stopPropagation();
+                    dropOnPinned(event, pin.id, dropHint?.id === pin.id && dropHint.after);
+                  }}
+                >
+                  {dropHint?.id === pin.id && (
+                    <div
+                      className={`pointer-events-none absolute inset-x-1 z-20 h-0.5 rounded bg-ring ${dropHint.after ? "bottom-0" : "top-0"}`}
+                    />
+                  )}
+                  {pin.render()}
+                </div>
+              ))}
+            </ChatSection>
+            <ChatSection
+              label="Projects"
+              open={sections.projects}
+              onToggle={() => toggleSection("projects")}
+              action={
+                onNewProject && (
+                  <button
+                    type="button"
+                    title="New project"
+                    aria-label="New project"
+                    onClick={() => {
+                      setSections((current) => ({ ...current, projects: true }));
+                      onNewProject();
+                    }}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <Plus aria-hidden="true" className="size-4" />
+                  </button>
+                )
+              }
+            >
+              {projects === null && onNewProject && <SkeletonRows rows={1} />}
+              {unpinnedProjects?.map((project) => renderProject(project))}
+              {projects?.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>}
+            </ChatSection>
+            <ChatSection label="Recent" open={sections.recent} onToggle={() => toggleSection("recent")}>
+              {loadingChats && <SkeletonRows rows={5} className="[&>div]:h-8 [&>div]:px-2" />}
+              {!loadingChats && recent.map((chat) => renderChat(chat))}
+              {!loadingChats && recent.length === 0 && (
+                <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
               )}
-              {pin.render()}
-            </div>
-          ))}
-        </ChatSection>
-        <ChatSection
-          label="Projects"
-          open={sections.projects}
-          onToggle={() => toggleSection("projects")}
-          action={
-            onNewProject && (
-              <button
-                type="button"
-                title="New project"
-                aria-label="New project"
-                onClick={() => {
-                  setSections((current) => ({ ...current, projects: true }));
-                  onNewProject();
-                }}
-                className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <Plus aria-hidden="true" className="size-4" />
-              </button>
-            )
-          }
-        >
-          {projects === null && onNewProject && <SkeletonRows rows={1} />}
-          {unpinnedProjects?.map((project) => renderProject(project))}
-          {projects?.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>}
-        </ChatSection>
-        <ChatSection label="Recent" open={sections.recent} onToggle={() => toggleSection("recent")}>
-          {loadingChats && <SkeletonRows rows={5} className="[&>div]:h-8 [&>div]:px-2" />}
-          {!loadingChats && recent.map((chat) => renderChat(chat))}
-          {!loadingChats && recent.length === 0 && (
-            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
-          )}
-        </ChatSection>
-        {!!(archivedProjects?.length || archivedThreads?.length) && (
-          <ChatSection label="Archived" open={sections.archived} onToggle={() => toggleSection("archived")}>
-            {!!archivedProjects?.length && (
-              <div role="group" aria-label="Archived projects" className="space-y-0.5">
-                <p className="px-2 py-1 text-xs text-muted-foreground">Projects</p>
-                {archivedProjects.map((project) => renderProject(project, true))}
-              </div>
+            </ChatSection>
+            {!!(archivedProjects?.length || archivedThreads?.length) && (
+              <ChatSection label="Archived" open={sections.archived} onToggle={() => toggleSection("archived")}>
+                {!!archivedProjects?.length && (
+                  <div role="group" aria-label="Archived projects" className="space-y-0.5">
+                    <p className="px-2 py-1 text-xs text-muted-foreground">Projects</p>
+                    {archivedProjects.map((project) => renderProject(project, true))}
+                  </div>
+                )}
+                {!!archivedThreads?.length && (
+                  <div role="group" aria-label="Archived chats" className="space-y-0.5">
+                    <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
+                    {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
+                  </div>
+                )}
+              </ChatSection>
             )}
-            {!!archivedThreads?.length && (
-              <div role="group" aria-label="Archived chats" className="space-y-0.5">
-                <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
-                {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
-              </div>
-            )}
-          </ChatSection>
+          </>
         )}
       </div>
       <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
