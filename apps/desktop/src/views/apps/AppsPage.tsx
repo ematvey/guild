@@ -1,3 +1,5 @@
+import { Input } from "@guild/ui/components/input";
+import { PageHeader } from "../../components/page-header";
 // The Apps page: the Apps the member sees on the left — their own and those
 // shared with the org — and the open App on the right, running in its frame.
 // On a phone the list and the App take turns. Every state is an /apps
@@ -27,7 +29,6 @@ import type { App } from "@guild/wire/rest";
 import { useMemberProfile } from "../../lib/profile-store";
 import { CollapseButton } from "../sidebar/chrome";
 import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
-import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
 import { APPS_HOME, type AppsRoute } from "./apps-route";
@@ -60,13 +61,15 @@ function AppRow({
   app,
   selected,
   onClick,
+  card = false,
 }: {
   app: App;
   selected: boolean;
+  card?: boolean;
   onClick: () => void;
 }) {
   return (
-    <li>
+    <li className={card ? "rounded-xl border border-border bg-card p-1" : undefined}>
       <button
         type="button"
         onClick={onClick}
@@ -185,7 +188,7 @@ function AppHeader({
   detail,
   canShare,
   canDelete,
-  isMobile,
+  showBack,
   onBack,
   onOpenChat,
   onDeleted,
@@ -196,7 +199,7 @@ function AppHeader({
   detail: AppDetail | null;
   canShare: boolean;
   canDelete: boolean;
-  isMobile: boolean;
+  showBack: boolean;
   onBack: () => void;
   onOpenChat: ((chatId: string) => void) | null;
   onDeleted: () => void;
@@ -223,7 +226,7 @@ function AppHeader({
   return (
     <header className={`shrink-0 border-b border-border bg-background px-4 py-3 ${CAPTION_BUTTONS_INSET}`}>
       <div className="flex items-center gap-2">
-        {isMobile && (
+        {showBack && (
           <Button
             variant="ghost"
             size="icon"
@@ -325,14 +328,14 @@ function OpenApp({
   app,
   management,
   me,
-  isMobile,
+  showBack,
   navigate,
   onOpenChat,
 }: {
   app: App;
   management: boolean;
   me: { id: string; role: string } | null;
-  isMobile: boolean;
+  showBack: boolean;
   navigate: Navigate;
   onOpenChat: ((chatId: string) => void) | null;
 }) {
@@ -369,7 +372,7 @@ function OpenApp({
         detail={current}
         canShare={canShare}
         canDelete={canDelete}
-        isMobile={isMobile}
+        showBack={showBack}
         onBack={() => navigate(APPS_HOME)}
         onOpenChat={onOpenChat}
         onDeleted={() => navigate(APPS_HOME, { replace: true })}
@@ -420,7 +423,7 @@ export function AppsPage({
   onOpenChat: ((chatId: string) => void) | null;
 }) {
   const apps = useApps();
-  const sidebar = useSidebar();
+  const [query, setQuery] = useState("");
   const profile = useMemberProfile();
   const me = profile === null ? null : { id: profile.id, role: profile.role };
   const open =
@@ -436,7 +439,7 @@ export function AppsPage({
         app={open}
         management={route.management === true}
         me={me}
-        isMobile={isMobile}
+        showBack={isMobile || !route.management}
         navigate={navigate}
         onOpenChat={onOpenChat}
       />
@@ -460,6 +463,40 @@ export function AppsPage({
       <NoApps />
     );
 
+  if (!route.management) {
+    if (route.appId !== null) return page;
+    const needle = query.trim().toLowerCase();
+    const visible = apps?.filter((app) => `${app.name} ${app.description}`.toLowerCase().includes(needle));
+    const groups = [
+      { label: "Your apps", items: visible?.filter((app) => app.owner_user_id === me?.id) ?? [] },
+      { label: "Shared with you", items: visible?.filter((app) => app.owner_user_id !== me?.id) ?? [] },
+    ];
+    return (
+      <div className="flex min-h-0 flex-1 flex-col bg-muted/25">
+        <PageHeader variant="bar" title="Apps" description="Open apps built in Guild and shared with you."
+          actions={<Input type="search" aria-label="Search apps" placeholder="Search apps" value={query} onChange={(event) => setQuery(event.target.value)} />} />
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
+            {visible === undefined ? <SkeletonRows rows={4} /> : apps?.length === 0 ? (
+              <div className="rounded-xl border border-border bg-card"><NoApps /></div>
+            ) : visible.length === 0 ? (
+              <EmptyState icon={LayoutGrid} title="No matching apps" />
+            ) : groups.filter(({ items }) => items.length > 0).map(({ label, items }) => (
+              <section key={label} className="space-y-2">
+                <h2 className="text-sm font-semibold">{label}</h2>
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {items.map((app) => (
+                    <AppRow key={app.id} app={app} card selected={false} onClick={() => navigate({ appId: app.id })} />
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isMobile) {
     return route.appId === null ? (
       <ListPane
@@ -478,14 +515,11 @@ export function AppsPage({
       route={route}
       navigate={navigate}
       me={me?.id ?? null}
-      onCollapse={route.management ? undefined : () => sidebar.setCollapsed(true)}
     />
   );
   return (
     <div className="flex h-full min-h-0">
-      {route.management
-        ? <aside className="w-64 shrink-0 border-r bg-sidebar">{list}</aside>
-        : <Sidebar collapsed={sidebar.collapsed}>{list}</Sidebar>}
+      <aside className="w-64 shrink-0 border-r border-border bg-sidebar">{list}</aside>
       <section className="min-w-0 flex-1">{page}</section>
     </div>
   );

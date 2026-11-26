@@ -56,7 +56,13 @@ export function WebLogin({ onLoggedIn, title = "Guild" }: { onLoggedIn: (profile
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-xl">{title}</CardTitle>
+          {title === "Guild" && (
+            <span className="mb-2 grid size-10 place-items-center rounded-lg border border-border bg-muted">
+              <img src="/brand/guild-icon-light.svg" className="size-6 dark:hidden" alt="" />
+              <img src="/brand/guild-icon-dark.svg" className="hidden size-6 dark:block" alt="" />
+            </span>
+          )}
+          <CardTitle className="text-xl">{title === "Guild" ? "Guild Work" : title}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {sso && !showPassword ? (

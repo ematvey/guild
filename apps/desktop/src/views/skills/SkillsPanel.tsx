@@ -279,6 +279,7 @@ export function SkillsPanel({
       <PageHeader
         variant="bar"
         title="Skills"
+        description={route.management ? undefined : "Find and install reusable instructions for your agents."}
         actions={
           <>
             <div className="relative w-full sm:w-[280px]">
@@ -356,12 +357,12 @@ export function SkillsPanel({
       />
       {/* page body: full-width background fill, content capped so the row
           list and detail panes don't stretch absurdly on wide monitors */}
-      <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+      <div className={`min-h-0 flex-1 overflow-y-auto ${route.management ? "" : "bg-muted/25"}`} data-scrollable>
         <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
           {import.meta.env.MODE === "control" && tab === "activity" && <ActivityFeed />}
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
-            <div className="flex flex-col gap-1.5">
+            <div className={route.management ? "flex flex-col gap-1.5" : "grid gap-3 lg:grid-cols-2"}>
               {skills === null && [0, 1, 2, 3, 4, 5].map((i) => <SkeletonRows key={i} rows={1} />)}
               {skills !== null &&
                 filtered.map((item) => {
@@ -372,7 +373,7 @@ export function SkillsPanel({
                       role="button"
                       tabIndex={0}
                       aria-label={`Open skill ${row.slug}`}
-                      className="cursor-pointer rounded-lg border border-border bg-card px-3.5 py-[11px] transition-colors hover:bg-accent hover:text-accent-foreground"
+                      className="cursor-pointer rounded-xl border border-border bg-card p-4 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => onNavigate({ view: "catalog", slug: row.slug, editor: null })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -381,7 +382,7 @@ export function SkillsPanel({
                         }
                       }}
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className={route.management ? "flex items-start justify-between gap-3" : "flex flex-col gap-3"}>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="text-sm font-semibold">{row.slug}</span>

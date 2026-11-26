@@ -349,12 +349,13 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     const section = parts.length > 1 ? parts[1] : null;
     // Segments arrive decoded once (each was encoded separately), so a model
     // id containing a literal "%" round-trips; a second decode would throw.
-    const detail = parts.length > 2 ? parts.slice(2).join("/") : null;
+    const setup = section === "machine" && parts.length === 3 && parts[2] === "device";
+    const detail = !setup && parts.length > 2 ? parts.slice(2).join("/") : null;
     return {
       chatId: null,
       projectId: null,
       tab: "settings",
-      overlay: null,
+      overlay: setup ? { kind: "device" } : null,
       skills: null,
       agents: null,
       integrations: null,
@@ -650,6 +651,7 @@ export const chatRoutePath = (
     return "/install";
   }
   if (overlay?.kind === "device") {
+    if (tab === "settings" && settingsSection === "machine") return "/settings/machine/device";
     // /settings/<seg> parses as a Settings-tab section, so a device dialog
     // pushed over the Settings tab detours through /chats — the dialog is
     // chat-independent anyway.

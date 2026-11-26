@@ -196,7 +196,7 @@ export default function LocalSkills() {
       {installs !== null && installs.length > 0 && (
         <div className="mb-3">
           <p className="pb-1.5 text-xs font-medium text-muted-foreground">Org installs</p>
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             {installs.map((install) => {
               const vm = installRow(install, latest.get(install.slug) ?? null);
               return (
@@ -259,7 +259,7 @@ export default function LocalSkills() {
       ) : error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : rows.length === 0 ? null : (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
           {rows.map((row) => (
             <div
               key={row.path}

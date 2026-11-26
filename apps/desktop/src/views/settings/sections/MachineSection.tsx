@@ -8,7 +8,7 @@
 //! machine: its row goes, its session is revoked and its socket closes.
 
 import { useState } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu, Plus } from "lucide-react";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import {
@@ -25,7 +25,7 @@ import { useMachines } from "../../../lib/machines-store";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../../../components/page-header";
 
-export function MachineSection() {
+export function MachineSection({ onSetupDevice }: { onSetupDevice?: () => void }) {
   // The registry is shared app state: the member socket sends the rows and
   // patches the connected flag live, so an open page follows a machine
   // coming up or going down without a refetch.
@@ -50,13 +50,16 @@ export function MachineSection() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Machines" />
+      <PageHeader
+        title="Devices"
+        description="Connect computers that can run project tasks and access local files."
+        actions={onSetupDevice && <Button onClick={onSetupDevice} size="sm"><Plus /> Set up a device</Button>}
+      />
       {machines === null ? (
         <SkeletonForm />
       ) : machines.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
-          No machines yet. Start the Guild desktop app on the machine and sign it in with a device token (Settings →
-          Connect desktop app in the web app generates one); the machine appears here once it signs in.
+          No devices connected. Set up a device to install Guild or pair an existing installation.
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -99,11 +102,6 @@ export function MachineSection() {
           })}
         </div>
       )}
-      <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
-        Machines bind at device sign-in: sign in with a device token on the machine and it shows up here, ready for your
-        chats. A chat runs on the machine its project names — bind the project, not the chat.
-      </p>
-
       <Dialog open={target !== null} onOpenChange={(open) => !open && setTarget(null)}>
         <DialogContent>
           <DialogHeader>

@@ -26,3 +26,38 @@ body {
 html {
   overflow-x: clip;
 }
+
+/* Work appearance preferences are applied at the document root so dialogs
+   and menus rendered in portals use the same typography and palette. */
+html[data-work-font="System"] { --font-sans: system-ui, sans-serif; }
+html[data-work-font="Serif"] { --font-sans: ui-serif, Georgia, serif; }
+html[data-work-font="Mono"] { --font-sans: "JetBrains Mono Variable", ui-monospace, monospace; }
+html[data-work-font] body { font-family: var(--font-sans); }
+
+[data-palette-swatch="Slate"] { background: oklch(0.58 0.16 254); }
+[data-palette-swatch="Jade"] { background: oklch(0.56 0.13 165); }
+[data-palette-swatch="Ember"] { background: oklch(0.58 0.15 55); }
+
+html[data-work-palette="Jade"] { --work-hue: 165; }
+html[data-work-palette="Ember"] { --work-hue: 58; }
+html:is([data-work-palette="Jade"], [data-work-palette="Ember"]) {
+  --background: oklch(0.995 0.004 var(--work-hue));
+  --accent: oklch(0.95 0.018 var(--work-hue));
+  --ring: oklch(0.56 0.13 var(--work-hue));
+}
+html.dark:is([data-work-palette="Jade"], [data-work-palette="Ember"]) {
+  --background: oklch(0.155 0.01 var(--work-hue));
+  --accent: oklch(0.26 0.022 var(--work-hue));
+}
+html[data-work-palette] .guild-sidebar-theme {
+  --sidebar: oklch(0.97 0.008 var(--work-hue, 255));
+  --sidebar-accent: oklch(0.93 0.015 var(--work-hue, 255));
+  --guild-sidebar-selection: oklch(0.92 0.034 var(--work-hue, 255));
+  --guild-sidebar-selection-text: oklch(0.37 0.11 var(--work-hue, 255));
+}
+html.dark[data-work-palette] .guild-sidebar-theme {
+  --sidebar: oklch(0.19 0.016 var(--work-hue, 255));
+  --sidebar-accent: oklch(0.25 0.023 var(--work-hue, 255));
+  --guild-sidebar-selection: oklch(0.31 0.055 var(--work-hue, 255));
+  --guild-sidebar-selection-text: oklch(0.87 0.068 var(--work-hue, 255));
+}

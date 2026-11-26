@@ -1,4 +1,4 @@
-import { ArrowUpRight, CalendarClock, LayoutGrid, MessageSquare, Package, PanelLeftOpen } from "lucide-react";
+import { ArrowUpRight, CalendarClock, Cpu, Settings, LayoutGrid, MessageSquare, Package, PanelLeftOpen } from "lucide-react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
 import { Button } from "@guild/ui/components/button";
 import { UserBadge } from "../components/user-badge";
@@ -63,9 +63,11 @@ export function SidebarMenu({
   onAddWorkspace?: (baseUrl?: string) => void;
   collapsed?: boolean;
   onExpand?: () => void;
-  activeTab?: RailTab | "routines";
+  activeTab?: RailTab | "routines" | "device";
 }) {
   const tools = [
+    { id: "device", label: "Devices", icon: Cpu, pick: () => onOpenSettings("machine") },
+    { id: "settings", label: "Settings", icon: Settings, pick: () => onOpenSettings("appearance") },
     ...(activeTab !== "chats"
       ? [{ id: "chats", label: "Chats", icon: MessageSquare, pick: () => onTabChange("chats") }]
       : []),
@@ -86,7 +88,7 @@ export function SidebarMenu({
           <PanelLeftOpen />
         </Button>
       ) : (
-        <nav aria-label="Work tools" className="mb-1 max-h-[26dvh] space-y-0.5 overflow-y-auto px-1">
+        <nav aria-label="Work tools" className="mb-1 max-h-[34dvh] space-y-0.5 overflow-y-auto px-1">
           {tools.map(({ id, label, icon: Icon, pick }) => (
             <button
               key={id}
@@ -132,9 +134,7 @@ export function SidebarMenu({
             <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuItem onClick={() => onOpenSettings("machine")}>Machines</DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onOpenSettings("appearance")}>Settings</DropdownMenuItem>
-        <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
+        {collapsed && <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>}
         <DropdownMenuItem onClick={onOpenHelp}>Help</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">

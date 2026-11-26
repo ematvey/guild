@@ -740,7 +740,8 @@ function ThreadView(props: ThreadProps) {
       </RoutePage>
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
       <RoutePage isMobile={isMobile} title="Routines" onOpenDrawer={openDrawer}>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-muted/25 p-4 sm:p-6">
+          <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card p-4 sm:p-6">
           <h1 className="mb-4 text-lg font-semibold">Routines</h1>
           {agent.agentsList === null ? <p>Loading routines…</p> :
             agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
@@ -751,6 +752,7 @@ function ThreadView(props: ThreadProps) {
                     pushRoute({ ...CHAT_ROOT, agents: { ...next, personalRoutines: true } });
                   }
                 }} />}
+          </div>
         </div>
       </RoutePage>
     ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (
@@ -766,18 +768,19 @@ function ThreadView(props: ThreadProps) {
         />
       </RoutePage>
     ) : route.tab === "settings" && settingsSection !== null ? (
-      <RoutePage isMobile={isMobile} title="Settings" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title={settingsSection === "machine" ? "Devices" : "Settings"} onOpenDrawer={openDrawer}>
         <SettingsPage
           section={settingsSection}
           email={email}
           role={role}
+          onSetupDevice={() => pushRoute({ overlay: { kind: "device" } })}
         />
       </RoutePage>
     ) : null;
 
   const menu = (collapsed = false) => (
     <SidebarMenu
-      activeTab={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
+      activeTab={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : route.settingsSection === "machine" ? "device" : railTab}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenSettings={openSettingsSection}
       onOpenControl={() => {

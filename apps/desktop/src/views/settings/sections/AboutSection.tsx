@@ -48,7 +48,7 @@ export function AboutSection() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="About" />
+      <PageHeader title="About" description="Version, updates, and diagnostics for this installation." />
       <FactGrid>
         <FactCard label="App version">
           {HAS_SHELL ? (

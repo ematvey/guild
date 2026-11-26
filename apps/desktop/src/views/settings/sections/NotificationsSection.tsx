@@ -78,7 +78,7 @@ export function NotificationsSection() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Notifications" />
+      <PageHeader title="Notifications" description="Manage alerts when an agent finishes a run." />
       <FactGrid>
         <FactCard label="This device">
           <div className="flex items-center justify-between gap-3">
@@ -123,7 +123,7 @@ export function NotificationsSection() {
           )}
         </FactCard>
       </FactGrid>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4">
         <Button
           variant="outline"
           size="sm"
@@ -134,7 +134,7 @@ export function NotificationsSection() {
           Send a test notification
         </Button>
         <span className="text-sm text-muted-foreground">
-          The notification says which thread and how the run ended. It never carries the answer.
+          Test alerts include the thread and run status.
         </span>
       </div>
     </div>

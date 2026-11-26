@@ -1,21 +1,33 @@
-import { useTheme } from "../../theme";
+import { Button } from "@guild/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
+import { useTheme, useWorkAppearance, workFonts, workPalettes, type Theme } from "../../theme";
 import { PageHeader } from "../../components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
 import { MachineSection } from "./sections/MachineSection";
 import { AboutSection } from "./sections/AboutSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 
-export function SettingsSectionPane({ sectionId, email, role }: { sectionId: string; email: string; role: string }) {
+export function SettingsSectionPane({
+  sectionId,
+  email,
+  role,
+  onSetupDevice,
+}: {
+  sectionId: string;
+  email: string;
+  role: string;
+  onSetupDevice?: () => void;
+}) {
   const content = {
     account: <AccountSection email={email} role={role} />,
     appearance: <AppearanceSection />,
     notifications: <NotificationsSection />,
-    machine: <MachineSection />,
+    machine: <MachineSection onSetupDevice={onSetupDevice} />,
     about: <AboutSection />,
   };
   const section = sectionId as keyof typeof content;
   return (
-    <div className="mx-auto max-w-4xl px-4 pb-6 sm:px-8 sm:pb-8">
+    <div className="mx-auto max-w-4xl px-4 py-5 sm:px-8 sm:py-8">
       {Object.hasOwn(content, section) ? content[section] : content.account}
     </div>
   );
@@ -44,35 +56,75 @@ function AccountSection({ email, role }: { email: string; role: string }) {
 
 function AppearanceSection() {
   const { theme, setTheme } = useTheme();
-  const options: { id: string; label: string; hint: string }[] = [
-    { id: "light", label: "Light", hint: "Warm beige sidebar, white canvas" },
-    { id: "dark", label: "Dark", hint: "Near-black canvas, warm sidebar" },
-    { id: "system", label: "System", hint: "Follow the OS setting" },
+  const { appearance, setAppearance, resetAppearance } = useWorkAppearance();
+  const modes: { id: Theme; label: string }[] = [
+    { id: "light", label: "Light" },
+    { id: "dark", label: "Dark" },
+    { id: "system", label: "System" },
   ];
   return (
-    <div className="space-y-5">
-      <PageHeader title="Appearance" description="Light, dark, or follow the OS; applies to this device." />
-      <div className="max-w-xl space-y-3">
-        {options.map((o) => (
-          <button
-            key={o.id}
-            onClick={() => setTheme(o.id as "light" | "dark" | "system")}
-            className={`flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors ${
-              theme === o.id ? "border-foreground/40 bg-accent" : "border-border bg-card hover:bg-accent/50"
-            }`}
-          >
-            <div>
-              <p className="text-sm font-medium">{o.label}</p>
-              <p className="text-xs text-muted-foreground">{o.hint}</p>
-            </div>
-            <div
-              className={`size-4 rounded-full border-2 ${
-                theme === o.id ? "border-foreground bg-foreground" : "border-border"
-              }`}
-            />
-          </button>
-        ))}
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Appearance"
+        description="Customize how Work looks on this device."
+        actions={
+          <Button size="sm" variant="outline" onClick={resetAppearance}>
+            Reset palette and font
+          </Button>
+        }
+      />
+      <Card>
+        <CardHeader>
+          <CardTitle>Color mode</CardTitle>
+        </CardHeader>
+        <CardContent role="group" aria-label="Color mode" className="grid grid-cols-3 gap-2">
+          {modes.map(({ id, label }) => (
+            <Button
+              key={id}
+              variant={theme === id ? "secondary" : "outline"}
+              aria-pressed={theme === id}
+              onClick={() => setTheme(id)}
+            >
+              {label}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Color palette</CardTitle>
+        </CardHeader>
+        <CardContent role="group" aria-label="Color palette" className="grid grid-cols-3 gap-2">
+          {workPalettes.map((palette) => (
+            <Button
+              key={palette}
+              variant={appearance.palette === palette ? "secondary" : "outline"}
+              aria-pressed={appearance.palette === palette}
+              onClick={() => setAppearance({ palette })}
+            >
+              <span data-palette-swatch={palette} className="size-3 rounded-full" aria-hidden="true" />
+              {palette}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Typeface</CardTitle>
+        </CardHeader>
+        <CardContent role="group" aria-label="Typeface" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {workFonts.map((font) => (
+            <Button
+              key={font}
+              variant={appearance.font === font ? "secondary" : "outline"}
+              aria-pressed={appearance.font === font}
+              onClick={() => setAppearance({ font })}
+            >
+              {font === "System" ? "System UI" : font}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }

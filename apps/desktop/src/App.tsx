@@ -14,7 +14,7 @@ import { apiLogout, apiMe } from "./lib/api/servers";
 import { timeoutAfter } from "./lib/timeout";
 import { machineId, rpcCall } from "./lib/machine-rpc";
 import { toast } from "sonner";
-import { ThemeProvider } from "./theme";
+import { ThemeProvider, WorkAppearanceProvider } from "./theme";
 import { resetSessionState } from "./lib/session-reset";
 import { TITLE_BAR_INSET, titleBarDrag, CUSTOM_TITLE_BAR } from "./lib/titlebar";
 import { WindowsTitleBar } from "./components/windows-title-bar";
@@ -452,12 +452,14 @@ function AppInner() {
 export default function App() {
   return (
     <ThemeProvider>
+      <WorkAppearanceProvider>
       {CUSTOM_TITLE_BAR && <WindowsTitleBar />}
       <AppInner />
       {/* One prompt for every web screen — signed out, thread, guide. The
           desktop app has no install step, so it never renders it. */}
       {!HAS_SHELL && <InstallPrompt />}
       <ThemedToaster />
+      </WorkAppearanceProvider>
     </ThemeProvider>
   );
 }

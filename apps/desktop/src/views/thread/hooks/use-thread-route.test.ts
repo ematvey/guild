@@ -225,6 +225,13 @@ describe("work and Control Center addresses", () => {
     expect(fixControlRole("/control/apps/app1")).toBe("/apps/app1");
   });
 
+  it("reloads device setup over Devices and closes back to the same page", () => {
+    const route = parseChatRoute("/settings/machine/device");
+    expect(route.overlay).toEqual({ kind: "device" });
+    expect(routePath(route)).toBe("/settings/machine/device");
+    expect(routePath(applyRoutePatch(route, { overlay: null }))).toBe("/settings/machine");
+  });
+
   it("keeps personal routines and member settings in the work app", () => {
     expect(routePath(parseChatRoute("/routines/a1/r1"))).toBe("/routines/a1/r1");
     expect(routePath(parseChatRoute("/agents/a1/routines/r1"))).toBe("/control/agents/a1/routines/r1");
