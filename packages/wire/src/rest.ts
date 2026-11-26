@@ -759,6 +759,7 @@ export interface Chat {
   pin_rank?: number;
   /** Persistent Assistant inbox; pinned separately from ordinary Threads. */
   assistant_inbox?: boolean;
+  shared_agent_inbox?: boolean;
   id: string;
   org_id: string;
   user_id: string;

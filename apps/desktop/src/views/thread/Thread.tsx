@@ -266,7 +266,9 @@ function ThreadView(props: ThreadProps) {
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const openRow = viewChatId ? chats?.find((c) => c.id === viewChatId) : undefined;
+  const openRow = viewChatId
+    ? chats?.find((c) => c.id === viewChatId) ?? archivedChats?.find((c) => c.id === viewChatId)
+    : undefined;
   // The visible chat's subtree, from the per-chat map the socket fills. It
   // survives navigation, so returning to a chat renders its tree at once.
   const subagentNodes = viewChatId ? (subagentTrees[viewChatId] ?? []) : [];
@@ -527,7 +529,7 @@ function ThreadView(props: ThreadProps) {
   // An archived thread is in the archived list, not the active one; its row
   // still supplies the title.
   const listedChat = activeChat ?? archivedChats?.find((c) => c.id === viewChatId);
-  const assistantInbox = listedChat?.assistant_inbox === true;
+  const assistantInbox = listedChat?.assistant_inbox === true || listedChat?.shared_agent_inbox === true;
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
@@ -886,6 +888,12 @@ function ThreadView(props: ThreadProps) {
                 onOpenDrawer={openDrawer}
                 chatId={viewChatId}
                 title={activeTitle}
+                project={viewChatId !== null ? currentProject : null}
+                onOpenProject={(projectId) => {
+                  pushRoute({ ...CHAT_ROOT, projectId });
+                  if (isMobile) openDrawer();
+                  else sidebarState.setCollapsed(false);
+                }}
                 titleLoading={threadLoading && blocks.length === 0}
                 childTree={childTree}
                 isSubagent={facts.type === "subagent"}

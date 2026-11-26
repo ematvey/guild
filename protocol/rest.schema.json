@@ -766,7 +766,11 @@
         "pin_rank": { "type": "integer", "minimum": 0 },
         "assistant_inbox": {
           "type": "boolean",
-          "description": "Persistent Assistant inbox; pinned separately from ordinary Threads."
+          "description": "The Member’s personal Assistant inbox, fixed above the scrolling Threads."
+        },
+        "shared_agent_inbox": {
+          "type": "boolean",
+          "description": "The Member’s inbox with a non-personal Agent."
         },
         "id": { "$ref": "#/$defs/Uuid" },
         "org_id": { "$ref": "#/$defs/Uuid" },

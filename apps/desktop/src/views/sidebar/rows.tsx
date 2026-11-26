@@ -1,4 +1,5 @@
 import { useRef, useState, type HTMLAttributes } from "react";
+import { FadeTitle } from "./chrome";
 import {
   Archive,
   ArchiveRestore,
@@ -260,7 +261,7 @@ export function ChatListItem({
             New thread
           </span>
         ) : (
-          <span className="min-w-0 flex-1 truncate">{title}</span>
+          <FadeTitle text={title} fadeWidth={10} />
         )}
         {onPin && pinned && <Pin aria-label="Pinned" className={PIN_INDICATOR} />}
         <RowStatus status={status} />
@@ -357,7 +358,9 @@ export function ProjectHeader({
         ) : (
           <Folder aria-hidden="true" className="size-4 shrink-0" />
         )}
-        <span className="min-w-10 flex-1 truncate">{name}</span>
+        <span className="flex min-w-10 flex-1">
+          <FadeTitle text={name} fadeWidth={10} />
+        </span>
         {machine?.name && (
           <span
             title={machine.name}

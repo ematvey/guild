@@ -53,6 +53,7 @@ export interface ChatIdentity {
 export interface ChatListRow {
   /** The persistent Assistant inbox, distinct from ordinary Threads. */
   assistant_inbox?: boolean;
+  shared_agent_inbox?: boolean;
   pinned_at?: string;
   pin_rank?: number;
   id: string;
@@ -161,12 +162,14 @@ const LIST_SELECT = `${WORKING_CTE} SELECT c.id, c.org_id, c.user_id, c.title,
             AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
     ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
     ${utcText("c.pinned_at")} AS pinned_at, c.pin_rank,
-    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
+    COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox' AND a.is_personal) AS assistant_inbox,
+    (xt.execution_role = 'inbox' AND NOT a.is_personal) AS shared_agent_inbox,
     c.archived_at IS NOT NULL AS archived,
     c.deleted_at IS NOT NULL AS deleted,
     rt.id AS routine_id, rt.name AS routine_name
   FROM chats c
   LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+  LEFT JOIN agents a ON a.id = xt.agent_id
   LEFT JOIN agent_routines rt ON rt.id = xt.routine_id
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN working_chats wc ON wc.chat_id = c.id
@@ -342,10 +345,12 @@ export class ChatStore {
                       AND d.seq > e.seq AND d.payload->>'call_id' = e.payload->>'call_id')) AS blocked,
               ${utcText("COALESCE(le.created_at, c.created_at)")} AS last_activity_at,
               ${utcText("c.pinned_at")} AS pinned_at, c.pin_rank,
-              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox') AS assistant_inbox,
+              COALESCE(xt.type, 'user') AS type, (xt.execution_role = 'inbox' AND a.is_personal) AS assistant_inbox,
+              (xt.execution_role = 'inbox' AND NOT a.is_personal) AS shared_agent_inbox,
               true AS archived, false AS deleted
        FROM chats c
        LEFT JOIN agent_threads xt ON xt.chat_id = c.id
+       LEFT JOIN agents a ON a.id = xt.agent_id
        LEFT JOIN working_chats wc ON wc.chat_id = c.id
        LEFT JOIN projects pr ON pr.id = c.project_id
        LEFT JOIN machines m ON m.machine_id = pr.machine_id
@@ -1079,6 +1084,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     type: ((r.type as string | null) ?? "user") as ChatListRow["type"],
     ...(typeof r.pinned_at === "string" ? { pinned_at: pgTimestampToRfc3339(r.pinned_at) } : {}),
     ...(typeof r.pin_rank === "number" ? { pin_rank: r.pin_rank } : {}),
+    ...(r.shared_agent_inbox === true ? { shared_agent_inbox: true } : {}),
     ...(r.assistant_inbox === true ? { assistant_inbox: true } : {}),
     archived: Boolean(r.archived),
     deleted: Boolean(r.deleted),

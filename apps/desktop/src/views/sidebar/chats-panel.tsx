@@ -173,37 +173,48 @@ export const ChatsPanel = memo(function ChatsPanel({
     ...grouping.visible.filter((chat) => !chat.assistant_inbox),
     ...Object.entries(grouping.chatsByProject).flatMap(([id, chats]) => (activeProjectIds.has(id) ? chats : [])),
   ].sort(byRecentActivity);
-  const renderChat = (chat: ChatSummary, restricted = false) => (
-    <ChatListItem
-      key={chat.id}
-      title={chat.title ?? ""}
-      assistantInbox={chat.assistant_inbox}
-      routine={chat.routine?.name}
-      active={chat.id === chatId}
-      status={{
-        generating: !!chat.generating,
-        working: !!chat.working,
-        unread: !!chat.unread && !chat.archived,
-        blocked: !!chat.blocked,
-      }}
-      dragProps={
-        !restricted && !chat.archived && !chat.assistant_inbox && onPinChat
-          ? dragProps(chat.id, "chat", !!chat.pinned_at)
-          : undefined
-      }
-      pinned={!!chat.pinned_at}
-      onPin={!restricted && !chat.assistant_inbox && onPinChat ? () => onPinChat(chat.id, !chat.pinned_at) : undefined}
-      onClick={() => onOpenChat(chat.id)}
-      onRename={!chat.archived && onRenameChat ? (title) => onRenameChat(chat.id, title) : undefined}
-      archiveLabel={chat.archived ? "Unarchive" : undefined}
-      onArchive={
-        chat.archived
-          ? onUnarchiveChat && (() => onUnarchiveChat(chat.id))
-          : onArchiveChat && (() => onArchiveChat(chat.id))
-      }
-      onDelete={onDeleteChat ? () => setDeleteTarget({ id: chat.id, title: chat.title ?? "" }) : undefined}
-    />
-  );
+  const renderChat = (chat: ChatSummary, restricted = false) => {
+    const sharedInbox = chat.shared_agent_inbox === true;
+    return (
+      <ChatListItem
+        key={chat.id}
+        title={chat.title ?? ""}
+        assistantInbox={chat.assistant_inbox}
+        routine={chat.routine?.name}
+        active={chat.id === chatId}
+        status={{
+          generating: !!chat.generating,
+          working: !!chat.working,
+          unread: !!chat.unread && !chat.archived,
+          blocked: !!chat.blocked,
+        }}
+        dragProps={
+          !restricted && !chat.archived && !chat.assistant_inbox && !sharedInbox && onPinChat
+            ? dragProps(chat.id, "chat", !!chat.pinned_at)
+            : undefined
+        }
+        pinned={!!chat.pinned_at}
+        onPin={
+          !restricted && !chat.assistant_inbox && !sharedInbox && onPinChat
+            ? () => onPinChat(chat.id, !chat.pinned_at)
+            : undefined
+        }
+        onClick={() => onOpenChat(chat.id)}
+        onRename={!chat.archived && !sharedInbox && onRenameChat ? (title) => onRenameChat(chat.id, title) : undefined}
+        archiveLabel={chat.archived ? "Unarchive" : undefined}
+        onArchive={
+          sharedInbox
+            ? undefined
+            : chat.archived
+              ? onUnarchiveChat && (() => onUnarchiveChat(chat.id))
+              : onArchiveChat && (() => onArchiveChat(chat.id))
+        }
+        onDelete={
+          onDeleteChat && !sharedInbox ? () => setDeleteTarget({ id: chat.id, title: chat.title ?? "" }) : undefined
+        }
+      />
+    );
+  };
 
   const renderProject = (project: Project, archived = false) => {
     const chats = grouping.chatsByProject[project.id] ?? [];

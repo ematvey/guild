@@ -38,6 +38,7 @@ export function chatWire(hub: ChatWireHub, row: ChatListRow): Chat {
     type: row.type,
     ...(row.pin_rank !== undefined ? { pin_rank: row.pin_rank } : {}),
     ...(row.pinned_at ? { pinned_at: row.pinned_at } : {}),
+    ...(row.shared_agent_inbox ? { shared_agent_inbox: true } : {}),
     ...(row.assistant_inbox ? { assistant_inbox: true } : {}),
     archived: row.archived,
     deleted: row.deleted,

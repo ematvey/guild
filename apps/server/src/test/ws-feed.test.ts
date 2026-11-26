@@ -1124,6 +1124,33 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("marks only the personal inbox as the member's Assistant", { timeout: TEST_TIMEOUT }, async () => {
+    const agentId = crypto.randomUUID();
+    await stack.env.db.query(
+      `INSERT INTO agents (id, org_id, owner_user_id, name, model, resources)
+       VALUES ($1, $2, $3, 'Shared inbox', 'GLM-Test-Model', '{"assistant":{"enabled":true}}')`,
+      [agentId, stack.orgId, stack.memberId],
+    );
+    const inbox = async (body: Record<string, string>) => {
+      const response = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/assistant",
+        headers: auth(stack.memberToken),
+        payload: body,
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json<{ chat_id: string }>().chat_id;
+    };
+    const personal = await inbox({});
+    const shared = await inbox({ agent_id: agentId });
+    const ws = await memberSocket();
+    const frame = await waitFrame(ws, (f) => f.type === "thread_list");
+    const rows = frame.chats as { id: string; assistant_inbox?: boolean; shared_agent_inbox?: boolean }[];
+    expect(rows.filter((row) => row.assistant_inbox).map((row) => row.id)).toEqual([personal]);
+    expect(rows.find((row) => row.id === shared)).toMatchObject({ shared_agent_inbox: true });
+    ws.end();
+  });
+
   it("pushes the updated workspace on a chat rename, pin, and archive", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("rename me");
     const ws = await memberSocket();
