@@ -1,12 +1,8 @@
-// The sidebar panel the rail's tab picks: the chat list, the Work tab's
-// projects, or the settings sections. It reads the chat stores the member
-// socket writes and performs the row actions itself.
 import { useCallback } from "react";
 import { useMachines } from "../../../lib/machines-store";
 import type { PickedProject } from "../../projects/projects";
 import { ChatsPanel } from "../../sidebar/chats-panel";
 import { SettingsPanel } from "../../sidebar/settings-panel";
-import { WorkPanel } from "../../sidebar/work-panel";
 import { archivedProjectsStore, projectsStore, useSidebarRows } from "../chat-stores";
 import { useChatActions } from "../hooks/use-chat-actions";
 import type { ChatRoute } from "../route";
@@ -15,6 +11,7 @@ export function SidebarSurface({
   tab,
   role,
   chatId,
+  projectId,
   settingsSection,
   onNewChat,
   onOpenChat,
@@ -29,6 +26,7 @@ export function SidebarSurface({
   role: string;
   /** The chat the main column shows. */
   chatId: string | null;
+  projectId: string | null;
   settingsSection: string | null;
   onNewChat: () => void;
   onOpenChat: (chatId: string) => void;
@@ -40,12 +38,21 @@ export function SidebarSurface({
   onCollapse?: () => void;
   onClose?: () => void;
 }) {
-  const { chats, grouping, archivedRows, archivedGrouping } = useSidebarRows();
+  const { chats, grouping, archivedRows } = useSidebarRows();
   const projects = projectsStore.use();
   const archivedProjects = archivedProjectsStore.use();
   const machines = useMachines();
-  const { renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject } =
-    useChatActions();
+  const {
+    pinChat,
+    pinProject,
+    renameChat,
+    archiveChat,
+    unarchiveChat,
+    deleteChat,
+    renameProject,
+    archiveProject,
+    unarchiveProject,
+  } = useChatActions();
   const renameChatRow = useCallback(
     (id: string, title: string) => {
       void renameChat(id, title);
@@ -90,31 +97,6 @@ export function SidebarSurface({
     [unarchiveProject],
   );
 
-  if (tab === "work") {
-    return (
-      <WorkPanel
-        loadingChats={chats === null}
-        loadingArchivedChats={archivedRows === null}
-        grouping={grouping}
-        archivedGrouping={archivedGrouping}
-        projects={projects}
-        archivedProjects={archivedProjects}
-        machines={machines}
-        chatId={chatId}
-        onOpenChat={onOpenChat}
-        onCollapse={onCollapse}
-        onClose={onClose}
-        onNewChatInProject={onNewChatInProject}
-        onNewProject={onNewProject}
-        onRenameChat={renameChatRow}
-        onArchiveChat={archiveChatRow}
-        onUnarchiveChat={unarchiveChatRow}
-        onRenameProject={renameProjectRow}
-        onArchiveProject={archiveProjectRow}
-        onUnarchiveProject={unarchiveProjectRow}
-      />
-    );
-  }
   if (tab === "settings") {
     return (
       <SettingsPanel
@@ -132,6 +114,17 @@ export function SidebarSurface({
       loadingChats={chats === null}
       chatId={chatId}
       archivedChats={archivedRows}
+      projects={projects}
+      archivedProjects={archivedProjects}
+      machines={machines}
+      projectId={projectId}
+      onNewProject={onNewProject}
+      onNewChatInProject={onNewChatInProject}
+      onRenameProject={renameProjectRow}
+      onArchiveProject={archiveProjectRow}
+      onUnarchiveProject={unarchiveProjectRow}
+      onPinChat={pinChat}
+      onPinProject={pinProject}
       onNewChat={onNewChat}
       onOpenChat={onOpenChat}
       onCollapse={onCollapse}

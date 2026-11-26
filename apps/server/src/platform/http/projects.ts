@@ -28,6 +28,7 @@ function projectJson(p: ProjectRow): string {
     machine_id: p.machine_id,
     machine_label: p.machine_label,
     created_at: p.created_at,
+    ...(p.pinned_at ? { pinned_at: p.pinned_at } : {}),
   };
   return JSON.stringify(out);
 }
@@ -82,7 +83,18 @@ export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx,
       }
       archived = record["archived"];
     }
-    const updated = await gateway.projects.update(user.org_id, projectId, user.id, name, folder, machineId, archived);
+    const pinned = record["pinned"];
+    if (pinned !== undefined && typeof pinned !== "boolean") throw ApiError.badRequest("pinned must be a boolean");
+    const updated = await gateway.projects.update(
+      user.org_id,
+      projectId,
+      user.id,
+      name,
+      folder,
+      machineId,
+      archived,
+      pinned,
+    );
     return reply.status(200).type("application/json").send(projectJson(updated));
   });
 

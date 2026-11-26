@@ -7,6 +7,8 @@ import {
   EllipsisVertical,
   Loader2,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Repeat,
   Trash2,
@@ -52,16 +54,31 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
   );
 }
 
-/** Hover-revealed row menu (Rename / Archive). The trigger is absolutely
- * positioned and shown via opacity, so the row's layout never shifts;
+const ROW_BUTTON =
+  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring group-hover/row:opacity-100 group-focus-within/row:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100";
 
-/** Hover-revealed row menu (Rename / Archive). The trigger is absolutely
- * positioned and shown via opacity, so the row's layout never shifts;
- * stays visible while the menu is open. */
+function PinButton({ pinned, onPin }: { pinned?: boolean; onPin?: () => void }) {
+  if (!onPin) return null;
+  const label = pinned ? "Unpin" : "Pin";
+  return (
+    <button
+      type="button"
+      className={`${ROW_BUTTON} ${pinned ? "opacity-100" : ""}`}
+      aria-label={label}
+      title={label}
+      onClick={onPin}
+    >
+      <Pin aria-hidden="true" className={`size-3.5 ${pinned ? "fill-current" : ""}`} />
+    </button>
+  );
+}
+
 function RowActions({
   onRename,
   onArchive,
   onDelete,
+  pinned,
+  onPin,
   archiveLabel,
   open,
   onOpenChange,
@@ -69,25 +86,27 @@ function RowActions({
   onRename?: () => void;
   onArchive?: () => void;
   onDelete?: () => void;
+  pinned?: boolean;
+  onPin?: () => void;
   archiveLabel?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  if (!onRename && !onArchive && !onDelete) return null;
+  if (!onRename && !onArchive && !onDelete && !onPin) return null;
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
-          title="Row actions"
-          onClick={(e) => e.stopPropagation()}
-          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
-        >
-          <EllipsisVertical className="size-4" />
-        </span>
+        <button type="button" aria-label="Row actions" title="Row actions" className={ROW_BUTTON}>
+          <EllipsisVertical aria-hidden="true" className="size-4" />
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-32">
+        {onPin && (
+          <DropdownMenuItem onSelect={onPin}>
+            {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+            {pinned ? "Unpin" : "Pin"}
+          </DropdownMenuItem>
+        )}
         {onRename && (
           <DropdownMenuItem onSelect={() => onRename()}>
             <Pencil className="size-4" />
@@ -161,6 +180,8 @@ export function ChatListItem({
   onRename,
   onArchive,
   onDelete,
+  pinned,
+  onPin,
   archiveLabel,
   assistantInbox,
   routine,
@@ -175,13 +196,15 @@ export function ChatListItem({
   onRename?: (title: string) => void;
   onArchive?: () => void;
   onDelete?: () => void;
+  pinned?: boolean;
+  onPin?: () => void;
   /** Row-menu label for the archive action ("Unarchive" in the Archived
    * section); defaults to "Archive". */
   archiveLabel?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const hasActions = !assistantInbox && Boolean(onRename || onArchive || onDelete);
+  const hasActions = !assistantInbox && Boolean(onRename || onArchive || onDelete || onPin);
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -196,17 +219,15 @@ export function ChatListItem({
     );
   }
   return (
-    // A div row hosting two siblings — the open button and the (absolutely
-    // positioned) Radix menu trigger — instead of a button containing the
-    // trigger: an interactive control nested in a button is non-conforming
-    // HTML and screen readers announce the menu trigger as part of the
-    // row's name. The background/hover classes stay on the row so hovering
-    // the trigger highlights it too.
     <div
-      onContextMenu={hasActions ? (event) => {
-        event.preventDefault();
-        setMenuOpen(true);
-      } : undefined}
+      onContextMenu={
+        hasActions
+          ? (event) => {
+              event.preventDefault();
+              setMenuOpen(true);
+            }
+          : undefined
+      }
       className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-sidebar-accent text-sidebar-foreground"
@@ -216,7 +237,8 @@ export function ChatListItem({
       <button
         onClick={onClick}
         title={title}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
+        type="button"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       >
         {assistantInbox ? (
           <Circle aria-hidden="true" className="size-4 shrink-0" />
@@ -238,6 +260,7 @@ export function ChatListItem({
         )}
         <RowStatus status={status} />
       </button>
+      {!assistantInbox && <PinButton pinned={pinned} onPin={onPin} />}
       {hasActions && (
         <RowActions
           open={menuOpen}
@@ -246,17 +269,15 @@ export function ChatListItem({
           onArchive={onArchive}
           onDelete={onDelete}
           archiveLabel={archiveLabel}
+          pinned={pinned}
+          onPin={onPin}
         />
       )}
     </div>
   );
 }
 
-/** Project row header: fold-out toggle + shaded title + row menu. While
-
-
-/** Project row header: fold-out toggle + shaded title + row menu. While
- * renaming, the whole header is a plain div hosting the inline input. */
+/** Expandable project row with independent controls for its actions. */
 export function ProjectHeader({
   name,
   folder,
@@ -267,6 +288,8 @@ export function ProjectHeader({
   onRename,
   onArchive,
   onNewChat,
+  pinned,
+  onPin,
   archiveLabel,
 }: {
   name: string;
@@ -286,8 +309,11 @@ export function ProjectHeader({
    *  section); defaults to "Archive". */
   archiveLabel?: string;
   onNewChat?: () => void;
+  pinned?: boolean;
+  onPin?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -302,52 +328,58 @@ export function ProjectHeader({
     );
   }
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      // The two row buttons are always up on a touch screen, so the row
-      // reserves their width there instead of letting the label run under.
-      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-sidebar-accent hover:text-sidebar-foreground pointer-coarse:pr-14"
-      title={folder}
+    <div
+      className="group/row relative flex w-full items-center overflow-hidden rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenuOpen(true);
+      }}
     >
-      <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-      <FadeTitle text={name} />
-      {machine?.name && (
-        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
-          {machine.online !== undefined &&
-            (machine.online ? (
-              <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
-            ) : (
-              <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
-            ))}
-          <span className="max-w-20 truncate">{machine.name}</span>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        title={folder}
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        <span className="flex min-w-10 flex-1 overflow-hidden">
+          <FadeTitle text={name} />
         </span>
-      )}
-      <RowStatus status={status} />
+        {machine?.name && (
+          <span className="flex min-w-0 items-center gap-1 overflow-hidden text-xs text-muted-foreground/70">
+            {machine.online !== undefined &&
+              (machine.online ? (
+                <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
+              ) : (
+                <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
+              ))}
+            <span className="max-w-20 truncate">{machine.name}</span>
+          </span>
+        )}
+        <RowStatus status={status} />
+      </button>
       {onNewChat && (
-        <span
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           title="New chat in this project"
-          onClick={(e) => {
-            e.stopPropagation();
-            onNewChat();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation();
-              e.preventDefault();
-              onNewChat();
-            }
-          }}
-          // right-1 + size-6 + 2px gap → the two hover buttons sit 2px apart.
-          // A touch screen has no hover, so the plus is always up there.
-          className="absolute right-[30px] top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
+          aria-label="New chat in this project"
+          className={ROW_BUTTON}
+          onClick={onNewChat}
         >
-          <Plus className="size-4" />
-        </span>
+          <Plus aria-hidden="true" className="size-4" />
+        </button>
       )}
-      <RowActions onRename={() => setEditing(true)} onArchive={onArchive} archiveLabel={archiveLabel} />
-    </button>
+      <PinButton pinned={pinned} onPin={onPin} />
+      <RowActions
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        onRename={() => setEditing(true)}
+        onArchive={onArchive}
+        archiveLabel={archiveLabel}
+        pinned={pinned}
+        onPin={onPin}
+      />
+    </div>
   );
 }

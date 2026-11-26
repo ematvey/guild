@@ -250,7 +250,9 @@ export function registerChatsRoutes(
           ? rawTitle.trim()
           : null;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
-    await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null);
+    const pinned = body["pinned"];
+    if (pinned !== undefined && typeof pinned !== "boolean") throw ApiError.badRequest("pinned must be a boolean");
+    await chats.chats.updateChat(user.org_id, chatId, user, title, archived ?? null, pinned);
     if (archived === true) {
       // Archiving closes the agent-thread subtree first: descendants stop
       // and deliveries stop. Then the in-flight generation is ended, or an

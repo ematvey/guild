@@ -66,5 +66,30 @@ export function useChatActions() {
     }
   }, []);
 
-  return { renameChat, archiveChat, unarchiveChat, deleteChat, renameProject, archiveProject, unarchiveProject };
+  const pinChat = useCallback(async (id: string, pinned: boolean) => {
+    try {
+      await updateChat(id, { pinned });
+    } catch (error) {
+      failed(pinned ? "Could not pin the chat" : "Could not unpin the chat", error);
+    }
+  }, []);
+  const pinProject = useCallback(async (id: string, pinned: boolean) => {
+    try {
+      await updateProject(id, { pinned });
+    } catch (error) {
+      failed(pinned ? "Could not pin the project" : "Could not unpin the project", error);
+    }
+  }, []);
+
+  return {
+    pinChat,
+    pinProject,
+    renameChat,
+    archiveChat,
+    unarchiveChat,
+    deleteChat,
+    renameProject,
+    archiveProject,
+    unarchiveProject,
+  };
 }

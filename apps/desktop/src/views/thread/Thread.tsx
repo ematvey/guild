@@ -32,7 +32,7 @@ import {
   threadFacts,
 } from "./status";
 import { CHAT_ROOT, SURFACE_BASE } from "./route";
-import { chatsStore, resetChatStores, useSidebarRows } from "./chat-stores";
+import { archivedChatsStore, chatsStore, resetChatStores } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
 import { GenuiHostContext, type GenuiHost } from "../genui/actions";
 import { ThreadHeader } from "./thread-header";
@@ -439,7 +439,7 @@ function ThreadView(props: ThreadProps) {
       // forward, deep links and sidebar picks all share one code path. The
       // chat's project rides along so the sidebar's project filter stays in
       // step with the URL.
-      const row = chatsStore.get()?.find((c) => c.id === id);
+      const row = chatsStore.get()?.find((c) => c.id === id) ?? archivedChatsStore.get()?.find((c) => c.id === id);
       setOpen(false);
       pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
     },
@@ -454,7 +454,7 @@ function ThreadView(props: ThreadProps) {
 
   const newChat = useCallback(() => {
     // Navigation only: the route moves to the addressed scratch composer
-    // (/chats/new, or /work/new when entered from the Work tab); the
+    // (/chats/new); the
     // chatId effect clears the thread and the pick effect drops any pick.
     pushRoute({
       chatId: null,
@@ -462,11 +462,11 @@ function ThreadView(props: ThreadProps) {
       overlay: null,
       skills: null,
       newChat: true,
-      tab: route.tab === "work" ? "work" : "chats",
+      tab: "chats",
     });
     setOpen(false);
     ta.current?.focus();
-  }, [pushRoute, route.tab, ta]);
+  }, [pushRoute, ta]);
 
   /** The open chat is gone server-side (a sync hits "no such chat"): fall
    * back to a fresh chat silently, carrying the composer text over so a
@@ -601,21 +601,14 @@ function ThreadView(props: ThreadProps) {
   // the created thread.
   const holdingFirstSend = outgoing.pendingSubmitId !== null && chatId === null;
 
-  // Rail badges: unseen chats per panel — folderless chats under Chats, the
-  // project-bound ones under Projects.
-  const { grouping } = useSidebarRows();
-  const unreadChats = grouping.visible.filter((c) => c.unread).length;
-  const unreadProjects = Object.values(grouping.chatsByProject).reduce(
-    (sum, rows) => sum + rows.filter((c) => c.unread).length,
-    0,
-  );
+  const activeProjectIds = new Set(projects?.map((project) => project.id));
+  const unreadChats =
+    chats?.filter(
+      (chat) =>
+        (chatStatus[chat.id]?.unread ?? chat.unread) &&
+        (chat.assistant_inbox || !chat.project_id || activeProjectIds.has(chat.project_id)),
+    ).length ?? 0;
 
-  // Sidebar tab: one icon rail (desktop) switches the panel between chats,
-  // work, settings and the full-page surfaces. The rail entry is a
-  // projection of the route — the route is the truth, so back/forward,
-  // reloads and deep links restore the tab like any other route state.
-  // The skills and agents pages raise their own rail entry while their URL
-  // is live.
   const railTab: RailTab =
     route.skills !== null
       ? "skills"
@@ -636,7 +629,7 @@ function ThreadView(props: ThreadProps) {
     const target = tabPaneLayout(
       {
         ...route,
-        tab: tab === "settings" || tab === "work" ? tab : "chats",
+        tab: tab === "settings" ? tab : "chats",
         skills: tab === "skills" ? SKILLS_CATALOG : null,
         agents: tab === "agents" ? AGENTS_DIRECTORY : tab === "activity" ? AGENTS_ACTIVITY : null,
         integrations: tab === "integrations" ? INTEGRATIONS_HOME : null,
@@ -718,6 +711,7 @@ function ThreadView(props: ThreadProps) {
       tab={route.tab}
       role={role}
       chatId={viewChatId}
+      projectId={route.projectId}
       settingsSection={settingsSection}
       onNewChat={newChat}
       onOpenChat={openChat}
@@ -731,7 +725,7 @@ function ThreadView(props: ThreadProps) {
   );
 
   // A project-bound chat owns the project route — its URL is
-  // /project/<id>/thread/<cid>, so the Work tab survives reload and
+  // /project/<id>/thread/<cid>, so the project context survives reload and
   // back/forward. A bare /thread/<id> for a project chat is rewritten in
   // place (replace: the bare address is not a step back) once the chat list
   // names its project; a chat not yet listed (just sent) counts as bound
@@ -743,12 +737,12 @@ function ThreadView(props: ThreadProps) {
       return;
     }
     if (routeTabDecidedRef.current === route.chatId) return;
-    if (chats === null) return;
-    const row = chats.find((c) => c.id === route.chatId);
+    if (chats === null || archivedChats === null) return;
+    const row = chats.find((c) => c.id === route.chatId) ?? archivedChats.find((c) => c.id === route.chatId);
     const projectId = row?.project_id ?? currentProjectRef.current?.id ?? null;
-    routeTabDecidedRef.current = route.chatId;
+    if (row || projectId) routeTabDecidedRef.current = route.chatId;
     if (projectId) pushRoute({ projectId }, { replace: true });
-  }, [route.chatId, route.projectId, chats, pushRoute]);
+  }, [route.chatId, route.projectId, chats, archivedChats, currentProject?.id, pushRoute]);
 
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
@@ -804,7 +798,6 @@ function ThreadView(props: ThreadProps) {
     onAddWorkspace,
     role,
     unreadChats,
-    unreadProjects,
   };
 
   return (

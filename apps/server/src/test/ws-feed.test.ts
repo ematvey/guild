@@ -132,9 +132,10 @@ async function waitFrame(
   ws: ScriptedClient,
   predicate: (frame: Record<string, unknown>) => boolean,
   timeoutMs = 15_000,
+  after = 0,
 ): Promise<Record<string, unknown>> {
   const found = await ws.until((f) => {
-    if (f.kind !== "text") return false;
+    if (f.kind !== "text" || (after > 0 && ws.frames.indexOf(f) < after)) return false;
     try {
       return predicate(JSON.parse(f.data) as Record<string, unknown>);
     } catch {
@@ -1123,7 +1124,7 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
-  it("pushes the updated workspace on a chat rename and archive", { timeout: TEST_TIMEOUT }, async () => {
+  it("pushes the updated workspace on a chat rename, pin, and archive", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("rename me");
     const ws = await memberSocket();
 
@@ -1141,6 +1142,26 @@ describe("member-socket feed", () => {
         (f.chats as { id: string; title?: string }[]).some((c) => c.id === chat.id && c.title === "Renamed chat"),
     );
 
+    const peer = await memberSocket();
+    const pinned = await stack.env.app.inject({
+      method: "PATCH",
+      url: `/api/v1/threads/${chat.id}`,
+      headers: auth(stack.memberToken),
+      payload: { pinned: true },
+    });
+    expect(pinned.statusCode).toBe(200);
+    const stamp = pinned.json<{ pinned_at: string }>().pinned_at;
+    expect(stamp).toBeTruthy();
+    for (const client of [ws, peer]) {
+      await waitFrame(
+        client,
+        (f) =>
+          f.type === "thread_list" &&
+          (f.chats as { id: string; pinned_at?: string }[]).some((c) => c.id === chat.id && c.pinned_at === stamp),
+      );
+    }
+    peer.end();
+
     const archived = await stack.env.app.inject({
       method: "PATCH",
       url: `/api/v1/threads/${chat.id}`,
@@ -1150,12 +1171,14 @@ describe("member-socket feed", () => {
     expect(archived.statusCode).toBe(200);
     await waitFrame(
       ws,
-      (f) => f.type === "archived_thread_list" && (f.chats as { id: string }[]).some((c) => c.id === chat.id),
+      (f) =>
+        f.type === "archived_thread_list" &&
+        (f.chats as { id: string; pinned_at?: string }[]).some((c) => c.id === chat.id && c.pinned_at === stamp),
     );
     ws.end();
   });
 
-  it("pushes project_list when a project is created", { timeout: TEST_TIMEOUT }, async () => {
+  it("pushes project creation and pin changes to both member sockets", { timeout: TEST_TIMEOUT }, async () => {
     const machineId = "fix-workspace-project-m1";
     await stack.env.db.query(
       `INSERT INTO machines (machine_id, org_id, user_id, label)
@@ -1163,6 +1186,7 @@ describe("member-socket feed", () => {
       [machineId, stack.orgId, stack.memberId],
     );
     const ws = await memberSocket();
+    const other = await memberSocket();
     const res = await stack.env.app.inject({
       method: "POST",
       url: "/api/v1/projects",
@@ -1175,6 +1199,32 @@ describe("member-socket feed", () => {
       ws,
       (f) => f.type === "project_list" && (f.projects as { id: string }[]).some((p) => p.id === project.id),
     );
+    const pin = async (pinned: boolean) => {
+      const response = await stack.env.app.inject({
+        method: "PUT",
+        url: `/api/v1/projects/${project.id}`,
+        headers: auth(stack.memberToken),
+        payload: { pinned },
+      });
+      expect(response.statusCode).toBe(200);
+    };
+    for (const pinned of [true, false]) {
+      const clients = [ws, other].map((client) => ({ client, after: client.frames.length }));
+      await pin(pinned);
+      for (const { client, after } of clients) {
+        await waitFrame(
+          client,
+          (f) =>
+            f.type === "project_list" &&
+            (f.projects as { id: string; pinned_at?: string }[]).some(
+              (p) => p.id === project.id && !!p.pinned_at === pinned,
+            ),
+          15_000,
+          after,
+        );
+      }
+    }
+    other.end();
     ws.end();
   });
 });

@@ -524,6 +524,7 @@
       "required": ["id", "name", "folder", "machine_id", "machine_label", "created_at"],
       "additionalProperties": false,
       "properties": {
+        "pinned_at": { "$ref": "#/$defs/DateTime" },
         "id": { "$ref": "#/$defs/Uuid" },
         "name": { "type": "string" },
         "folder": {
@@ -760,6 +761,7 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "pinned_at": { "$ref": "#/$defs/DateTime" },
         "assistant_inbox": {
           "type": "boolean",
           "description": "Persistent Assistant inbox; pinned separately from ordinary Threads."
@@ -1483,6 +1485,7 @@
       "required": [],
       "additionalProperties": false,
       "properties": {
+        "pinned": { "type": "boolean", "description": "Omitted when unchanged." },
         "title": { "type": "string", "description": "Omitted when unchanged." },
         "archived": { "type": "boolean", "description": "Omitted when unchanged." }
       }
@@ -1493,6 +1496,7 @@
       "required": [],
       "additionalProperties": false,
       "properties": {
+        "pinned": { "type": "boolean", "description": "Omitted when unchanged." },
         "name": { "type": "string", "description": "Omitted when unchanged." },
         "folder": { "type": "string", "description": "Omitted when unchanged." },
         "machine_id": { "type": "string", "description": "Omitted when unchanged." },

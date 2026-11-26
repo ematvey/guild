@@ -39,9 +39,9 @@ describe("applyRoutePatch (navigation precedence)", () => {
     ).toBe("/thread/c1");
   });
 
-  it("a project-bound address implies the Work tab", () => {
+  it("a project-bound address keeps the Chats tab", () => {
     const next = applyRoutePatch(route(), { projectId: "p1", newChat: true });
-    expect(next.tab).toBe("work");
+    expect(next.tab).toBe("chats");
     expect(next.newChat).toBe(true);
   });
 

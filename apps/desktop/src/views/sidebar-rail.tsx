@@ -1,12 +1,11 @@
 // Icon rail left of the sidebar panel (desktop): switches the panel between
-// chats, projects (work) and skills. Help and Settings sit at the bottom,
+// chats and skills. Help and Settings sit at the bottom,
 // above the account menu — all global across tabs and never scroll away.
 
 import {
   Activity,
   Bot,
   CircleHelp,
-  FolderKanban,
   LayoutGrid,
   MessageSquare,
   Package,
@@ -28,7 +27,6 @@ export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "app
 
 const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "work", label: "Projects", icon: FolderKanban },
   { id: "agents", label: "Agents", icon: Bot },
   { id: "skills", label: "Skills", icon: Package },
   { id: "apps", label: "Apps", icon: LayoutGrid },
@@ -120,7 +118,6 @@ export function SidebarRail({
   role,
   isMobile,
   unreadChats,
-  unreadProjects,
   collapsed = false,
   onToggleCollapse,
 }: {
@@ -144,7 +141,6 @@ export function SidebarRail({
   /** Unseen chats the Chats panel lists. */
   unreadChats?: number;
   /** Unseen chats the Projects panel lists. */
-  unreadProjects?: number;
   /** The sidebar panel is collapsed: the first slot offers to expand it. */
   collapsed?: boolean;
   /** Absent in the mobile drawer, where there is no sidebar to collapse. */
@@ -174,7 +170,7 @@ export function SidebarRail({
             icon={Icon}
             active={activeTab === id}
             onClick={() => onTabChange(id)}
-            badge={id === "chats" ? unreadChats : id === "work" ? unreadProjects : undefined}
+            badge={id === "chats" ? unreadChats : undefined}
           />
         ))}
       </div>
