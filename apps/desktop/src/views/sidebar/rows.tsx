@@ -63,15 +63,19 @@ function RowActions({
   onArchive,
   onDelete,
   archiveLabel,
+  open,
+  onOpenChange,
 }: {
   onRename?: () => void;
   onArchive?: () => void;
   onDelete?: () => void;
   archiveLabel?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   if (!onRename && !onArchive && !onDelete) return null;
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <span
           role="button"
@@ -176,6 +180,8 @@ export function ChatListItem({
   archiveLabel?: string;
 }) {
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hasActions = !assistantInbox && Boolean(onRename || onArchive || onDelete);
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -197,6 +203,10 @@ export function ChatListItem({
     // row's name. The background/hover classes stay on the row so hovering
     // the trigger highlights it too.
     <div
+      onContextMenu={hasActions ? (event) => {
+        event.preventDefault();
+        setMenuOpen(true);
+      } : undefined}
       className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-sidebar-accent text-sidebar-foreground"
@@ -228,8 +238,10 @@ export function ChatListItem({
         )}
         <RowStatus status={status} />
       </button>
-      {!assistantInbox && (
+      {hasActions && (
         <RowActions
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
           onRename={onRename ? () => setEditing(true) : undefined}
           onArchive={onArchive}
           onDelete={onDelete}
