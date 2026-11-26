@@ -163,7 +163,9 @@ const args = process.argv.slice(2), dir = process.env.RELEASE_TEST_DIR;
 fs.appendFileSync(path.join(dir, 'calls'), JSON.stringify(args) + '\\n');
 if (path.basename(process.argv[1]) === 'git') {
   if (args[0] !== 'ls-remote' && args[0] !== 'push') process.stdout.write(require('node:child_process').execFileSync(process.env.RELEASE_TEST_REAL_GIT, args, {cwd:dir,encoding:'utf8',stdio:'pipe'}));
-} else if (args.includes('--slurp')) console.log('[[]]');
+} else if (args[1] === '--paginate') {
+  if (args[3] !== '--jq' || args[4] !== '.[] | select(.tag_name == "client-v1.2.4-dev.42") | {id, draft}') process.exit(1);
+}
 else if (args.includes('POST')) console.log('{"id":42,"draft":true}');
 else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
   console.log(JSON.stringify({ assets: fs.readdirSync(dir).filter(n => /^(Guild|release\\.json|latest\\.json|SHA256SUMS)/.test(n)).map(name => {
@@ -184,7 +186,7 @@ else if (args[0] === 'api' && args[1].endsWith('/releases/42')) {
       stdio: "pipe",
     });
     const calls = readFileSync(path.join(directory, "calls"), "utf8").trim().split("\n").map(JSON.parse);
-    assert.equal(calls.filter((args) => args.includes("--slurp")).length, 1);
+    assert.equal(calls.filter((args) => args[1] === "--paginate" && args.includes("--jq")).length, 1);
     assert.ok(calls.some((args) => args.includes("--draft=false")));
     assert.match(
       git("cat-file", "-p", "client-v1.2.4-dev.42"),
@@ -314,7 +316,10 @@ const fs=require('node:fs'),path=require('node:path');
 const dir=process.env.RELEASE_TEST_DIR,args=process.argv.slice(2),releases=JSON.parse(fs.readFileSync(path.join(dir,'releases.json')));
 const body=args.includes('--input')?JSON.parse(fs.readFileSync(0,'utf8')):null;
 fs.appendFileSync(path.join(dir,'calls'),JSON.stringify([...args,body])+'\\n');
-if(args.includes('--slurp'))console.log(JSON.stringify([releases]));
+if(args[1]==='--paginate'){
+ if(args[3]!=='--jq'||args[4]!=='.[] | select(.prerelease) | {id, tag_name, prerelease, published_at, created_at}')process.exit(1);
+ for(const {id,tag_name,prerelease,published_at,created_at} of releases.filter(r=>r.prerelease))console.log(JSON.stringify({id,tag_name,prerelease,published_at,created_at}));
+}
 else if(args.includes('DELETE')){}
 else if(args[1].endsWith('/git/ref/heads/master'))console.log(JSON.stringify({object:{sha:'master'}}));
 else if(args[1].endsWith('/git/tags') && args.includes('POST'))console.log(JSON.stringify({sha:'lock-object'}));
