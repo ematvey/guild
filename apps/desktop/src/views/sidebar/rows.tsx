@@ -237,7 +237,7 @@ export function ChatListItem({
       className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-sidebar-accent text-sidebar-foreground"
-          : "text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
       }`}
     >
       <button
@@ -343,7 +343,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-foreground`}
+      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);

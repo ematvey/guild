@@ -118,10 +118,10 @@
   --input: #404040;
   --ring: #525252;
   --sidebar: #161412;
-  --sidebar-foreground: #f5f5f5;
+  --sidebar-foreground: #fafafa;
   --sidebar-accent: #262320;
   --radius: 0.625rem;
-  --chat-foreground: oklch(0.872 0.01 258.338);
+  --chat-foreground: oklch(0.94 0.006 258.338);
   --chart-1: #60a5fa;
   --chart-2: #fbbf24;
   --chart-3: #34d399;
