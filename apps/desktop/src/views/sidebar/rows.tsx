@@ -8,7 +8,7 @@ import {
   Circle,
   EllipsisVertical,
   Loader2,
-  MessageSquare,
+  MessageCircle,
   Pencil,
   Pin,
   PinOff,
@@ -259,7 +259,7 @@ export function ChatListItem({
             <title>{`Routine: ${routine}`}</title>
           </Repeat>
         ) : showChatIcon ? (
-          <MessageSquare aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
         ) : null}
         {title === "" ? (
           <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
