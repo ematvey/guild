@@ -56,6 +56,7 @@ export type AgentsRoute =
       agentId: string;
       tab: AgentTab;
       routineId?: string;
+      personalRoutines?: true;
       filePath?: string;
       filters?: ActivityFilters;
     }
@@ -151,6 +152,9 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
+  if (parts[0] === "routines" && parts[1]) {
+    return { view: "agent", agentId: parts[1], tab: "routines", routineId: parts[2], personalRoutines: true };
+  }
   if (parts[0] === "activity" && parts.length === 1)
     return { view: "activity", filters: filtersFrom(search) };
   if (parts[0] === "runs" && parts[1])
@@ -223,6 +227,10 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "chat":
       return `/chats/${segment(route.chatId)}`;
     case "agent": {
+      if (route.personalRoutines && route.tab === "routines") {
+        const base = `/routines/${segment(route.agentId)}`;
+        return route.routineId ? `${base}/${segment(route.routineId)}` : base;
+      }
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
       if (route.tab === "routines" && route.routineId)

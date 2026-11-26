@@ -19,7 +19,9 @@ Product surfaces:
   Rust backend process hosts execution, the file bridge, and the CLI verbs;
   the webview is a pure interface that owns context assembly.
 - **Web UI** — served by the org server; a browser tab is a full chat client
-  and carries the admin surfaces.
+  with the same work navigation as the desktop app.
+- **Control Center** — role-scoped web app for workspace and agent setup,
+  integration configuration, usage, and administrative activity.
 - **Headless CLI / engine callers** — scripts and tools that drive the local
   backend process over the engine protocol.
 
@@ -297,12 +299,15 @@ run on the server without a chat open.
 A browser tab is a full chat client.
 
 - Web chats support projects, approvals, tools, attachments, and artifacts.
+- The work app includes Skills, Apps, Machines, personal routines, and
+  personal preferences. Members choose and follow agents in conversations.
 - A project-bound web chat dispatches tools to the project's machine, and
   the workspace instructions are fetched machine-mediated.
 - A web chat with no project runs tools in the server sandbox.
 
 **PRD-26 — Admin surfaces.**
-Admins manage the org from the web UI Settings sections.
+Members open the web Control Center for configuration they can manage.
+Admins also manage the workspace there.
 
 - Users, teams, provider keys and routes, integrations and their tools,
   registry review, org approval defaults, and prompts are all manageable.

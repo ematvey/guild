@@ -260,6 +260,7 @@ export function ThreadComposer({
   localMachineId,
   setComposerEl,
   onManageAgents,
+  onConfigureModels,
 }: {
   assistantInbox: boolean;
   composer: ComposerHandle;
@@ -293,6 +294,7 @@ export function ThreadComposer({
   localMachineId: string | undefined;
   setComposerEl: (el: HTMLDivElement | null) => void;
   onManageAgents: () => void;
+  onConfigureModels?: () => void;
 }) {
   const {
     fileStore,
@@ -593,7 +595,11 @@ export function ThreadComposer({
               </Button>
               <ProjectChip chatId={viewChatId} project={currentProject} localMachineId={localMachineId} />
               {!assistantInbox && <ApprovalModeMenu {...approval} />}
-              {models !== null && models.length === 0 && <span className="text-muted-foreground">no models</span>}
+              {models !== null && models.length === 0 && (
+                onConfigureModels
+                  ? <Button type="button" variant="ghost" size="sm" onClick={onConfigureModels}>Configure models</Button>
+                  : <span className="text-muted-foreground">Ask an admin to enable a model</span>
+              )}
             </div>
             <div className="flex min-w-0 max-w-[55%] items-center gap-1">
               {!assistantInbox && (

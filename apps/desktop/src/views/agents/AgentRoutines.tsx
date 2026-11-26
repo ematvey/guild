@@ -3,7 +3,7 @@ import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { listRoutineRuns, runRoutine, setRoutineDelivery, type AgentRoutine, type AgentRun } from "./agents-api";
+import { listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
@@ -201,6 +201,7 @@ function RoutineDetail({
   const [actionError, setActionError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [changingSchedule, setChangingSchedule] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -236,9 +237,22 @@ function RoutineDetail({
   const changeDelivery = async (delivery: AgentRoutine["delivery"]) => {
     setActionError(null);
     try {
-      await setRoutineDelivery(agentId, routineId, delivery);
+      await updateRoutine(agentId, routineId, { delivery });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not change where the routine delivers.");
+    }
+  };
+
+  const toggleSchedule = async () => {
+    if (!routine) return;
+    setChangingSchedule(true);
+    setActionError(null);
+    try {
+      await updateRoutine(agentId, routineId, { enabled: !routine.enabled });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not change the routine status.");
+    } finally {
+      setChangingSchedule(false);
     }
   };
 
@@ -277,6 +291,9 @@ function RoutineDetail({
         <Button variant="outline" size="sm" onClick={() => void edit()} disabled={editing}>
           {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
           Edit via agent
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => void toggleSchedule()} disabled={changingSchedule}>
+          {routine.enabled ? "Pause" : "Resume"}
         </Button>
       </div>
 

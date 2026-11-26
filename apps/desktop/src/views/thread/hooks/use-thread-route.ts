@@ -2,10 +2,14 @@
 // single source of truth, and every navigation pushes history and route state
 // together.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HAS_ENGINE } from "../../../lib/session";
+import { openExternal } from "../../../lib/open-external";
+import { HAS_ENGINE, HAS_SHELL, serverUrl } from "../../../lib/session";
 import {
   applyRoutePatch,
   canonicalRoute,
+  CONTROL_PREFIX,
+  isControlRoute,
+  withoutControlPrefix,
   chatRoutePath,
   parseChatRoute,
   previewQuery,
@@ -39,7 +43,8 @@ export function routePath(resolved: ChatRoute): string {
     resolved.apps ?? null,
   );
   const query = previewQuery(resolved);
-  return query === "" ? path : `${path}?${query}`;
+  const surfacePath = isControlRoute(resolved) ? CONTROL_PREFIX + path : path;
+  return query === "" ? surfacePath : `${surfacePath}?${query}`;
 }
 
 /** Applies one navigation to the history stack: a new entry, or a rewrite of
@@ -78,6 +83,10 @@ export function useThreadRoute({ role }: { role: string }) {
   // stable, so callbacks built on it keep their identity across renders.
   const pushRoute = useCallback<PushRoute>((next, options) => {
     const resolved = applyRoutePatch(routeRef.current, next);
+    if (HAS_SHELL && isControlRoute(resolved) && !options?.replace) {
+      openExternal(serverUrl() + routePath(resolved));
+      return;
+    }
     commitRoute(window.history, `${window.location.pathname}${window.location.search}`, resolved, options);
     routeRef.current = resolved;
     setRoute(resolved);
@@ -87,8 +96,13 @@ export function useThreadRoute({ role }: { role: string }) {
   // shows and the entry is rewritten, so reload and back/forward never land
   // on the non-canonical address again.
   useEffect(() => {
-    const patch = canonicalRoute(route, { role, hasEngine: HAS_ENGINE, pathname: window.location.pathname });
-    if (patch !== null) pushRoute(patch, { replace: true });
+    const pathname = window.location.pathname;
+    const patch = canonicalRoute(route, { role, hasEngine: HAS_ENGINE, pathname: withoutControlPrefix(pathname) });
+    if (patch !== null) {
+      pushRoute(patch, { replace: true });
+    } else if (pathname.startsWith(CONTROL_PREFIX + "/") !== isControlRoute(route) || pathname === CONTROL_PREFIX) {
+      pushRoute({}, { replace: true });
+    }
   }, [route, role, pushRoute]);
 
   return { route, setRoute, pushRoute };

@@ -238,17 +238,16 @@ export async function listRoutines(id: string): Promise<AgentRoutine[]> {
   ).routines;
 }
 
-/** Sets where a routine's runs deliver. The routine row comes back over the
- *  member socket's agent_routines frame. */
-export async function setRoutineDelivery(
+/** The updated routine comes back over the member socket. */
+export async function updateRoutine(
   id: string,
   routineId: string,
-  delivery: AgentRoutine["delivery"],
+  changes: Partial<Pick<AgentRoutine, "delivery" | "enabled">>,
 ): Promise<void> {
   await request(
     "PATCH",
     `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-    { delivery },
+    changes,
   );
 }
 

@@ -30,7 +30,7 @@
     },
     {
       "id": "sidebar-tab",
-      "definition": "The rail entry the user is on. It is a projection of ChatRoute.tab, skills and agents, not stored state.",
+      "definition": "An addressable destination in the sidebar menu. The active destination is a projection of ChatRoute.",
       "canonical": "apps/desktop/src/views/sidebar-rail.tsx",
       "types": [
         "SidebarTab"

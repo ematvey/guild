@@ -10,6 +10,8 @@ import type { ChatRoute } from "../route";
 export function SidebarSurface({
   tab,
   role,
+  inControl,
+  onControlTab,
   chatId,
   projectId,
   settingsSection,
@@ -24,6 +26,8 @@ export function SidebarSurface({
 }: {
   tab: ChatRoute["tab"];
   role: string;
+  inControl: boolean;
+  onControlTab: (tab: "agents" | "activity" | "integrations") => void;
   /** The chat the main column shows. */
   chatId: string | null;
   projectId: string | null;
@@ -102,6 +106,8 @@ export function SidebarSurface({
     return (
       <SettingsPanel
         role={role}
+        inControl={inControl}
+        onControlTab={onControlTab}
         activeSection={settingsSection}
         onSelectSection={onSelectSection}
         onCollapse={onCollapse}

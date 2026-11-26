@@ -60,7 +60,7 @@ import {
   parseIntegrationsRoute,
   type IntegrationsRoute,
 } from "../integrations/integrations-route";
-import { canonicalSettings } from "../settings/section-nav";
+import { canonicalSettings, isControlSection } from "../settings/section-nav";
 import { appsRoutePath, parseAppsRoute, type AppsRoute } from "../apps/apps-route";
 import { DEFAULT_USAGE, parseUsageQuery, usageQueryString, type UsageQuery } from "../settings/usage-route";
 
@@ -136,7 +136,22 @@ const decodeSegment = (segment: string): string | null => {
 export const isImeEnter = (e: { keyCode?: number; nativeEvent?: { isComposing?: boolean } }): boolean =>
   e.nativeEvent?.isComposing === true || e.keyCode === 229;
 
+export const CONTROL_PREFIX = "/control";
+
+export function isControlRoute(route: ChatRoute): boolean {
+  const agent = route.agents;
+  return (agent !== null && !(agent.view === "agent" && agent.personalRoutines)) ||
+    route.integrations !== null ||
+    (route.tab === "settings" && isControlSection(route.settingsSection));
+}
+
+export function withoutControlPrefix(pathname: string): string {
+  if (pathname === CONTROL_PREFIX || pathname === CONTROL_PREFIX + "/") return "/settings/gateway";
+  return pathname.startsWith(CONTROL_PREFIX + "/") ? pathname.slice(CONTROL_PREFIX.length) : pathname;
+}
+
 export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  pathname = withoutControlPrefix(pathname);
   const usage = parseUsageQuery(search);
   const raw = pathname
     .replace(/^\/+|\/+$/g, "")

@@ -31,6 +31,7 @@ export function AgentsPanel({
           agentId={route.agentId}
           tab={route.tab}
           routineId={route.routineId}
+          personalRoutines={route.personalRoutines}
           filePath={route.filePath}
           filters={route.filters}
           viewer={viewer}

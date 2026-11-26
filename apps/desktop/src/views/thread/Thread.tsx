@@ -12,14 +12,15 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 
 import { readDraft, writeDraft } from "../../lib/drafts";
 import { HAS_ENGINE, HAS_SHELL } from "../../lib/session";
-import { apiUrl } from "../../lib/session";
+import { openExternal } from "../../lib/open-external";
+import { apiUrl, serverUrl } from "../../lib/session";
 import { useModelOptions } from "../agents/agent-model";
 import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../../lib/workspace-store";
 import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
-import { SidebarRail, type RailTab } from "../sidebar-rail";
+import { SidebarMenu, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
@@ -31,7 +32,7 @@ import {
   threadAccess,
   threadFacts,
 } from "./status";
-import { CHAT_ROOT, SURFACE_BASE } from "./route";
+import { CHAT_ROOT, SURFACE_BASE, isControlRoute } from "./route";
 import { archivedChatsStore, chatsStore, resetChatStores } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
 import { GenuiHostContext, type GenuiHost } from "../genui/actions";
@@ -47,7 +48,7 @@ import { IntegrationsSurface } from "./surfaces/integrations-page";
 import { INTEGRATIONS_HOME } from "../integrations/integrations-route";
 import { AppsSurface } from "./surfaces/apps-page";
 import { APPS_HOME } from "../apps/apps-route";
-import { useThreadRoute } from "./hooks/use-thread-route";
+import { routePath, useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
 import { useComposer } from "./hooks/use-composer";
@@ -603,14 +604,6 @@ function ThreadView(props: ThreadProps) {
   // the created thread.
   const holdingFirstSend = outgoing.pendingSubmitId !== null && chatId === null;
 
-  const activeProjectIds = new Set(projects?.map((project) => project.id));
-  const unreadChats =
-    chats?.filter(
-      (chat) =>
-        (chatStatus[chat.id]?.unread ?? chat.unread) &&
-        (chat.assistant_inbox || !chat.project_id || activeProjectIds.has(chat.project_id)),
-    ).length ?? 0;
-
   const railTab: RailTab =
     route.skills !== null
       ? "skills"
@@ -621,6 +614,8 @@ function ThreadView(props: ThreadProps) {
           : route.agents !== null
             ? agentsRailTab(route.agents)
             : route.tab;
+  const controlRoute = isControlRoute(route);
+  const inControl = controlRoute && !HAS_SHELL;
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
   const switchTab = (tab: RailTab) => {
@@ -689,14 +684,19 @@ function ThreadView(props: ThreadProps) {
       setOpen(false);
       return;
     }
-    if (tab === railTab) return;
+    if (tab === railTab && !inControl) {
+      setOpen(false);
+      return;
+    }
     switchTab(tab);
+    setOpen(false);
   };
+  const openControl = (section: string) => openExternal(serverUrl() + "/control/settings/" + section);
   const openSettingsSection = useCallback(
     (id: string) => {
       // Navigation: the section pick owns its /settings/<section> address, so
       // back/forward walks the sections and a reload restores the pick.
-      pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
+      pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: id, settingsDetail: null });
       // The section renders in the main column, behind the drawer.
       if (isMobile) setOpen(false);
     },
@@ -710,7 +710,12 @@ function ThreadView(props: ThreadProps) {
   // it would sit on top of the header's new-thread plus).
   const sidebar = (
     <SidebarSurface
-      tab={route.tab}
+      tab={inControl ? "settings" : route.tab}
+      inControl={inControl}
+      onControlTab={(tab) => {
+        switchTab(tab);
+        if (isMobile) setOpen(false);
+      }}
       role={role}
       chatId={viewChatId}
       projectId={route.projectId}
@@ -749,7 +754,14 @@ function ThreadView(props: ThreadProps) {
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
   const routePage =
-    route.agents !== null ? (
+    controlRoute && HAS_SHELL ? (
+      <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
+        <div className="m-auto flex flex-col items-center gap-4 p-4">
+          <Button onClick={() => openExternal(serverUrl() + routePath(route))}>Open Control Center</Button>
+          <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
+        </div>
+      </RoutePage>
+    ) : route.agents !== null ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
         <AgentsPage
           route={route.agents}
@@ -788,33 +800,39 @@ function ThreadView(props: ThreadProps) {
       </RoutePage>
     ) : null;
 
-  const railProps = {
-    activeTab: railTab,
-    collapsed: sidebarState.collapsed,
-    onToggleCollapse: sidebarState.toggleCollapsed,
-    email,
-    displayName,
-    avatarUrl,
-    onOpenDevice: () => pushRoute({ overlay: { kind: "device" } }),
-    onSignOut: signOut,
-    onAddWorkspace,
-    role,
-    unreadChats,
-  };
+  const menu = (collapsed = false) => (
+    <SidebarMenu
+      onTabChange={isMobile ? mobileSwitchTab : switchTab}
+      onOpenSettings={openSettingsSection}
+      onOpenControl={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway" });
+      }}
+      onOpenRoutines={agent.personalAgent ? () => {
+        if (!agent.personalAgent) return;
+        if (isMobile) setOpen(false);
+        pushRoute({ ...CHAT_ROOT, agents: {
+          view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
+        } });
+      } : undefined}
+      onOpenHelp={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } });
+      }}
+      email={email}
+      displayName={displayName}
+      avatarUrl={avatarUrl}
+      onOpenDevice={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "device" } })}
+      onSignOut={signOut}
+      onAddWorkspace={onAddWorkspace}
+      inControl={inControl}
+      collapsed={collapsed}
+      onExpand={() => sidebarState.setCollapsed(false)}
+    />
+  );
 
   return (
     <div ref={shell} data-shell className="fixed inset-0 flex bg-background text-foreground">
-      {/* icon rail: desktop only, always visible — it switches the sidebar
-          panel between chats / work / skills / settings and carries the
-          account menu */}
-      {!isMobile && (
-        <SidebarRail
-          {...railProps}
-          onTabChange={switchTab}
-          onOpenHelp={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } })}
-        />
-      )}
-      {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent
@@ -823,29 +841,17 @@ function ThreadView(props: ThreadProps) {
             hideClose
           >
             <SheetTitle className="sr-only">Sidebar</SheetTitle>
-            <div className="flex min-h-0 flex-1">
-              <SidebarRail
-                {...railProps}
-                onTabChange={mobileSwitchTab}
-                onOpenHelp={() =>
-                  pushRoute({
-                    chatId: null,
-                    projectId: null,
-                    skills: null,
-                    newChat: false,
-                    overlay: { kind: "onboard" },
-                  })
-                }
-                isMobile
-              />
-              <div className="flex min-w-0 flex-1 flex-col">{sidebar}</div>
-            </div>
+            {sidebar}
+            {menu()}
           </SheetContent>
         </Sheet>
-      ) : !paneLayout.aside ? null : (
-        // Collapsed = the column is gone (the icon rail stays and offers
-        // the expand button); the central pane reflows on toggle.
-        <Sidebar collapsed={sidebarState.collapsed}>{sidebar}</Sidebar>
+      ) : sidebarState.collapsed ? (
+        menu(true)
+      ) : (
+        <Sidebar collapsed={false}>
+          {sidebar}
+          {menu()}
+        </Sidebar>
       )}
 
       {/* main column */}
@@ -907,6 +913,16 @@ function ThreadView(props: ThreadProps) {
                 onOpenChat={openChat}
                 onRename={renameOpenChat}
                 onArchiveToggle={headerArchive}
+                onMakeRecurring={
+                  access === "writable" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
+                    ? () => {
+                      const request = "Help me turn the work in this conversation into a routine. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
+                      const draft = composer.promptRef.current;
+                      composer.setPrompt(draft ? `${draft}\n\n${request}` : request);
+                      ta.current?.focus();
+                    }
+                    : undefined
+                }
                 onDelete={headerDelete}
               />
 
@@ -975,9 +991,8 @@ function ThreadView(props: ThreadProps) {
                 currentProject={currentProject}
                 localMachineId={localMachineId}
                 setComposerEl={scroll.setComposerEl}
-                onManageAgents={() =>
-                  pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })
-                }
+                onConfigureModels={role === "admin" ? () => openControl("models") : undefined}
+                onManageAgents={() => openExternal(serverUrl() + "/control/agents")}
               />
             </div>
             {previewRef !== null && (

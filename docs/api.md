@@ -4,6 +4,11 @@ HTTP examples for the org server. They assume the server runs on
 `http://localhost:8080`. `$TOKEN` is a member session token from
 `POST /api/v1/auth/login`.
 
+The examples below cover supported external use. Control Center pages use
+the management routes shipped with the server. Those UI routes can evolve
+with the Control Center. Supported desktop builds have their own server
+compatibility requirements.
+
 ## Headless client
 
 The engine binary is also a CLI. It logs in and chats without the GUI:

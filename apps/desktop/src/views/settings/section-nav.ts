@@ -119,3 +119,7 @@ export function canonicalSettings(
   const codec = SECTION_DETAILS[section] as DetailCodec<unknown> | null;
   return { section, detail: codec === null ? null : codec.format(codec.parse(detail)) };
 }
+
+export function isControlSection(id: string | null): boolean {
+  return id !== null && (id === "mcp" || id === "gateway" || (isSettingsSection(id) && isAdminSection(id)));
+}

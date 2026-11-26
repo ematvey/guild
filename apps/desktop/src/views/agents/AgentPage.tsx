@@ -1,3 +1,4 @@
+import { useMemberProfile } from "../../lib/profile-store";
 import {
   ArrowRight,
   Clock,
@@ -61,6 +62,7 @@ export function AgentPage({
   tab,
   threadId,
   routineId,
+  personalRoutines,
   filePath,
   filters,
   viewer,
@@ -72,6 +74,7 @@ export function AgentPage({
   tab: AgentTab;
   threadId?: string;
   routineId?: string;
+  personalRoutines?: true;
   filePath?: string;
   filters?: ActivityFilters;
   viewer: Viewer;
@@ -82,6 +85,7 @@ export function AgentPage({
   // The agent row is live: the pushed agent list carries every agent this
   // member may see, so an edit, archive or visibility change repaints here.
   const agents = useAgentList();
+  const member = useMemberProfile();
   const agent = agents?.find((row) => row.id === agentId) ?? null;
   const error =
     agents !== null && agent === null
@@ -148,6 +152,31 @@ export function AgentPage({
         "it, use delete_routine. Describe schedule changes in plain language, not cron.",
     );
   };
+
+  if (personalRoutines) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PageHeader variant="bar" title="Routines" />
+        <PageBody>
+          {error !== null || (agent && member && (!agent.is_personal || agent.owner_user_id !== member.id)) ? (
+            <p role="status">This personal agent is unavailable.</p>
+          ) : agent === null || !member ? (
+            <InlineLoading label="Loading routines" />
+          ) : (
+            <AgentRoutines
+              agentId={agent.id}
+              routineId={routineId}
+              onNavigate={(next) => {
+                if (next.view === "agent" && next.tab === "routines") onNavigate({ ...next, personalRoutines: true });
+              }}
+              onNewRoutine={newRoutine}
+              onEditRoutine={editRoutine}
+            />
+          )}
+        </PageBody>
+      </div>
+    );
+  }
 
   if (error !== null) {
     return (

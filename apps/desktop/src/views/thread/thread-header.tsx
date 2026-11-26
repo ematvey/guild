@@ -47,6 +47,7 @@ export function ThreadHeader({
   onOpenChat,
   onRename,
   onArchiveToggle,
+  onMakeRecurring,
   onDelete,
 }: {
   isMobile: boolean;
@@ -68,6 +69,7 @@ export function ThreadHeader({
   onOpenChat: (chatId: string) => void;
   onRename: (title: string) => Promise<void>;
   onArchiveToggle: () => Promise<void>;
+  onMakeRecurring?: () => void;
   onDelete: () => Promise<void>;
 }) {
   // The menu's rename: a popup dialog around the sidebar's rename
@@ -160,6 +162,9 @@ export function ThreadHeader({
                   {archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
                   {archived ? "Unarchive" : "Archive"}
                 </DropdownMenuItem>
+                {onMakeRecurring && (
+                  <DropdownMenuItem onSelect={onMakeRecurring}>Make recurring</DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
               </>
             )}
