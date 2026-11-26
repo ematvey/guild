@@ -246,7 +246,9 @@ export class TurnTools {
     const instructions = composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
     if (acceptedScope === undefined) return instructions;
     return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
-      "\nStay within this scope. Use report_work to record progress or a result. " +
+      "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +
+      "For a lookup, discover and try the authorized tools before judging access. Distinguish an unavailable tool, denied access or approval, a provider error, and a successful lookup with no results. " +
+      "Use report_work with ready when you have checked and can deliver the requested result, waiting when an external dependency is pending, or failed with the specific failure after feasible attempts. Include what you checked and any material limitation. Keep routine progress internal. In messages visible to the Member, describe the work, its result, or a decision the Member needs to make. Keep execution and routing details in the internal report. " +
       "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
       "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
 
