@@ -596,7 +596,7 @@ describe("configured coordinator conversation", () => {
         expect(content).not.toContain("Need project access");
         return call("codemode", { code: `
           const work = JSON.stringify(await tools.find_recent_work({input_id:${JSON.stringify(attachmentId)}}));
-          if (!work.includes(${JSON.stringify(accepted.task)}) || !work.includes("Need project access")) {
+          if (!work.includes(${JSON.stringify(accepted.task)}) || !work.includes("Need project access") || !work.includes("Can you grant access?")) {
             throw new Error("Recent work did not include the authorized scope and latest report");
           }
           return await tools.attach_work(${JSON.stringify({

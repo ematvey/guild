@@ -1,3 +1,5 @@
+import { userViewer } from "../../platform/store/access.js";
+import { visiblePredicate } from "./access.js";
 // Durable coordination, provenance and maintenance records. SQL stays in the Agent data-access lane.
 import type { CoordinationOutcome, CoordinationSnapshot } from "@guild/wire/rest";
 import type { QueryResultRow } from "pg";
@@ -406,31 +408,35 @@ export function retryCoordinationWork(db: Database, values: unknown[]) {
 
 export function recentCoordinationWork(db: Database, agentId: string, memberId: string) {
   return db.query<{
-    agent_id: string;
     chat_id: string;
     title: string | null;
     accepted_scope: string;
     run_status: string | null;
     work_report_state: string | null;
     work_report_summary: string | null;
+    work_report_question: string | null;
   }>(
-    `SELECT worker.agent_id,worker.chat_id,worker.title,left(work.accepted_scope,1600) AS accepted_scope,
-            latest.status AS run_status,report.work_report_state,left(report.work_report_summary,1000) AS work_report_summary
+    `SELECT worker.chat_id,worker.title,left(work.accepted_scope,1600) AS accepted_scope,
+            latest.status AS run_status,report.work_report_state,left(report.work_report_summary,1000) AS work_report_summary,
+            report.work_report_question
      FROM agent_coordination_inputs work
      JOIN agent_threads worker ON worker.source_input_id=work.id
        AND worker.user_id=work.user_id AND worker.agent_id=work.accepted_agent_id
+     JOIN agents target ON target.id=worker.agent_id
+     JOIN users member ON member.id=work.user_id
      JOIN chats chat ON chat.id=worker.chat_id AND chat.deleted_at IS NULL AND NOT chat.internal
      LEFT JOIN LATERAL (
        SELECT status,created_at FROM agent_runs WHERE thread_id=worker.id
        ORDER BY created_at DESC,id DESC LIMIT 1
      ) latest ON true
      LEFT JOIN LATERAL (
-       SELECT work_report_state,work_report_summary FROM agent_runs
+       SELECT work_report_state,work_report_summary,work_report_question FROM agent_runs
        WHERE thread_id=worker.id AND work_report_state IS NOT NULL
        ORDER BY created_at DESC,id DESC LIMIT 1
      ) report ON true
      WHERE work.agent_id=$1 AND work.user_id=$2 AND work.accepted_scope IS NOT NULL
        AND worker.coordinator_managed AND worker.closed_at IS NULL
+       AND ${visiblePredicate("target", userViewer("member"))}
      ORDER BY latest.created_at DESC NULLS LAST,work.seq DESC LIMIT 5`,
     [agentId, memberId],
   );

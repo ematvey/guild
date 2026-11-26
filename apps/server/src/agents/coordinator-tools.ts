@@ -17,7 +17,6 @@ import { createRoutine, listRoutines, updateRoutine, deleteRoutine } from "./rou
 // they do not expose Integrations, Apps or Machine execution.
 import { LiveDoc, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import { inputRequestIds } from "../storage/postgres/queries.js";
-import { ApiError } from "../platform/errors.js";
 import type { PlatformPool } from "../platform/db.js";
 import type { AgentStore } from "./store.js";
 import type { Agent } from "./types.js";
@@ -216,16 +215,7 @@ export function coordinatorTools(deps: {
         const member = await deps.identity.getUser(origin.user_id);
         await store.requireAccess(member, agent.id, "use");
         const { rows } = await recentCoordinationWork(pool, agent.id, member.id);
-        const visible = await Promise.all(rows.map(async ({ agent_id, chat_id, ...work }) => {
-          try {
-            await store.requireAccess(member, agent_id, "use");
-            return { ...work, url: `/thread/${chat_id}` };
-          } catch (error) {
-            if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return null;
-            throw error;
-          }
-        }));
-        return visible.filter((work) => work !== null);
+        return rows.map(({ chat_id, ...work }) => ({ ...work, url: `/thread/${chat_id}` }));
       },
     ),
     tool(
