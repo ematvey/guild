@@ -43,6 +43,8 @@ import { chatsStore, projectsStore } from "./chat-stores";
 import type { ComposerHandle } from "./hooks/use-composer";
 import type { AgentPick } from "./hooks/use-agent-pick";
 
+const COMPOSER_SURFACE = `${CHAT_COLUMN_CLASS} pointer-events-auto rounded-3xl bg-secondary`;
+
 /** Why the composer is read-only for this thread. */
 function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Agent | null): string {
   if (facts.type === "user" && foreign) {
@@ -91,7 +93,7 @@ function ProjectChip({
   const showMachine = remote !== null && machineOnline !== undefined;
   return (
     <span
-      className="flex h-8 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground pointer-coarse:h-10"
+      className="flex h-8 min-w-0 max-w-44 items-center gap-1.5 rounded-full px-2 text-muted-foreground pointer-coarse:h-10"
       title={
         showMachine
           ? `${project.name} — Machine: ${remote?.label}${machineOnline ? " (online)" : " (offline)"}`
@@ -103,7 +105,7 @@ function ProjectChip({
           className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
         />
       )}
-      <span className="flex min-w-0 items-center gap-1 px-2">
+      <span className="flex min-w-0 items-center gap-1">
         <FolderOpen className="size-4 shrink-0" />
         <span className="hidden min-w-0 sm:block sm:flex-1">
           <FadeTitle text={projectChipLabel(project)} />
@@ -121,7 +123,7 @@ function AgentChip({ agent, onManageAgents }: { agent: AgentPick; onManageAgents
     // names its agent and keeps it.
     return (
       <span
-        className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-base text-secondary-foreground pointer-coarse:h-10"
+        className="flex h-8 min-w-0 items-center gap-1 rounded-full px-2 text-sm text-secondary-foreground pointer-coarse:h-10"
         title={
           shownAgent?.visibility === "private"
             ? "Your private agent"
@@ -140,7 +142,7 @@ function AgentChip({ agent, onManageAgents }: { agent: AgentPick; onManageAgents
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex h-8 min-w-0 items-center gap-1 rounded-md bg-secondary px-2 text-base text-secondary-foreground pointer-coarse:h-10"
+          className="flex h-8 min-w-0 items-center gap-1 rounded-full px-2 text-sm text-secondary-foreground hover:bg-foreground/10 focus-visible:ring-1 focus-visible:ring-ring pointer-coarse:h-10"
           title="Choose the agent for this chat"
         >
           <span className="truncate">{shownAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
@@ -191,7 +193,7 @@ function ApprovalModeMenu({
         <Button
           size="sm"
           variant="ghost"
-          className={`h-8 gap-1 rounded-full px-2 pointer-coarse:h-10 ${
+          className={`h-8 shrink-0 gap-1 rounded-full px-2 hover:bg-foreground/10 pointer-coarse:h-10 ${
             approvalMode === "full_access"
               ? "text-orange-500 hover:text-orange-400"
               : "text-muted-foreground hover:text-foreground"
@@ -355,7 +357,7 @@ export function ThreadComposer({
     >
       {access.readOnly ? (
         <div
-          className={`${CHAT_COLUMN_CLASS} pointer-events-auto flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-lg pointer-coarse:rounded-[1.75rem]`}
+          className={`${COMPOSER_SURFACE} flex items-center gap-3 px-5 py-4 text-sm text-muted-foreground`}
         >
           <span className="min-w-0 flex-1">{readOnlyNotice(facts, foreign, access.deletingAgent)}</span>
           {facts.type === "user" && facts.archived && !facts.deleted && !foreign && (
@@ -367,9 +369,9 @@ export function ThreadComposer({
       ) : access.unknown ? (
         <div
           aria-label="Loading thread composer"
-          className={`${CHAT_COLUMN_CLASS} pointer-events-auto rounded-xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]`}
+          className={`${COMPOSER_SURFACE} p-2`}
         >
-          <div className="px-2 py-1.5">
+          <div className="min-h-14 px-3 pt-3">
             <Skeleton className="h-5 w-2/5" />
           </div>
           <div className="flex items-center justify-between px-1 pt-1">
@@ -379,7 +381,7 @@ export function ThreadComposer({
         </div>
       ) : (
         <div
-          className={`${CHAT_COLUMN_CLASS} pointer-events-auto rounded-xl border border-border bg-card p-2 text-base shadow-lg backdrop-blur-sm pointer-coarse:rounded-[1.75rem]`}
+          className={`${COMPOSER_SURFACE} p-2 text-base`}
         >
           <input
             ref={fileInput}
@@ -396,7 +398,7 @@ export function ThreadComposer({
               {queuedChips.map((b) => (
                 <div
                   key={b.key}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm"
+                  className="flex items-center gap-2 rounded-xl bg-background/40 px-3 py-2 text-sm"
                 >
                   <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate" title={b.text}>
@@ -480,7 +482,7 @@ export function ThreadComposer({
           {mentionMatches.length > 0 && (
             <div
               data-scrollable
-              className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
+              className="mb-1 max-h-52 overflow-y-auto rounded-xl bg-card shadow-md"
             >
               {mentionMatches.map((sk, i) => (
                 <button
@@ -571,16 +573,17 @@ export function ThreadComposer({
             // frozen with the sent text until navigation.
             readOnly={holdingFirstSend || navigating}
             disabled={models !== null && !model}
-            className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
+            aria-label="Message"
+            className="min-h-14 max-h-40 resize-none border-0 bg-transparent px-3 pb-2 pt-3 text-foreground shadow-none"
           />
           {/* One line, never wrapping: on narrow screens the labeled badges
               collapse to their icons (text stays in the title tooltip). */}
-          <div className="flex flex-nowrap items-center justify-between gap-x-2 px-1 pt-1">
-            <div className="flex min-w-0 flex-nowrap items-center gap-1">
+          <div className="flex flex-nowrap items-center justify-between gap-x-2 px-1 pb-0.5 pt-1">
+            <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5">
               <Button
                 size="icon"
                 variant="ghost"
-                className="size-8 rounded-full text-muted-foreground hover:text-foreground pointer-coarse:size-10"
+                className="size-8 shrink-0 rounded-full text-foreground/85 hover:bg-foreground/10 hover:text-foreground pointer-coarse:size-10"
                 onClick={() => fileInput.current?.click()}
                 disabled={busy || navigating}
                 title="Attach images, audio, or files"
@@ -592,7 +595,7 @@ export function ThreadComposer({
               {!assistantInbox && <ApprovalModeMenu {...approval} />}
               {models !== null && models.length === 0 && <span className="text-muted-foreground">no models</span>}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex min-w-0 max-w-[55%] items-center gap-1">
               {!assistantInbox && (
                 <>
                   <ContextRing chatId={viewChatId} model={model} />
@@ -601,7 +604,7 @@ export function ThreadComposer({
               )}
               <Button
                 size="icon"
-                className="size-8 rounded-full pointer-coarse:size-10"
+                className="size-8 shrink-0 rounded-full pointer-coarse:size-10"
                 onClick={() =>
                   mode === "stop" || mode === "stopping"
                     ? void requestStop()
