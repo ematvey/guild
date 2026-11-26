@@ -183,7 +183,7 @@ function NoApps() {
 function AppHeader({
   app,
   detail,
-  isOwner,
+  canShare,
   canDelete,
   isMobile,
   onBack,
@@ -194,7 +194,7 @@ function AppHeader({
 }: {
   app: App;
   detail: AppDetail | null;
-  isOwner: boolean;
+  canShare: boolean;
   canDelete: boolean;
   isMobile: boolean;
   onBack: () => void;
@@ -242,8 +242,7 @@ function AppHeader({
             {app.version} · updated {relativeTime(app.updated_at)}
           </p>
         </div>
-        {(isOwner ||
-          app.can_edit ||
+        {(canShare ||
           canDelete ||
           asks ||
           (onOpenChat !== null && app.chat_id !== null)) && (
@@ -273,7 +272,7 @@ function AppHeader({
                   access
                 </DropdownMenuItem>
               )}
-              {(isOwner || app.can_edit) && (
+              {canShare && (
                 <DropdownMenuItem onSelect={() => onEditAccess()}>
                   <Users className="size-4" /> Sharing
                 </DropdownMenuItem>
@@ -358,7 +357,9 @@ function OpenApp({
     };
   }, [app.id, app.version, epoch]);
   const isOwner = me !== null && app.owner_user_id === me.id;
-  const canDelete = isOwner || (management && me?.role === "admin");
+  const admin = me?.role === "admin";
+  const canDelete = isOwner || (management && admin);
+  const canShare = isOwner || (app.can_edit && (!admin || management));
   const [accessOpen, setAccessOpen] = useState(false);
   const current = detail !== null && detail.app.id === app.id ? detail : null;
   return (
@@ -366,7 +367,7 @@ function OpenApp({
       <AppHeader
         app={app}
         detail={current}
-        isOwner={isOwner}
+        canShare={canShare}
         canDelete={canDelete}
         isMobile={isMobile}
         onBack={() => navigate(APPS_HOME)}
