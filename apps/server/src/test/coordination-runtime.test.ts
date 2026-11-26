@@ -592,11 +592,14 @@ describe("configured coordinator conversation", () => {
       const last = messages?.at(-1);
       const content = JSON.stringify(last?.content);
       if (last?.role === "user" && content?.includes(`<inbox_delivery>Handle request ${attachmentId}.`)) {
-        expect(content).toContain("<recent_member_work>");
-        expect(content).toContain(accepted.task);
-        expect(content).toContain("Need project access");
-        expect(content).toContain(`/thread/${workerChatId}`);
-        return call("codemode", { code: `return await tools.attach_work(${JSON.stringify({
+        expect(content).not.toContain("<recent_member_work>");
+        expect(content).not.toContain("Need project access");
+        return call("codemode", { code: `
+          const work = JSON.stringify(await tools.find_recent_work({input_id:${JSON.stringify(attachmentId)}}));
+          if (!work.includes(${JSON.stringify(accepted.task)}) || !work.includes("Need project access")) {
+            throw new Error("Recent work did not include the authorized scope and latest report");
+          }
+          return await tools.attach_work(${JSON.stringify({
           input_id: attachmentId, chat_id: workerChatId, acknowledgment: "Continuing in the same worker chat.",
         })});` });
       }

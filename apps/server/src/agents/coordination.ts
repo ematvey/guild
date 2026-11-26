@@ -8,7 +8,6 @@ import {
   claimCoordinationLaunches,
   coordinationLaunchPolicy,
   acceptedWorkForThread,
-  recentCoordinationWork,
   settleCoordinationLaunch,
   initializeCoordinationState,
   listCoordinators,
@@ -380,23 +379,9 @@ export class AgentCoordination {
     const coordinator = await ensureCoordinationThread(store, agent, agent.owner_user_id, "coordinator");
     const sourceThread =
       input.source_thread_id === null ? null : await store.threads.threadById(input.source_thread_id);
-    let content = coordinationPreamble(
+    const content = coordinationPreamble(
       sourceThread?.type === "subagent" && !input.wake ? { ...input, kind: "worker_thread_observation" } : input,
     );
-    if (input.wake && input.kind === "request") {
-      const member = await this.deps.identity.getUser(input.user_id);
-      const { rows } = await recentCoordinationWork(pool, agent.id, member.id);
-      const visible = await Promise.all(rows.map(async ({ agent_id, chat_id, ...work }) => {
-        try {
-          await store.requireAccess(member, agent_id, "use");
-          return { ...work, url: `/thread/${chat_id}` };
-        } catch (error) {
-          if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return null;
-          throw error;
-        }
-      }));
-      content += `\n\n<recent_member_work>\n${JSON.stringify(visible.filter((work) => work !== null))}\n</recent_member_work>`;
-    }
     if (input.wake) {
       const model = coordinationSettings(agent).coordinator_model;
       const attachments = input.attachments;
