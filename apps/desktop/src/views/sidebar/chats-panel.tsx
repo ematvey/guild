@@ -155,7 +155,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const hasProject = Boolean(activeProject || archivedProject);
   const activeProjectHeader = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!projectId || !hasProject) return;
+    if (chatId !== null || !projectId || !hasProject) return;
     setExpanded((current) => ({ ...current, [projectId]: true }));
     setSections((current) => ({ ...current, [activeSection]: true }));
     const frame = requestAnimationFrame(() => activeProjectHeader.current?.scrollIntoView?.({ block: "nearest" }));
@@ -165,10 +165,9 @@ export const ChatsPanel = memo(function ChatsPanel({
   const toggleSection = (section: keyof typeof sections) =>
     setSections((current) => ({ ...current, [section]: !current[section] }));
   const archivedProjectIds = new Set(archivedProjects?.map((project) => project.id));
-  const assistants = grouping.visible.filter((chat) => chat.assistant_inbox);
   const activeProjectIds = new Set(projects?.map((project) => project.id));
   const recent = [
-    ...grouping.visible.filter((chat) => !chat.assistant_inbox),
+    ...grouping.visible,
     ...Object.entries(grouping.chatsByProject).flatMap(([id, chats]) => (activeProjectIds.has(id) ? chats : [])),
   ].sort(byRecentActivity);
   const renderChat = (chat: ChatSummary, { restricted = false, showChatIcon = false } = {}) => {
@@ -177,7 +176,6 @@ export const ChatsPanel = memo(function ChatsPanel({
       <ChatListItem
         key={chat.id}
         title={chat.title ?? ""}
-        assistantInbox={chat.assistant_inbox}
         showChatIcon={showChatIcon}
         routine={chat.routine?.name}
         active={chat.id === chatId}
@@ -188,13 +186,13 @@ export const ChatsPanel = memo(function ChatsPanel({
           blocked: !!chat.blocked,
         }}
         dragProps={
-          !restricted && !chat.archived && !chat.assistant_inbox && !sharedInbox && onPinChat
+          !restricted && !chat.archived && !sharedInbox && onPinChat
             ? dragProps(chat.id, "chat", !!chat.pinned_at)
             : undefined
         }
         pinned={!!chat.pinned_at}
         onPin={
-          !restricted && !chat.assistant_inbox && !sharedInbox && onPinChat
+          !restricted && !sharedInbox && onPinChat
             ? () => onPinChat(chat.id, !chat.pinned_at)
             : undefined
         }
@@ -311,8 +309,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
       <div {...titleBarDragDeep} className={`flex items-center justify-between px-3 ${TOP_ROW}`}>
         {/* The workspace switcher lives on the rail's first button; the panel
-            header names the tab. A new chat is its own row under the
-            assistant, not a header button. */}
+            header names the tab. New chat has its own row. */}
         <span className="font-semibold">Chats</span>
         <span className="flex items-center gap-1">
           <CollapseButton onCollapse={onCollapse} />
@@ -323,11 +320,6 @@ export const ChatsPanel = memo(function ChatsPanel({
         <div
           className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3 pt-2 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
         >
-          {assistants.length > 0 && (
-            <div role="group" aria-label="Assistant conversations" className="space-y-0.5">
-              {assistants.map((chat) => renderChat(chat))}
-            </div>
-          )}
           <DesktopTooltip label="New chat" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
             <button
               type="button"

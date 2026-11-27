@@ -1124,7 +1124,7 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
-  it("marks only the personal inbox as the member's Assistant", { timeout: TEST_TIMEOUT }, async () => {
+  it("marks a shared inbox in the member thread list", { timeout: TEST_TIMEOUT }, async () => {
     const agentId = crypto.randomUUID();
     await stack.env.db.query(
       `INSERT INTO agents (id, org_id, owner_user_id, name, model, resources)
@@ -1141,12 +1141,11 @@ describe("member-socket feed", () => {
       expect(response.statusCode).toBe(200);
       return response.json<{ chat_id: string }>().chat_id;
     };
-    const personal = await inbox({});
     const shared = await inbox({ agent_id: agentId });
     const ws = await memberSocket();
     const frame = await waitFrame(ws, (f) => f.type === "thread_list");
     const rows = frame.chats as { id: string; assistant_inbox?: boolean; shared_agent_inbox?: boolean }[];
-    expect(rows.filter((row) => row.assistant_inbox).map((row) => row.id)).toEqual([personal]);
+    expect(rows.some((row) => row.assistant_inbox)).toBe(false);
     expect(rows.find((row) => row.id === shared)).toMatchObject({ shared_agent_inbox: true });
     ws.end();
   });

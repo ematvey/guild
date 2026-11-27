@@ -26,10 +26,31 @@ afterAll(async () => {
 }, 30000);
 
 describe("configured coordinator conversation", () => {
+  it("refuses to open the personal Assistant inbox", async () => {
+    const app = stack.env.app;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const personal = await app.platform.agents.ensurePersonalAgentFor(stack.orgId, stack.memberId);
+    for (const payload of [{}, { agent_id: personal!.id }]) {
+      const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload });
+      expect(opened.statusCode, opened.body).toBe(400);
+      expect(opened.body).toContain("personal Assistant inbox is disabled");
+    }
+  });
+
   it("keeps the inbox thread on its own assistant", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
-    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers,
+      payload: { name: "Binding test agent", model: "coordination-test", resources: { assistant: { enabled: true } } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const opened = await app.inject({
+      method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: created.json().agent.id },
+    });
+    expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { agent_id: string; chat_id: string };
     const read = await app.inject({ method: "GET", url: `/api/v1/threads/${inbox.chat_id}/agent`, headers });
     expect((read.json() as { switcheable: boolean }).switcheable).toBe(false);
@@ -57,7 +78,17 @@ describe("configured coordinator conversation", () => {
   it("rejects a stale inbox submission after coordination is disabled", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
-    const opened = await app.inject({ method: "POST", url: "/api/v1/assistant", headers, payload: {} });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers,
+      payload: { name: "Stale inbox agent", model: "coordination-test", resources: { assistant: { enabled: true } } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const opened = await app.inject({
+      method: "POST", url: "/api/v1/assistant", headers, payload: { agent_id: created.json().agent.id },
+    });
+    expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { agent_id: string; thread_id: string; chat_id: string };
     await app.inject({
       method: "PATCH",
@@ -200,7 +231,7 @@ describe("configured coordinator conversation", () => {
     expect(opened.statusCode, opened.body).toBe(200);
     const inbox = opened.json() as { chat_id: string; thread_id: string; agent_id: string };
     const index = await app.inject({ method: "GET", url: "/api/v1/threads", headers });
-    expect(index.json().chats.find((row: { id: string }) => row.id === inbox.chat_id).assistant_inbox).toBe(true);
+    expect(index.json().chats.find((row: { id: string }) => row.id === inbox.chat_id).shared_agent_inbox).toBe(true);
     stack.mock.setResponses([{ body: final("INTERNAL ONLY") }]);
     const userMessageId = randomUUID();
     const posted = await app.inject({
