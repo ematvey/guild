@@ -61,15 +61,13 @@ function AppRow({
   app,
   selected,
   onClick,
-  card = false,
 }: {
   app: App;
   selected: boolean;
-  card?: boolean;
   onClick: () => void;
 }) {
   return (
-    <li className={card ? "rounded-xl border border-border bg-card p-1" : undefined}>
+    <li>
       <button
         type="button"
         onClick={onClick}
@@ -472,21 +470,21 @@ export function AppsPage({
       { label: "Shared with you", items: visible?.filter((app) => app.owner_user_id !== me?.id) ?? [] },
     ];
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-muted/25">
-        <PageHeader variant="bar" title="Apps" description="Open apps built in Guild and shared with you."
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PageHeader variant="work" title="Apps"
           actions={<Input type="search" aria-label="Search apps" placeholder="Search apps" value={query} onChange={(event) => setQuery(event.target.value)} />} />
         <div className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
+          <div className="work-page-content space-y-6 pb-8 pt-3">
             {visible === undefined ? <SkeletonRows rows={4} /> : apps?.length === 0 ? (
-              <div className="rounded-xl border border-border bg-card"><NoApps /></div>
+              <NoApps />
             ) : visible.length === 0 ? (
               <EmptyState icon={LayoutGrid} title="No matching apps" />
             ) : groups.filter(({ items }) => items.length > 0).map(({ label, items }) => (
               <section key={label} className="space-y-2">
-                <h2 className="text-sm font-semibold">{label}</h2>
-                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <h2 className="text-base font-semibold">{label}</h2>
+                <ul className="divide-y divide-border border-y border-border">
                   {items.map((app) => (
-                    <AppRow key={app.id} app={app} card selected={false} onClick={() => navigate({ appId: app.id })} />
+                    <AppRow key={app.id} app={app} selected={false} onClick={() => navigate({ appId: app.id })} />
                   ))}
                 </ul>
               </section>

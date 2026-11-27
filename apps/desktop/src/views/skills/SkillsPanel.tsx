@@ -277,9 +277,8 @@ export function SkillsPanel({
       {/* Row 1: title, search and New skill; row 2: the underline tabs and
           the catalog's filter and sort. */}
       <PageHeader
-        variant="bar"
-        title="Skills"
-        description={route.management ? undefined : "Find and install reusable instructions for your agents."}
+        variant={route.management ? "bar" : "work"}
+        title={route.management ? "Skills" : "Customize"}
         actions={
           <>
             <div className="relative w-full sm:w-[280px]">
@@ -357,8 +356,8 @@ export function SkillsPanel({
       />
       {/* page body: full-width background fill, content capped so the row
           list and detail panes don't stretch absurdly on wide monitors */}
-      <div className={`min-h-0 flex-1 overflow-y-auto ${route.management ? "" : "bg-muted/25"}`} data-scrollable>
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
+      <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+        <div className={route.management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pb-8 pt-3"}>
           {import.meta.env.MODE === "control" && tab === "activity" && <ActivityFeed />}
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (

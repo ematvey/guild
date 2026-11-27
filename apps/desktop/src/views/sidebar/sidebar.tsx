@@ -77,14 +77,14 @@ export function Sidebar({ collapsed, children }: { collapsed: boolean; children:
     <aside
       aria-label="Sidebar"
       {...titleBarDrag}
-      className={`relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-sidebar-foreground ${TITLE_BAR_INSET} ${
+      className={`relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground ${TITLE_BAR_INSET} ${
         resizing ? "" : "transition-[width] duration-150"
       }`}
       style={{ width }}
     >
       {children}
       <div
-        className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+        className="absolute inset-y-0 -right-1 z-10 w-1 cursor-col-resize after:absolute after:inset-y-0 after:left-0 after:w-px hover:after:bg-ring"
         onMouseDown={startDrag}
         title="Drag to resize"
       />

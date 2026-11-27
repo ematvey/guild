@@ -310,7 +310,7 @@ export function ProjectHeader({
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
   status: RowState;
-  open: boolean;
+  open?: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
   onArchive: () => void;

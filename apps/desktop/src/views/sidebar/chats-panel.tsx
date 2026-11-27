@@ -1,5 +1,8 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronRight, Plus, Search } from "lucide-react";
+import { Button } from "@guild/ui/components/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import { PageHeader } from "../../components/page-header";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
@@ -53,7 +56,7 @@ function ChatSection({
           className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-medium text-muted-foreground hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 ${open ? "rotate-90" : ""}`} />
-          {label}
+          <span className="truncate whitespace-nowrap">{label}</span>
         </button>
         {action}
       </div>
@@ -73,6 +76,8 @@ export const ChatsPanel = memo(function ChatsPanel({
   projectId,
   onNewChatInProject,
   onNewProject,
+  onOpenProject,
+  onBackToProjects,
   onRenameProject,
   onArchiveProject,
   onUnarchiveProject,
@@ -98,6 +103,8 @@ export const ChatsPanel = memo(function ChatsPanel({
   projectId?: string | null;
   onNewChatInProject?: (project: PickedProject) => void;
   onNewProject?: () => void;
+  onOpenProject?: (id: string) => void;
+  onBackToProjects?: () => void;
   onRenameProject?: (id: string, name: string) => void;
   onArchiveProject?: (id: string) => void;
   onUnarchiveProject?: (id: string) => void;
@@ -230,8 +237,11 @@ export const ChatsPanel = memo(function ChatsPanel({
               unread: chats.some((chat) => !!chat.unread),
               blocked: chats.some((chat) => !!chat.blocked),
             }}
-            open={open}
-            onToggle={() => setExpanded((current) => ({ ...current, [project.id]: !open }))}
+            open={mode === "projects" ? undefined : open}
+            onToggle={() => {
+              if (mode === "projects") onOpenProject?.(project.id);
+              else setExpanded((current) => ({ ...current, [project.id]: !open }));
+            }}
             onRename={(name) => onRenameProject?.(project.id, name)}
             onArchive={() => (archived ? onUnarchiveProject : onArchiveProject)?.(project.id)}
             archiveLabel={archived ? "Unarchive" : undefined}
@@ -241,7 +251,7 @@ export const ChatsPanel = memo(function ChatsPanel({
             onNewChat={!archived && onNewChatInProject ? () => onNewChatInProject(project) : undefined}
           />
         </div>
-        {open && (
+        {open && mode !== "projects" && (
           <div className="ml-5 space-y-0.5">
             {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
             {history.slice(0, limit).map((chat) => renderChat(chat, { restricted: archived }))}
@@ -308,20 +318,41 @@ export const ChatsPanel = memo(function ChatsPanel({
     .filter((chat) => (chat.title ?? "").toLocaleLowerCase().includes(query))
     .sort(byRecentActivity);
   if (mode === "projects") {
+    const project = activeProject ?? archivedProject;
+    const projectChats = project
+      ? [...(grouping.chatsByProject[project.id] ?? []), ...(archivedChats ?? []).filter((chat) => chat.project_id === project.id)].sort(byRecentActivity)
+      : [];
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
-        <div className="mx-auto max-w-3xl">
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <h1 className="text-base font-semibold">Projects</h1>
-            <button type="button" onClick={onNewProject} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-base hover:bg-accent">
-              <Plus aria-hidden="true" className="size-4" /> New project
-            </button>
-          </div>
-          <div aria-label="Projects" className="divide-y divide-border rounded-lg border border-border bg-card px-2">
-            {projects === null && <SkeletonRows rows={3} />}
-            {projects?.map((project) => renderProject(project))}
-            {projects?.length === 0 && <p className="p-4 text-base text-muted-foreground">No projects yet.</p>}
-          </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <PageHeader
+          variant="work"
+          title={project?.name ?? "Projects"}
+          back={projectId ? { label: "Projects", onClick: () => onBackToProjects?.() } : undefined}
+          actions={project
+            ? !archivedProject && <Button className="text-base" onClick={() => onNewChatInProject?.(project)}><Plus />New chat</Button>
+            : !projectId && <Button className="text-base" onClick={onNewProject}><Plus />New project</Button>}
+        />
+        <div className="work-page-content pb-8 pt-3">
+          {projectId ? (
+            <>
+              {project && <p className="mb-4 break-all text-muted-foreground">{project.folder}</p>}
+              {projects === null || loadingChats ? <SkeletonRows rows={3} /> : !project ? (
+                <p className="text-muted-foreground">This project is unavailable.</p>
+              ) : projectChats.length === 0 ? (
+                <p className="text-muted-foreground">No chats yet.</p>
+              ) : (
+                <section aria-label="Project chats" className="divide-y divide-border border-y border-border">
+                  {projectChats.map((chat) => renderChat(chat, { restricted: chat.archived, showChatIcon: true }))}
+                </section>
+              )}
+            </>
+          ) : (
+            <section aria-label="Projects" className="divide-y divide-border border-y border-border">
+              {projects === null && <SkeletonRows rows={3} />}
+              {projects?.map((item) => renderProject(item))}
+              {projects?.length === 0 && <p className="py-4 text-muted-foreground">No projects yet.</p>}
+            </section>
+          )}
         </div>
       </div>
     );
@@ -396,16 +427,18 @@ export const ChatsPanel = memo(function ChatsPanel({
           open={sections.recent}
           onToggle={() => toggleSection("recent")}
           action={onHistoryFilter && (
-            <select aria-label="Filter history" value={historyFilter ?? ""}
-              className="max-w-20 rounded-md bg-sidebar px-1 text-base text-muted-foreground hover:text-sidebar-foreground"
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                onHistoryFilter(value === "chats" || value === "tasks" ? value : null);
-              }}>
-              <option value="">All</option>
-              <option value="chats">Chats</option>
-              <option value="tasks">Tasks</option>
-            </select>
+            <Select value={historyFilter ?? "all"} onValueChange={(value) => {
+              onHistoryFilter(value === "chats" || value === "tasks" ? value : null);
+            }}>
+              <SelectTrigger aria-label="Filter history" className="h-8 shrink-0 gap-1 border-0 bg-transparent px-1.5 text-base shadow-none">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-base">All</SelectItem>
+                <SelectItem value="chats" className="text-base">Chats</SelectItem>
+                <SelectItem value="tasks" className="text-base">Tasks</SelectItem>
+              </SelectContent>
+            </Select>
           )}
         >
           {loadingChats && <SkeletonRows rows={5} className="[&>div]:h-8 [&>div]:px-2" />}

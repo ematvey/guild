@@ -7,6 +7,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Erro
 
 import { Dialog, DialogContent, DialogTitle } from "@guild/ui/components/dialog";
 import { SettingsPanel } from "../sidebar/settings-panel";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
@@ -567,15 +568,18 @@ function ThreadView(props: ThreadProps) {
   const controlRoute = isControlRoute(route);
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
+  const projectsDestination = route.projectsPage || (
+    route.projectId !== null && route.chatId === null && !route.newChat && paneLayout.mainPane === "chat"
+  );
   const lastChat = useRef<{ chatId: string | null; projectId: string | null }>({ chatId: null, projectId: null });
   useEffect(() => {
-    if (paneLayout.mainPane === "chat" && !route.projectsPage && route.overlay === null) {
+    if (paneLayout.mainPane === "chat" && !projectsDestination && route.overlay === null) {
       lastChat.current = { chatId: route.chatId, projectId: route.projectId };
     }
-  }, [paneLayout.mainPane, route.projectsPage, route.chatId, route.projectId, route.overlay]);
+  }, [paneLayout.mainPane, projectsDestination, route.chatId, route.projectId, route.overlay]);
   const switchTab = (tab: RailTab) => {
     if (tab === "chats") {
-      if (paneLayout.mainPane !== "chat" || route.projectsPage) {
+      if (paneLayout.mainPane !== "chat" || projectsDestination) {
         pushRoute({ ...CHAT_ROOT, ...lastChat.current, tab: "chats", agents: null, settingsSection: null, settingsDetail: null });
         sidebarState.setCollapsed(false);
       }
@@ -662,6 +666,8 @@ function ThreadView(props: ThreadProps) {
       onOpenChat={openChat}
       onNewChatInProject={newChatInProject}
       onNewProject={openCreateProject}
+      onOpenProject={(projectId) => pushRoute({ ...CHAT_ROOT, tab: "chats", projectId })}
+      onBackToProjects={() => pushRoute({ ...CHAT_ROOT, tab: "chats", projectsPage: true })}
       onOpenChatDeleted={leaveDeletedChat}
     />
   );
@@ -696,15 +702,15 @@ function ThreadView(props: ThreadProps) {
           <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
         </div>
       </RoutePage>
-    ) : route.projectsPage ? (
+    ) : projectsDestination ? (
       <RoutePage isMobile={isMobile} title="Projects" onOpenDrawer={openDrawer}>
         {renderSidebar("projects")}
       </RoutePage>
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
       <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-muted/25 p-4 sm:p-6">
-          <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card p-4 sm:p-6">
-          <h1 className="mb-4 text-base font-semibold">Scheduled</h1>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {!route.agents.routineId && <PageHeader variant="work" title="Scheduled" />}
+          <div className="work-page-content pb-8 pt-3">
           {agent.agentsList === null ? <p>Loading routines…</p> :
             agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
@@ -748,7 +754,7 @@ function ThreadView(props: ThreadProps) {
   };
   const workNavigation = (
     <WorkNavigation
-      active={route.projectsPage ? "projects" : route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
+      active={projectsDestination ? "projects" : route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
       onNewChat={newChat}
       onSearch={openSearch}
       onProjects={openProjects}
@@ -855,8 +861,7 @@ function ThreadView(props: ThreadProps) {
                 project={viewChatId !== null ? currentProject : null}
                 onOpenProject={(projectId) => {
                   pushRoute({ ...CHAT_ROOT, projectId });
-                  if (isMobile) openDrawer();
-                  else sidebarState.setCollapsed(false);
+                  if (!isMobile) sidebarState.setCollapsed(false);
                 }}
                 titleLoading={threadLoading && blocks.length === 0}
                 childTree={childTree}

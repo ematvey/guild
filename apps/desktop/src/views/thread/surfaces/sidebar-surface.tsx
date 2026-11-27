@@ -15,6 +15,8 @@ export function SidebarSurface({
   onOpenChat,
   onNewChatInProject,
   onNewProject,
+  onOpenProject,
+  onBackToProjects,
   onOpenChatDeleted,
 }: {
   mode?: "history" | "projects" | "search";
@@ -26,6 +28,8 @@ export function SidebarSurface({
   onOpenChat: (chatId: string) => void;
   onNewChatInProject: (project: PickedProject) => void;
   onNewProject: () => void;
+  onOpenProject?: (id: string) => void;
+  onBackToProjects?: () => void;
   /** The shown chat was deleted from its row. */
   onOpenChatDeleted: () => void;
 }) {
@@ -103,6 +107,8 @@ export function SidebarSurface({
       machines={machines}
       projectId={projectId}
       onNewProject={onNewProject}
+      onOpenProject={onOpenProject}
+      onBackToProjects={onBackToProjects}
       onNewChatInProject={onNewChatInProject}
       onRenameProject={renameProjectRow}
       onArchiveProject={archiveProjectRow}

@@ -85,3 +85,18 @@ html:hover .work-sidebar-scroll,
   border-radius: 999px;
   background: var(--work-scroll-thumb);
 }
+
+@utility work-page-content {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 56rem;
+  padding-inline: clamp(1rem, 3vw, 2rem);
+}
+
+.work-destination :where(
+  [class~="text-3xs"], [class~="text-2xs"], [class~="text-xs"], [class~="text-sm"],
+  [class~="text-lg"], [class~="text-xl"], [class~="text-2xl"]
+) {
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}

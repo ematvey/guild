@@ -134,3 +134,24 @@ it("keeps sidebar sections and project folders as the member left them when swit
   expect(pins.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByText("Pinned folder").closest("button")!.getAttribute("aria-expanded")).toBe("true");
 });
+
+it("opens a project destination from its list row", () => {
+  const folder = project("p-work", "Work folder");
+  const onOpenProject = vi.fn();
+  const props = {
+    grouping: sidebarGrouping([]),
+    mode: "projects" as const,
+    projects: [folder],
+    loadingChats: false,
+    chatId: null,
+    onOpenChat: vi.fn(),
+    onOpenProject,
+  };
+  const { rerender } = render(<ChatsPanel {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: /Work folder/ }));
+  expect(onOpenProject).toHaveBeenCalledWith(folder.id);
+
+  rerender(<ChatsPanel {...props} projectId={folder.id} />);
+  expect(screen.getByRole("heading", { name: folder.name })).toBeDefined();
+  expect(screen.getByText("No chats yet.")).toBeDefined();
+});

@@ -27,14 +27,17 @@ export function PageHeader({
   back?: { label: string; onClick: () => void };
   /** A row under the title: tabs, filters. */
   tabs?: ReactNode;
-  variant?: "section" | "bar";
+  variant?: "section" | "bar" | "work";
 }) {
-  const bar = variant === "bar";
+  const work = variant === "work";
+  const bar = variant !== "section";
   return (
     <header
       {...titleBarDragDeep}
       className={
-        bar
+        work
+          ? `work-page-content shrink-0 bg-background pt-6 ${CAPTION_BUTTONS_INSET}`
+          : bar
           ? `shrink-0 border-b border-border bg-background px-4 pt-3 sm:px-6 ${CAPTION_BUTTONS_INSET}`
           : `sticky top-0 z-10 mb-6 flex min-h-11 flex-col justify-center border-b border-border bg-background py-1.5 ${CAPTION_BUTTONS_INSET}`
       }
@@ -50,7 +53,7 @@ export function PageHeader({
       {bar ? (
         <div className="flex flex-wrap items-center gap-3 pb-3">
           <div className="min-w-0 w-full sm:w-auto sm:flex-1">
-            <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+            <h1 className={work ? "truncate text-base font-semibold" : "truncate text-lg font-semibold tracking-tight"}>{title}</h1>
             {description !== undefined && description !== "" && (
               <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
             )}
