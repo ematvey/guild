@@ -83,8 +83,8 @@ export function AgentRoutinesPage({ agentId, routineId, canManage, onNavigate, o
 
   const newRoutine = () =>
     startRoutineThread(
-      "New routine",
-      "I want to create a new routine. Ask me what it should do, how often it should run " +
+      "New scheduled task",
+      "I want to create a scheduled task. Ask me what it should do, how often it should run " +
         "(for example weekdays at 09:00), and the timezone. Once I answer, create it with " +
         "create_routine and show me the human-readable schedule.",
     );
@@ -95,8 +95,8 @@ export function AgentRoutinesPage({ agentId, routineId, canManage, onNavigate, o
         ? `once on ${routine.run_at ? new Date(routine.run_at).toLocaleString() : "an unset date"}`
         : `${humanSchedule(routine.schedule ?? "")} (${routine.timezone})`;
     return startRoutineThread(
-      `Edit routine: ${routine.name}`,
-      `I want to change the routine "${routine.name}" (${routine.id}). Its current schedule is ` +
+      `Edit scheduled task: ${routine.name}`,
+      `I want to change the scheduled task "${routine.name}" (${routine.id}). Its current schedule is ` +
         `${current}. Ask me what to change, then update it with update_routine. If I ask to remove ` +
         "it, use delete_routine. Describe schedule changes in plain language, not cron.",
     );
@@ -152,7 +152,7 @@ function RoutineList({
     try {
       await onNewRoutine();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open a routine thread.");
+      setError(err instanceof Error ? err.message : "Could not open a chat for this scheduled task.");
     } finally {
       setStarting(false);
     }
@@ -161,10 +161,10 @@ function RoutineList({
   const work = import.meta.env.MODE !== "control";
   const create = canManage && (
     <Button variant={work ? "ghost" : "default"} size={work ? "icon" : "sm"}
-      aria-label={work ? "New scheduled task" : "New routine"} title={work ? "New scheduled task" : undefined}
+      aria-label="New scheduled task" title={work ? "New scheduled task" : undefined}
       onClick={() => void start()} disabled={starting}>
       {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-      {!work && "New routine"}
+      {!work && "New scheduled task"}
     </Button>
   );
 
@@ -174,17 +174,17 @@ function RoutineList({
       <div className={work ? "work-page-content space-y-4 pb-8" : "space-y-4"}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
-            {work ? "Create or change scheduled tasks in chat." : "Routines run on a schedule in an isolated context. Ask the agent to create or change one."}
+            Create or change scheduled tasks in chat.
           </p>
           {!work && create}
         </div>
-        {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
-        {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
+        {error !== null && <ErrorState title="Could not open a chat for this scheduled task" message={error} />}
+        {loadError !== null && <ErrorState title="Could not load scheduled tasks" message={loadError} onRetry={retry} />}
         {routines === null && loadError === null && <LoadingRows rows={3} />}
         {routines !== null && routines.length === 0 && (
           <EmptyState
             icon={Clock}
-            title={work ? "No scheduled tasks yet" : "No routines yet"}
+            title="No scheduled tasks yet"
             hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
           />
         )}
@@ -248,7 +248,7 @@ function RoutineDetail({
   // seeded once and then follows every pushed run of this routine.
   const { rows: routines, error: loadError, retry } = useAgentRoutines(agentId);
   const routine = routines?.find((row) => row.id === routineId) ?? null;
-  const error = loadError ?? (routines !== null && routine === null ? "This routine no longer exists." : null);
+  const error = loadError ?? (routines !== null && routine === null ? "This scheduled task no longer exists." : null);
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -280,7 +280,7 @@ function RoutineDetail({
     try {
       await runRoutine(agentId, routineId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not start the routine.");
+      setActionError(err instanceof Error ? err.message : "Could not run the scheduled task.");
     } finally {
       setRunning(false);
     }
@@ -291,7 +291,7 @@ function RoutineDetail({
     try {
       await updateRoutine(agentId, routineId, { delivery });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not change where the routine delivers.");
+      setActionError(err instanceof Error ? err.message : "Could not change where the task sends messages.");
     }
   };
 
@@ -302,7 +302,7 @@ function RoutineDetail({
     try {
       await updateRoutine(agentId, routineId, { enabled: !routine.enabled });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not change the routine status.");
+      setActionError(err instanceof Error ? err.message : "Could not change the schedule status.");
     } finally {
       setChangingSchedule(false);
     }
@@ -315,14 +315,14 @@ function RoutineDetail({
     try {
       await onEditRoutine(routine);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not open a routine thread.");
+      setActionError(err instanceof Error ? err.message : "Could not open a chat for this scheduled task.");
     } finally {
       setEditing(false);
     }
   };
 
   const work = import.meta.env.MODE !== "control";
-  const destinations = { label: work ? "Scheduled tasks" : "Routines", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
+  const destinations = { label: "Scheduled tasks", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
   const header = (
     <PageHeader variant={work ? "work" : "bar"} title={routine?.name ?? destinations.label} back={destinations} />
   );
@@ -344,6 +344,14 @@ function RoutineDetail({
     <>
       {header}
       <div className={work ? "work-page-content space-y-6 pb-8 pt-3" : "space-y-6 py-3"}>
+        <details className="group border-y border-border">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-3 font-semibold [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden="true" className="size-4 transition-transform group-open:rotate-90" />
+            Prompt
+          </summary>
+          <p className="whitespace-pre-wrap break-words pb-4 leading-relaxed text-muted-foreground">{routine.prompt}</p>
+        </details>
+
         <div className="flex flex-wrap items-start justify-between gap-4">
           <dl className="flex flex-wrap gap-x-8 gap-y-3">
             <div>
@@ -368,7 +376,7 @@ function RoutineDetail({
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label={work ? "Scheduled task actions" : "Routine actions"} title={work ? "Scheduled task actions" : "Routine actions"}>
+                  <Button variant="ghost" size="icon" aria-label="Scheduled task actions" title="Scheduled task actions">
                     <Ellipsis />
                   </Button>
                 </DropdownMenuTrigger>
@@ -395,7 +403,7 @@ function RoutineDetail({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="thread">{work ? "One chat for this task" : "One chat for this routine"}</SelectItem>
+              <SelectItem value="thread">One chat for this task</SelectItem>
               <SelectItem value="new_chat">A new chat for each message</SelectItem>
             </SelectContent>
           </Select>
@@ -408,7 +416,7 @@ function RoutineDetail({
           {runs === null ? (
             <LoadingRows rows={2} />
           ) : runs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{work ? "This task has not run yet." : "This routine has not run yet."}</p>
+            <p className="text-sm text-muted-foreground">This task has not run yet.</p>
           ) : (
             <ul className="divide-y divide-border">
               {runs.map((run) => (
@@ -430,14 +438,6 @@ function RoutineDetail({
             </ul>
           )}
         </section>
-
-        <details className="group border-y border-border">
-          <summary className="flex cursor-pointer list-none items-center gap-2 py-3 font-semibold [&::-webkit-details-marker]:hidden">
-            <ChevronRight aria-hidden="true" className="size-4 transition-transform group-open:rotate-90" />
-            Prompt
-          </summary>
-          <p className="whitespace-pre-wrap break-words pb-4 leading-relaxed text-muted-foreground">{routine.prompt}</p>
-        </details>
       </div>
     </>
   );

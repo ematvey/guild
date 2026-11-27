@@ -34,7 +34,7 @@ describe("ChatListItem", () => {
       <ChatListItem title="Jira digest" active={false} status={idle} onClick={() => {}} routine="Jira digest" />,
     );
     expect(marked).toContain("data-routine-mark");
-    expect(marked).toContain("Routine: Jira digest");
+    expect(marked).toContain("Scheduled task: Jira digest");
     const plain = renderToStaticMarkup(
       <ChatListItem title="Deploy notes" active={false} status={idle} onClick={() => {}} />,
     );

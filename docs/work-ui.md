@@ -21,7 +21,7 @@
 - Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available.
 - Use the `text-base` size throughout Work, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.
-- Scheduled task details lead with the task name, schedule, next run, and delivery destination. Show run history before the full prompt. Keep the prompt collapsed until the member opens it. Put Run now in the body, with editing and pause or resume in the task actions menu.
+- Scheduled task details lead with the task name followed by the prompt disclosure. Keep the prompt collapsed until the member opens it. Put the schedule, next run, delivery destination, and run history below it. Put Run now in the body, with editing and pause or resume in the task actions menu.
 
 ## Interaction and checks
 

@@ -66,7 +66,7 @@ export function AgentsDirectory({
       <PageHeader
         variant="bar"
         title="Agents"
-        description="Named teammates with their own workspace, threads and routines."
+        description="Named teammates with their own workspace, threads and scheduled tasks."
         actions={
           <>
             <div className="relative w-full sm:w-[260px]">

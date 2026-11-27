@@ -54,7 +54,7 @@ function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Age
   if (facts.type === "user" && deletingAgent !== null) {
     return `Read-only. ${deletingAgent.name} is being deleted; restoring the agent makes this thread writable again.`;
   }
-  if (facts.type === "routine") return "Routine run. Read-only — the agent wrote this transcript on a schedule.";
+  if (facts.type === "routine") return "Scheduled task run. Read-only — the agent wrote this transcript on a schedule.";
   if (facts.type === "subagent") return "Subagent thread. Read-only — the parent agent drives this conversation.";
   return "Archived. Unarchive this thread to send a message.";
 }

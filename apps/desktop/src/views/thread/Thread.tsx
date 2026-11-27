@@ -912,7 +912,7 @@ function ThreadView(props: ThreadProps) {
                   onMakeRecurring={
                     viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
                       ? () => {
-                        const request = "Help me turn the work in this conversation into a routine. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
+                        const request = "Help me turn the work in this conversation into a scheduled task. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
                         const draft = composer.promptRef.current;
                         composer.setPrompt(draft ? `${draft}\n\n${request}` : request);
                         ta.current?.focus();

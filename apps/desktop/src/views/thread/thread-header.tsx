@@ -166,7 +166,7 @@ export function ThreadHeader({
               </>
             )}
             {onMakeRecurring && (
-              <DropdownMenuItem onSelect={onMakeRecurring}>Make recurring</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onMakeRecurring}>Schedule as a task</DropdownMenuItem>
             )}
             <DropdownMenuItem
               onSelect={() =>

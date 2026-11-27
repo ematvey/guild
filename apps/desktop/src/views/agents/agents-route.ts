@@ -120,7 +120,7 @@ function filtersSearch(filters: ActivityFilters): string {
 export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["overview", "Overview"],
   ["threads", "Threads"],
-  ["routines", "Routines"],
+  ["routines", "Scheduled tasks"],
   ["files", "Files"],
   ["activity", "Activity"],
   ["settings", "Settings"],
@@ -393,7 +393,7 @@ export type RunTrigger = AgentTrigger;
 
 export const RUN_TRIGGER_LABEL: Record<RunTrigger, string> = {
   message: "Message",
-  routine: "Routine",
+  routine: "Scheduled task",
   manual: "Manual",
   delegation: "Delegation",
 };

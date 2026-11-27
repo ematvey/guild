@@ -248,10 +248,10 @@ export function ChatListItem({
         {routine !== undefined ? (
           <Repeat
             data-routine-mark
-            aria-label={`Routine: ${routine}`}
+            aria-label={`Scheduled task: ${routine}`}
             className={`${showChatIcon ? "size-4" : "size-3.5"} shrink-0 text-muted-foreground`}
           >
-            <title>{`Routine: ${routine}`}</title>
+            <title>{`Scheduled task: ${routine}`}</title>
           </Repeat>
         ) : showChatIcon ? (
           <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />

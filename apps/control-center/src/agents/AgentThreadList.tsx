@@ -87,7 +87,7 @@ export function ThreadList({
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{thread.title}</span>
-                  {thread.type === "routine" && <ToneBadge tone="neutral">Routine</ToneBadge>}
+                  {thread.type === "routine" && <ToneBadge tone="neutral">Scheduled task</ToneBadge>}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
                   Last activity {relativeTime(thread.last_activity_at)}
