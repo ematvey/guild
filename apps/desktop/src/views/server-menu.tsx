@@ -33,7 +33,7 @@ function useServerList(): ServerList | null {
   return list;
 }
 
-/** The switcher rows: the "Servers" header (the "+" rides on it) and one
+/** The switcher rows: the "Workspaces" header (the "+" rides on it) and one
  * row per signed-in server with the active one highlighted. `list` omitted
  * means self-fetch (standalone use, e.g. the settings window's account menu). */
 export function ServerMenuItems({
@@ -69,12 +69,12 @@ export function ServerMenuItems({
   return (
     <>
       <div className="flex items-center justify-between px-2 pb-1 pt-1.5">
-        <span className="text-xs font-medium text-muted-foreground">Servers</span>
+        <span className="text-xs font-medium text-muted-foreground">Workspaces</span>
         {onAddWorkspace && (
           <button
             onClick={() => onAddWorkspace()}
-            title="Add server"
-            aria-label="Add server"
+            title="Add workspace"
+            aria-label="Add workspace"
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5" />

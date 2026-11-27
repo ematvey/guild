@@ -813,6 +813,7 @@ function ThreadView(props: ThreadProps) {
       onOpenDevice={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "device" } })}
       onSignOut={signOut}
       onAddWorkspace={onAddWorkspace}
+      workspaceName={workspace?.name}
       collapsed={collapsed}
       onExpand={() => sidebarState.setCollapsed(false)}
     />

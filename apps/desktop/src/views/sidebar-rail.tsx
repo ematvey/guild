@@ -114,6 +114,7 @@ export function SidebarMenu({
   onOpenDevice,
   onSignOut,
   onAddWorkspace,
+  workspaceName,
   collapsed = false,
   onExpand,
 }: {
@@ -128,6 +129,7 @@ export function SidebarMenu({
   onOpenDevice: () => void;
   onSignOut: () => void;
   onAddWorkspace?: (baseUrl?: string) => void;
+  workspaceName?: string;
   collapsed?: boolean;
   onExpand?: () => void;
 }) {
@@ -145,9 +147,17 @@ export function SidebarMenu({
         </Button>
       )}
       <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact={collapsed}>
-        {onAddWorkspace && (
+        {onAddWorkspace ? (
           <>
             <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
+            <DropdownMenuSeparator />
+          </>
+        ) : workspaceName && (
+          <>
+            <div className="min-w-0 px-2 py-1.5">
+              <div className="text-xs text-muted-foreground">Workspace</div>
+              <div className="truncate text-sm font-medium" title={workspaceName}>{workspaceName}</div>
+            </div>
             <DropdownMenuSeparator />
           </>
         )}
