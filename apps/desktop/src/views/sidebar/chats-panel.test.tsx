@@ -127,8 +127,8 @@ it("keeps sidebar sections and project folders as the member left them when swit
     />
   );
   const { rerender } = render(panel("c-plain", null));
-  const projects = screen.getByRole("button", { name: "Projects", exact: true });
-  const pins = screen.getByRole("button", { name: "Pinned", exact: true });
+  const projects = screen.getByRole("button", { name: /^Projects$/ });
+  const pins = screen.getByRole("button", { name: /^Pinned$/ });
   fireEvent.click(pins);
   rerender(panel("c-project", folder.id));
   expect(projects.getAttribute("aria-expanded")).toBe("false");
