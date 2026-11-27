@@ -68,8 +68,13 @@ export function useSidebar() {
 }
 
 /** Keep the sidebar mounted so collapsing preserves scroll and expanded rows. */
-export function Sidebar({ collapsed, children }: { collapsed: boolean; children: ReactNode }) {
-  const { width, resizing, startDrag } = useSidebar();
+export function Sidebar({ collapsed, width, resizing, startDrag, children }: {
+  collapsed: boolean;
+  width: number;
+  resizing: boolean;
+  startDrag: (event: ReactMouseEvent) => void;
+  children: ReactNode;
+}) {
   return (
     <aside
       id="work-sidebar"

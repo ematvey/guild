@@ -790,8 +790,15 @@ function ThreadView(props: ThreadProps) {
   return (
     <div ref={shell} data-shell className="guild-sidebar-theme fixed inset-0 flex flex-col bg-background text-foreground">
       {!isMobile && (
-        <header {...titleBarDragDeep} className={`shrink-0 ${TITLE_BAR_INSET}`}>
-          <WorkSidebarHeader onToggle={sidebarState.toggleCollapsed} expanded={!sidebarState.collapsed} />
+        <header {...titleBarDragDeep} className={`relative shrink-0 ${TITLE_BAR_INSET}`}>
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar shadow-[inset_-1px_0_var(--border)] ${sidebarState.resizing ? "" : "transition-[width] duration-150 motion-reduce:transition-none"}`}
+            style={{ width: sidebarState.collapsed ? 0 : sidebarState.width }}
+          />
+          <div className="relative">
+            <WorkSidebarHeader onToggle={sidebarState.toggleCollapsed} expanded={!sidebarState.collapsed} />
+          </div>
         </header>
       )}
       <div className="flex min-h-0 flex-1">
@@ -809,7 +816,7 @@ function ThreadView(props: ThreadProps) {
             </SheetContent>
           </Sheet>
         ) : (
-          <Sidebar collapsed={sidebarState.collapsed}>
+          <Sidebar {...sidebarState}>
             {sidebarBody}
             {menu}
           </Sidebar>
