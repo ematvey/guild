@@ -2,6 +2,7 @@
 // Generated UI and the workspace config files. Pure over the files it is
 // given.
 
+import type { Message } from "@earendil-works/pi-ai";
 import { genuiPrompt } from "@guild/genui";
 import {
   AGENT_WORKSPACE_PATH,
@@ -10,6 +11,31 @@ import {
   renderFileBlock,
   type AgentConfigFiles,
 } from "../agents/workspace-config.js";
+
+const MEMORY_REVISION_TAG = "guild_memory_revision";
+const MEMORY_REVISION_MARKER = new RegExp(
+  `\\n<${MEMORY_REVISION_TAG}>([0-9a-f]{64}|)</${MEMORY_REVISION_TAG}>(?=\\n</instructions>$)`,
+);
+
+/** Persist the hash with the snapshot so the request hook credits only text the model sees. */
+export function attachMemoryRevision(instructions: string, revision: string | undefined): string {
+  return instructions + `\n<${MEMORY_REVISION_TAG}>${revision ?? ""}</${MEMORY_REVISION_TAG}>`;
+}
+
+export function stripMemoryRevision(message: Message): { message: Message; revision?: string } {
+  if (message.role !== "system") return { message };
+  const instructions = message.sections?.instructions;
+  if (instructions == null) return { message };
+  const marker = MEMORY_REVISION_MARKER.exec(instructions);
+  if (marker === null) return { message };
+  return {
+    message: {
+      ...message,
+      sections: { ...message.sections, instructions: instructions.slice(0, marker.index) + "\n</instructions>" },
+    },
+    revision: marker[1] || undefined,
+  };
+}
 
 /** The thread's own context: an isolated routine run, or a delivered thread. */
 export interface ThreadInstructionContext {
@@ -49,6 +75,7 @@ export function composeAgentInstructions(
   spawnedBy?: { parent_name: string; depth: number; can_spawn: boolean },
   canDelegate = false,
   thread?: ThreadInstructionContext,
+  onMemoryRevision?: (hash: string) => void,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -88,6 +115,9 @@ export function composeAgentInstructions(
       continue;
     }
     if (budget <= 0) break;
+    if (entry.name === "MEMORY.md" && config.memoryRevision !== undefined && text.trim().length <= budget) {
+      onMemoryRevision?.(config.memoryRevision);
+    }
     const block = renderFileBlock(entry.name, text, budget);
     budget -= block.length;
     workspace.push(block);

@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { pendingReflectionInputs, recentCoordinationWork } from "../agents/store/coordination.js";
+import { agentWorkspaceDir, TOTAL_MAX_CHARS } from "../agents/workspace-config.js";
 import { waitFor } from "./support/wait.js";
 
 const final = (text: string) =>
@@ -26,6 +29,79 @@ afterAll(async () => {
 }, 30000);
 
 describe("configured coordinator conversation", () => {
+  it("records the exact complete MEMORY.md shown in the prompt before any file tool runs", async () => {
+    const { app, config, db } = stack.env;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/api/v1/agents", headers,
+      payload: { name: "Memory reader", model: "coordination-test", tools: ["edit"] },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const agentId = created.json().agent.id as string;
+    const root = agentWorkspaceDir(config.agentWorkspaceWriteRoot, stack.orgId, agentId);
+    await mkdir(root, { recursive: true });
+    const workspaceMemory = path.join(root, "MEMORY.md");
+    const memory = "  # Workspace memory fixture\n\n";
+    await writeFile(workspaceMemory, memory);
+
+    const submit = async (checkQueued = false) => {
+      const opened = await app.inject({
+        method: "POST", url: `/api/v1/agents/${agentId}/threads`, headers, payload: { title: "Memory fixture" },
+      });
+      expect(opened.statusCode, opened.body).toBe(200);
+      const threadId = opened.json().thread.id as string;
+      const before = stack.mock.requests.length;
+      const firstReply = Promise.withResolvers<string>();
+      stack.mock.setResponses([
+        { body: checkQueued ? () => firstReply.promise : final("Memory fixture complete") },
+        { body: final("Memory fixture complete") },
+      ]);
+      const turn = (message: string) => app.inject({
+        method: "POST", url: `/api/v1/agents/${agentId}/threads/${threadId}/turns`,
+        headers, payload: { message },
+      });
+      const currentRevision = async () => (await db.query(
+        "SELECT hash FROM agent_memory_reads WHERE thread_id=$1 AND path='MEMORY.md'", [threadId],
+      )).rows[0]?.hash;
+      let revision: string | undefined;
+      try {
+        const result = await turn("Reply with the fixture result.");
+        expect(result.statusCode, result.body).toBeLessThan(300);
+        await waitFor(() => stack.mock.requests.slice(before).some((r) => JSON.stringify(r.body).includes("Workspace memory fixture")), 10000);
+        revision = await currentRevision();
+        expect(JSON.stringify(stack.mock.requests[before]?.body)).not.toContain("guild_memory_revision");
+        if (checkQueued) {
+          const newer = memory + "Newer notes.\n";
+          await writeFile(workspaceMemory, newer);
+          const queued = await turn("Check the latest fixture notes.");
+          expect(queued.statusCode, queued.body).toBeLessThan(300);
+          expect(await currentRevision()).toBe(revision);
+          firstReply.resolve(call("edit", {
+            path: "MEMORY.md", edits: [{ oldText: "# Workspace memory fixture", newText: "# Stale edit" }],
+          }));
+          await waitFor(() => stack.mock.requests.slice(before + 1).some((r) =>
+            JSON.stringify(r.body).includes("newer notes were preserved"),
+          ), 10000, 100, "The stale edit did not return a reconciliation error");
+          await waitFor(() => stack.mock.requests.slice(before + 1).some(({ body }) => {
+            const request = JSON.stringify(body);
+            return request.includes("Check the latest fixture notes.") && request.includes("Newer notes.");
+          }), 10000, 100, "Queued request did not receive the newer memory");
+          expect(await currentRevision()).toBe(createHash("sha256").update(newer).digest("hex"));
+        }
+      } finally {
+        firstReply.resolve(final("Memory fixture complete"));
+      }
+      await waitFor(async () => (await db.query(
+        "SELECT 1 FROM agent_runs WHERE thread_id=$1 AND status NOT IN ('pending','running')", [threadId],
+      )).rowCount === (checkQueued ? 2 : 1), 10000);
+      return revision;
+    };
+
+    expect(await submit(true)).toBe(createHash("sha256").update(memory).digest("hex"));
+    await writeFile(workspaceMemory, memory + "x".repeat(TOTAL_MAX_CHARS));
+    expect(await submit()).toBeUndefined();
+  }, 30000);
+
   it("refuses to open the personal Assistant inbox", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };
