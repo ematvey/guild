@@ -315,9 +315,7 @@ export function ProjectHeader({
   name: string;
   folder: string;
   createdAt?: string;
-  /** The machine the project is bound to: its name rides the row title
-   *  with an online/offline dot (hidden while the socket state is
-   *  unknown — e.g. the machines list has not landed yet). */
+  /** Machine and presence displayed on the standalone Projects page. */
   machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
@@ -337,12 +335,12 @@ export function ProjectHeader({
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const standalone = open === undefined;
-  const machineLabel = machine?.name && (
+  const machineLabel = standalone && machine?.name && (
     <span
       title={machine.name}
-      className={`flex min-w-0 items-center gap-1.5 overflow-hidden text-base text-muted-foreground ${standalone ? "w-32 max-w-[42%] shrink-0" : ""}`}
+      className="flex w-32 min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 text-base text-muted-foreground"
     >
-      <span className={standalone ? "truncate" : "hidden max-w-20 truncate @min-[16rem]:inline"}>{machine.name}</span>
+      <FadeTitle text={machine.name} fadeWidth={10} />
       {machine.online !== undefined &&
         (machine.online ? (
           <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
@@ -350,6 +348,17 @@ export function ProjectHeader({
           <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
         ))}
     </span>
+  );
+  const newChatButton = onNewChat && (
+    <button
+      type="button"
+      title="New chat in this project"
+      aria-label="New chat in this project"
+      className={ROW_BUTTON}
+      onClick={onNewChat}
+    >
+      <Plus aria-hidden="true" className="size-4" />
+    </button>
   );
   if (editing) {
     return (
@@ -366,7 +375,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground ${standalone ? "pr-2" : "pr-1"}`}
+      className={`${ROW_FOCUS} group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground ${standalone ? "pr-2" : "pr-1"}`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -388,8 +397,7 @@ export function ProjectHeader({
         <span className="flex min-w-10 flex-1">
           <FadeTitle text={name} fadeWidth={10} />
         </span>
-        {!standalone && machineLabel}
-        {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
+        {standalone && onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
         <RowStatus status={status} />
         {standalone && createdAt && (
           <time dateTime={createdAt} className="shrink-0 whitespace-nowrap text-muted-foreground">
@@ -397,19 +405,11 @@ export function ProjectHeader({
           </time>
         )}
       </button>
+      {!standalone && newChatButton}
+      {!standalone && pinned && <PinButton pinned onPin={onPin} />}
       <div className={ROW_ACTIONS}>
-        {onNewChat && (
-          <button
-            type="button"
-            title="New chat in this project"
-            aria-label="New chat in this project"
-            className={ROW_BUTTON}
-            onClick={onNewChat}
-          >
-            <Plus aria-hidden="true" className="size-4" />
-          </button>
-        )}
-        <PinButton pinned={pinned} onPin={onPin} />
+        {standalone && newChatButton}
+        {standalone && <PinButton pinned={pinned} onPin={onPin} />}
         <RowActions
           open={menuOpen}
           onOpenChange={setMenuOpen}
