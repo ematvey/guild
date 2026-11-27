@@ -340,13 +340,14 @@ export function ProjectHeader({
       title={machine.name}
       className="flex w-32 min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 text-base text-muted-foreground"
     >
+      {machine.online !== undefined && (
+        <span
+          role="img"
+          aria-label={machine.online ? "Online" : "Offline"}
+          className={`size-2 shrink-0 rounded-full ${machine.online ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+        />
+      )}
       <FadeTitle text={machine.name} fadeWidth={10} />
-      {machine.online !== undefined &&
-        (machine.online ? (
-          <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
-        ) : (
-          <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
-        ))}
     </span>
   );
   const newChatButton = onNewChat && (

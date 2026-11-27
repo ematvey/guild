@@ -94,6 +94,7 @@ describe("ProjectHeader", () => {
     const html = renderToStaticMarkup(<ProjectHeader {...base} open={undefined} machine={{ name: "dev-1", online: true }} />);
     expect(html).toContain("dev-1");
     expect(html).toContain("bg-emerald-500");
+    expect(html.indexOf('aria-label="Online"')).toBeLessThan(html.indexOf(">dev-1<"));
     expect(html).toContain('title="/home/u/guild"');
   });
 
