@@ -117,31 +117,40 @@ export function SidebarMenu({
   workspaceName?: string;
 }) {
   return (
-    <div className="shrink-0 border-t border-border/60 px-2 py-2">
-      <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
-        {onAddWorkspace ? (
-          <>
-            <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
-            <DropdownMenuSeparator />
-          </>
-        ) : workspaceName && (
-          <>
-            <div className="min-w-0 px-2 py-1.5">
-              <div className="text-base text-muted-foreground">Workspace</div>
-              <div className="truncate text-base font-medium" title={workspaceName}>{workspaceName}</div>
-            </div>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
-        <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("machine")}><Cpu />Devices</DropdownMenuItem>
-        {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
-        <DropdownMenuItem className="text-base" onClick={onOpenHelp}>Help</DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-base text-destructive focus:text-destructive" onClick={onSignOut}>
-          Sign out
-        </DropdownMenuItem>
-      </UserBadge>
+    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-2 py-2">
+      <div className="min-w-0 flex-1">
+        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+          {onAddWorkspace ? (
+            <>
+              <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
+              <DropdownMenuSeparator />
+            </>
+          ) : workspaceName && (
+            <>
+              <div className="min-w-0 px-2 py-1.5">
+                <div className="text-base text-muted-foreground">Workspace</div>
+                <div className="truncate text-base font-medium" title={workspaceName}>{workspaceName}</div>
+              </div>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
+          <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("machine")}><Cpu />Devices</DropdownMenuItem>
+          {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
+          <DropdownMenuItem className="text-base" onClick={onOpenHelp}>Help</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="text-base text-destructive focus:text-destructive" onClick={onSignOut}>
+            Sign out
+          </DropdownMenuItem>
+        </UserBadge>
+      </div>
+      <Button variant="ghost" size="icon"
+        aria-label="Devices" title="Devices" aria-haspopup="dialog"
+        className="shrink-0 text-sidebar-foreground"
+        onClick={() => onOpenSettings("machine")}
+      >
+        <Cpu />
+      </Button>
     </div>
   );
 }
