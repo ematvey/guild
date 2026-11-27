@@ -20,7 +20,7 @@ import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
-import { SidebarMenu, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
+import { SidebarMenu, WorkPageSwitcher, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
@@ -601,11 +601,20 @@ function ThreadView(props: ThreadProps) {
   const controlRoute = isControlRoute(route);
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
+  const lastChat = useRef<{ chatId: string | null; projectId: string | null }>({ chatId: null, projectId: null });
+  useEffect(() => {
+    if (paneLayout.mainPane === "chat" && route.overlay === null) {
+      lastChat.current = { chatId: route.chatId, projectId: route.projectId };
+    }
+  }, [paneLayout.mainPane, route.chatId, route.projectId, route.overlay]);
   const switchTab = (tab: RailTab) => {
-    // The skills and agents tabs are URL routes, not persisted panel state:
-    // entering them navigates to their root, leaving returns to the chat
-    // root — so back/forward crosses surfaces like any other route pair,
-    // and a reload lands back on the page.
+    if (tab === "chats") {
+      if (paneLayout.mainPane !== "chat") {
+        pushRoute({ ...CHAT_ROOT, ...lastChat.current });
+        sidebarState.setCollapsed(false);
+      }
+      return;
+    }
     const target = tabPaneLayout(
       {
         ...route,
@@ -628,22 +637,7 @@ function ThreadView(props: ThreadProps) {
       pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG, agents: null, integrations: null });
       return;
     }
-    // Panel tabs navigate too: each owns its address, back/forward walks
-    // tab history, and the navigation clears the open chat — a tab switch
-    // always lands on a fresh composer, never the previously selected chat.
-    // Entering Settings lands on the current section, or the default one —
-    // the Settings tab always has a sectioned address.
-    pushRoute({
-      chatId: null,
-      projectId: null,
-      overlay: null,
-      skills: null,
-      agents: null,
-      apps: null,
-      tab,
-      newChat: false,
-      ...(tab === "settings" ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null } : {}),
-    });
+    pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: route.settingsSection ?? "account" });
   };
   // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
   // route tabs (agents / activity) render in the main column, so the
@@ -778,22 +772,30 @@ function ThreadView(props: ThreadProps) {
       </RoutePage>
     ) : null;
 
+  const openRoutines = agent.personalAgent ? () => {
+    if (!agent.personalAgent) return;
+    if (isMobile) setOpen(false);
+    pushRoute({ ...CHAT_ROOT, agents: {
+      view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
+    } });
+  } : undefined;
+  const workSwitcher = (
+    <WorkPageSwitcher
+      active={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : route.settingsSection === "machine" ? "device" : railTab}
+      onTabChange={isMobile ? mobileSwitchTab : switchTab}
+      onOpenRoutines={openRoutines}
+      onOpenSettings={openSettingsSection}
+    />
+  );
   const menu = (collapsed = false) => (
     <SidebarMenu
-      activeTab={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : route.settingsSection === "machine" ? "device" : railTab}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenSettings={openSettingsSection}
       onOpenControl={() => {
         if (isMobile) setOpen(false);
         pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway" });
       }}
-      onOpenRoutines={agent.personalAgent ? () => {
-        if (!agent.personalAgent) return;
-        if (isMobile) setOpen(false);
-        pushRoute({ ...CHAT_ROOT, agents: {
-          view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
-        } });
-      } : undefined}
+      onOpenRoutines={openRoutines}
       onOpenHelp={() => {
         if (isMobile) setOpen(false);
         pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } });
@@ -820,6 +822,7 @@ function ThreadView(props: ThreadProps) {
           >
             <SheetTitle className="sr-only">Work sidebar</SheetTitle>
             <WorkSidebarHeader workspaceName={workspace?.name} onClose={sidebarClose} />
+            {workSwitcher}
             {sidebar}
             {menu()}
           </SheetContent>
@@ -829,6 +832,7 @@ function ThreadView(props: ThreadProps) {
       ) : (
         <Sidebar collapsed={false}>
           <WorkSidebarHeader workspaceName={workspace?.name} onCollapse={sidebarCollapse} />
+          {workSwitcher}
           {sidebar}
           {menu()}
         </Sidebar>

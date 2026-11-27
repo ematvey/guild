@@ -1,5 +1,22 @@
-import { ArrowUpRight, CalendarClock, Cpu, Settings, LayoutGrid, MessageSquare, Package, PanelLeftOpen } from "lucide-react";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
+import {
+  ArrowUpRight,
+  CalendarClock,
+  Check,
+  ChevronDown,
+  Cpu,
+  Settings,
+  LayoutGrid,
+  MessageSquare,
+  Package,
+  PanelLeftOpen,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@guild/ui/components/dropdown-menu";
 import { Button } from "@guild/ui/components/button";
 import { UserBadge } from "../components/user-badge";
 import { ServerMenuItems } from "./server-menu";
@@ -34,6 +51,83 @@ export function WorkSidebarHeader({
   );
 }
 
+const workPages = [
+  { id: "chats", label: "Chats", icon: MessageSquare },
+  { id: "skills", label: "Skills", icon: Package },
+  { id: "apps", label: "Apps", icon: LayoutGrid },
+  { id: "routines", label: "Routines", icon: CalendarClock },
+] as const;
+
+export function WorkPageSwitcher({
+  active,
+  onTabChange,
+  onOpenRoutines,
+  onOpenSettings,
+}: {
+  active: RailTab | "routines" | "device";
+  onTabChange: (tab: RailTab) => void;
+  onOpenRoutines?: () => void;
+  onOpenSettings: (section: string) => void;
+}) {
+  const pages = workPages.filter(({ id }) => id !== "routines" || onOpenRoutines);
+  const current = pages.find(({ id }) => id === active);
+  const Icon = current?.icon ?? (active === "device" ? Cpu : Settings);
+  const label = current?.label ?? (active === "device" ? "Devices" : "Settings");
+  return (
+    <nav aria-label="Work navigation" className="flex shrink-0 items-center gap-1 px-2 pb-2 pt-1">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-w-0 flex-1 justify-start bg-background/50"
+            aria-label={`Switch Work page, current: ${label}`}
+          >
+            <Icon />
+            <span className="flex-1 truncate text-left">{label}</span>
+            <ChevronDown className="text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-40">
+          {pages.map(({ id, icon: ItemIcon, label: itemLabel }) => (
+            <DropdownMenuItem
+              key={id}
+              onSelect={() => (id === "routines" ? onOpenRoutines?.() : onTabChange(id))}
+              aria-current={id === active ? "page" : undefined}
+            >
+              <ItemIcon className="size-4" />
+              {itemLabel}
+              {id === active && <Check className="ml-auto size-4" aria-hidden="true" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="guild-sidebar-current size-8 shrink-0"
+        aria-label="Devices"
+        title="Devices"
+        aria-current={active === "device" ? "page" : undefined}
+        onClick={() => onOpenSettings("machine")}
+      >
+        <Cpu />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="guild-sidebar-current size-8 shrink-0"
+        aria-label="Settings"
+        title="Settings"
+        aria-current={active === "settings" ? "page" : undefined}
+        onClick={() => onOpenSettings("appearance")}
+      >
+        <Settings />
+      </Button>
+    </nav>
+  );
+}
+
 export function SidebarMenu({
   onTabChange,
   onOpenSettings,
@@ -48,7 +142,6 @@ export function SidebarMenu({
   onAddWorkspace,
   collapsed = false,
   onExpand,
-  activeTab,
 }: {
   onTabChange: (tab: RailTab) => void;
   onOpenSettings: (section: string) => void;
@@ -63,18 +156,7 @@ export function SidebarMenu({
   onAddWorkspace?: (baseUrl?: string) => void;
   collapsed?: boolean;
   onExpand?: () => void;
-  activeTab?: RailTab | "routines" | "device";
 }) {
-  const tools = [
-    { id: "device", label: "Devices", icon: Cpu, pick: () => onOpenSettings("machine") },
-    { id: "settings", label: "Settings", icon: Settings, pick: () => onOpenSettings("appearance") },
-    ...(activeTab !== "chats"
-      ? [{ id: "chats", label: "Chats", icon: MessageSquare, pick: () => onTabChange("chats") }]
-      : []),
-    { id: "skills", label: "Skills", icon: Package, pick: () => onTabChange("skills") },
-    { id: "apps", label: "Apps", icon: LayoutGrid, pick: () => onTabChange("apps") },
-    ...(onOpenRoutines ? [{ id: "routines", label: "Routines", icon: CalendarClock, pick: onOpenRoutines }] : []),
-  ];
   return (
     <div
       className={
@@ -83,25 +165,10 @@ export function SidebarMenu({
           : "shrink-0 border-t border-border px-2 pb-2 pt-1.5"
       }
     >
-      {collapsed ? (
+      {collapsed && (
         <Button variant="ghost" size="icon" onClick={onExpand} aria-label="Expand sidebar">
           <PanelLeftOpen />
         </Button>
-      ) : (
-        <nav aria-label="Work tools" className="mb-1 max-h-[34dvh] space-y-0.5 overflow-y-auto px-1">
-          {tools.map(({ id, label, icon: Icon, pick }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={pick}
-              aria-current={activeTab === id ? "page" : undefined}
-              className="guild-sidebar-current flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Icon aria-hidden="true" className="size-4 shrink-0" />
-              {label}
-            </button>
-          ))}
-        </nav>
       )}
       {!collapsed && (
         <Button
@@ -122,14 +189,15 @@ export function SidebarMenu({
         )}
         {collapsed && (
           <>
-            <DropdownMenuItem onClick={() => onTabChange("chats")}>Chats</DropdownMenuItem>
-            {tools
-              .filter(({ id }) => id !== "chats")
-              .map(({ id, label, pick }) => (
-                <DropdownMenuItem key={id} onClick={pick}>
+            {workPages
+              .filter(({ id }) => id !== "routines" || onOpenRoutines)
+              .map(({ id, label }) => (
+                <DropdownMenuItem key={id} onSelect={() => (id === "routines" ? onOpenRoutines?.() : onTabChange(id))}>
                   {label}
                 </DropdownMenuItem>
               ))}
+            <DropdownMenuItem onSelect={() => onOpenSettings("machine")}>Devices</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onOpenSettings("appearance")}>Settings</DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenControl}>Control Center</DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
