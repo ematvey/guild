@@ -5,6 +5,7 @@ import { request } from "../../lib/api/request";
 // this file assembles the component tree.
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 
+import { ArrowUp } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@guild/ui/components/dialog";
 import { SettingsPanel } from "../sidebar/settings-panel";
 import { PageHeader } from "../../components/page-header";
@@ -284,7 +285,9 @@ function ThreadView(props: ThreadProps) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [sidebarScrolled, setSidebarScrolled] = useState(false);
+  const sidebarScroller = useRef<HTMLDivElement | null>(null);
   const syncSidebarScroll = useCallback((element: HTMLDivElement | null) => {
+    sidebarScroller.current = element;
     if (element) setSidebarScrolled(element.scrollTop > 0);
   }, []);
   // Desktop sidebar: one shared width and collapse flag, persisted, so the
@@ -792,13 +795,34 @@ function ThreadView(props: ThreadProps) {
     />
   );
   const sidebarBody = (
-    <div
-      ref={syncSidebarScroll}
-      onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
-      className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
-    >
-      {workNavigation}
-      {renderSidebar("history")}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={syncSidebarScroll}
+        onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
+        className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+      >
+        {workNavigation}
+        {renderSidebar("history")}
+      </div>
+      {sidebarScrolled && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Scroll sidebar to top"
+          title="Scroll sidebar to top"
+          className="absolute right-2 top-2 z-20 size-8 rounded-full border border-border bg-sidebar text-muted-foreground shadow-sm hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:bg-sidebar-accent focus-visible:text-sidebar-foreground"
+          onClick={(event) => {
+            const scroller = sidebarScroller.current;
+            if (event.detail === 0) scroller?.querySelector<HTMLButtonElement>("nav button")?.focus({ preventScroll: true });
+            scroller?.scrollTo({
+              top: 0,
+              behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+            });
+          }}
+        >
+          <ArrowUp aria-hidden="true" />
+        </Button>
+      )}
     </div>
   );
   const menu = (
