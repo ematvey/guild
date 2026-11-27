@@ -36,7 +36,7 @@ export function WorkSidebarHeader({
   showDivider?: boolean;
 }) {
   return (
-    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 px-1 ${TOP_ROW} ${showDivider ? "border-b border-border/60" : "border-b border-transparent"}`}>
+    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 px-1.5 ${TOP_ROW} ${showDivider ? "border-b border-border/60" : "border-b border-transparent"}`}>
       <CollapseButton onCollapse={onToggle} expanded={expanded} />
       {onToggle && (
         <div className="flex shrink-0 items-center">
@@ -77,7 +77,7 @@ export function WorkNavigation({
     { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
   ];
   return (
-    <nav aria-label="Guild navigation" className="shrink-0 space-y-0.5 pl-1 pb-2 pt-1">
+    <nav aria-label="Guild navigation" className="shrink-0 space-y-0.5 pl-1.5 pr-0.5 pb-2 pt-1">
       {items.map(({ id, label, icon: Icon, open }) => (
         <Button
           key={label}
@@ -121,7 +121,7 @@ export function SidebarMenu({
   workspaceName?: string;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-1 py-2">
+    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-1.5 py-2">
       <div className="min-w-0 flex-1">
         <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
           {onAddWorkspace ? (
