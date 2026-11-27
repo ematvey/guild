@@ -38,7 +38,7 @@ export function RoutePage({
   return (
     <section
       aria-label={title}
-      className="work-destination flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-base"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-base"
     >
       {isMobile && <MobileNavBar onOpenDrawer={onOpenDrawer} />}
       {children}

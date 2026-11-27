@@ -91,10 +91,8 @@ html:hover .work-sidebar-scroll,
   padding-inline: 1rem;
 }
 
-.work-destination :where(
-  [class~="text-3xs"], [class~="text-2xs"], [class~="text-xs"], [class~="text-sm"],
-  [class~="text-lg"], [class~="text-xl"], [class~="text-2xl"]
-) {
+/* Work has one text size, including menus and dialogs portaled to the body. */
+html[data-work-ui] body,
+html[data-work-ui] body :where(*) {
   font-size: var(--text-base);
-  line-height: var(--text-base--line-height);
 }
