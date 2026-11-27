@@ -610,7 +610,7 @@ function ThreadView(props: ThreadProps) {
   const switchTab = (tab: RailTab) => {
     if (tab === "chats") {
       if (paneLayout.mainPane !== "chat") {
-        pushRoute({ ...CHAT_ROOT, ...lastChat.current });
+        pushRoute({ ...CHAT_ROOT, ...lastChat.current, tab: "chats", agents: null, settingsSection: null, settingsDetail: null });
         sidebarState.setCollapsed(false);
       }
       return;
