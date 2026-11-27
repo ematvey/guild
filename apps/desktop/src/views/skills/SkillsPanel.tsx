@@ -254,8 +254,6 @@ export function SkillsPanel({
 
   if (selected !== null) {
     return (
-      // Full column width: the detail's top bar spans the page and caps its
-      // own body, like the prototype's topbar over the 56rem inner column.
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <SkillDetail
           slug={selected}

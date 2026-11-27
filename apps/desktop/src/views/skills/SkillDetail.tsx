@@ -369,7 +369,7 @@ export function SkillDetail({
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <DetailHeader slug={slug} onBack={onBack} />
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3">
+        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3" : "work-page-content pt-4 pb-3"}>
           <Skeleton className="mb-2 h-6 w-2/3 rounded-lg" />
           <Skeleton className="mb-2 h-4 w-full rounded-md" />
           <SkeletonText lines={5} className="pt-3" />
@@ -550,7 +550,7 @@ export function SkillDetail({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <DetailHeader slug={detail.slug} onBack={onBack} actions={actionButtons} />
       <div className={`min-h-0 flex-1 overflow-y-auto ${management ? "" : "bg-muted/25"}`} data-scrollable>
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
+        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pt-4 pb-12"}>
           <section className={management ? undefined : "rounded-xl border border-border bg-card p-4 sm:p-6"}>
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>

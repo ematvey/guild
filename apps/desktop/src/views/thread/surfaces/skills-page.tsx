@@ -18,7 +18,7 @@ export function SkillsPage({
   pushRoute: PushRoute;
 }) {
   return (
-    <div className={route.management ? "flex min-h-0 flex-1 flex-col" : "work-skills flex min-h-0 flex-1 flex-col"} data-scrollable>
+    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
       <SkillsPanel
         me={me}
         route={clampSkillsRoute(route, HAS_ENGINE)}

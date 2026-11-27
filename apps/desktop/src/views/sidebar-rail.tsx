@@ -82,7 +82,7 @@ export function WorkNavigation({
     { id: "skills", label: "Skills", icon: Package, open: () => onTabChange("skills") },
   ];
   return (
-    <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 border-b border-border/60 px-2 pb-2 pt-1">
+    <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 px-2 pb-2 pt-1">
       {items.map(({ id, label, icon: Icon, open }) => (
         <Button
           key={label}

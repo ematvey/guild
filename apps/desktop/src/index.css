@@ -87,10 +87,8 @@ html:hover .work-sidebar-scroll,
 }
 
 @utility work-page-content {
-  margin-inline: auto;
   width: 100%;
-  max-width: 56rem;
-  padding-inline: clamp(1rem, 3vw, 2rem);
+  padding-inline: 1rem;
 }
 
 .work-destination :where(
@@ -99,9 +97,4 @@ html:hover .work-sidebar-scroll,
 ) {
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
-}
-
-.work-skills .work-page-content {
-  max-width: none;
-  padding-inline: 1rem;
 }
