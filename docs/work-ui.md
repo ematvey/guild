@@ -22,7 +22,7 @@
 - When a fixed-width label overflows, fade its trailing edge. Let longer content wrap where space permits. Preserve the full text for assistive technology and expose it through a tooltip when useful.
 - Use the `text-base` size throughout Guild, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.
-- Scheduled task details show the schedule, next run, delivery destination, and Markdown prompt as peer settings. Keep the prompt visible below the delivery destination. Run now opens the thread for the run it starts. Each run-history row opens the run and shows only its date and status. Put Run now in the body, with editing and pause or resume in the task actions menu.
+- Scheduled task details show the schedule, next run, delivery destination, and Markdown prompt as peer settings. Keep the prompt visible below the delivery destination. Run now opens the thread for the run it starts. Open beside the delivery destination takes the member to the shared task chat or the most recent per-message chat. Each run-history row opens the run and shows only its date and status. Put Run now in the body, with editing and pause or resume in the task actions menu.
 
 ## Interaction and checks
 

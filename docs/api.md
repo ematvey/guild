@@ -42,6 +42,7 @@ curl -X POST localhost:8080/api/v1/agents/$AGENT/routines \
 # run it now, and read its runs:
 curl -X POST localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/run -H "authorization: Bearer $TOKEN"
 curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/runs -H "authorization: Bearer $TOKEN"
+curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/delivery-chat -H "authorization: Bearer $TOKEN"
 ```
 
 `GET`/`PATCH`/`DELETE /api/v1/agents/:id/routines/:rid` read, change and

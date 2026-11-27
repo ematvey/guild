@@ -258,6 +258,10 @@ export function runRoutine(id: string, routineId: string): Promise<{ run: AgentR
   );
 }
 
+export function getScheduledTaskDeliveryChat(agentId: string, taskId: string): Promise<{ chat_id: string | null }> {
+  return request("GET", `${agentBase(agentId)}/routines/${encodeURIComponent(taskId)}/delivery-chat`);
+}
+
 export async function listRoutineRuns(
   id: string,
   routineId: string,

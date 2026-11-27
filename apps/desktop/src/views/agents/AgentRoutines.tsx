@@ -6,7 +6,7 @@ import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { createAgentThread, sendAgentTurn, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
+import { createAgentThread, sendAgentTurn, getScheduledTaskDeliveryChat, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
 import { ErrorState, LoadingRows, RunStatusBadge, ToneBadge } from "./agent-ui";
@@ -265,6 +265,8 @@ function RoutineDetail({
   const [running, setRunning] = useState(false);
   const [editing, setEditing] = useState(false);
   const [changingSchedule, setChangingSchedule] = useState(false);
+  const [openingDelivery, setOpeningDelivery] = useState(false);
+  const [deliveryMessage, setDeliveryMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -300,10 +302,26 @@ function RoutineDetail({
 
   const changeDelivery = async (delivery: AgentRoutine["delivery"]) => {
     setActionError(null);
+    setDeliveryMessage(null);
     try {
       await updateRoutine(agentId, routineId, { delivery });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not change where the task sends messages.");
+    }
+  };
+
+  const openDeliveryChat = async () => {
+    setOpeningDelivery(true);
+    setActionError(null);
+    setDeliveryMessage(null);
+    try {
+      const { chat_id } = await getScheduledTaskDeliveryChat(agentId, routineId);
+      if (chat_id) onOpenChat(chat_id);
+      else setDeliveryMessage("This task has not delivered any messages to this destination yet.");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not open the delivery chat.");
+    } finally {
+      setOpeningDelivery(false);
     }
   };
 
@@ -436,6 +454,11 @@ function RoutineDetail({
               <SelectItem value="new_chat">A new chat for each message</SelectItem>
             </SelectContent>
           </Select>
+          <Button variant="ghost" onClick={() => void openDeliveryChat()} disabled={openingDelivery}>
+            {openingDelivery && <Loader2 className="animate-spin" />}
+            Open
+          </Button>
+          {deliveryMessage && <p role="status" className="basis-full text-muted-foreground">{deliveryMessage}</p>}
         </div>
 
         <div className="space-y-2">

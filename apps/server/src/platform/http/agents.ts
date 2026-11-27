@@ -1017,6 +1017,15 @@ export function registerAgentRoutes(
     return sendJson(reply, result);
   });
 
+  app.get("/api/v1/agents/:id/routines/:rid/delivery-chat", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await requireRoutineAccess(req, user, agentId, "use");
+    const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
+    const chat_id = await store.threads.scheduledTaskDeliveryChat(agentId, user.id, routine.id, routine.delivery);
+    return sendJson(reply, { chat_id });
+  });
+
   app.get("/api/v1/agents/:id/routines/:rid/runs", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");

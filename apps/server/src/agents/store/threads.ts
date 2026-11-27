@@ -427,6 +427,27 @@ export class AgentThreadStore {
     return { id: row.id, chat_id: row.chat_id, generating: row.generating };
   }
 
+  /** The member's current delivery destination for a scheduled task. */
+  async scheduledTaskDeliveryChat(
+    agentId: string,
+    userId: string,
+    routineId: string,
+    delivery: "thread" | "new_chat",
+  ): Promise<string | null> {
+    const { rows } = await this.pool.query<{ chat_id: string }>(
+      `SELECT t.chat_id
+       FROM agent_threads t JOIN chats c ON c.id = t.chat_id
+       WHERE t.agent_id = $1 AND t.user_id = $2 AND t.routine_id = $3
+         AND t.routine_feed = $4 AND t.origin_thread_id IS NOT NULL
+         AND c.deleted_at IS NULL AND NOT c.internal
+         AND c.archived_at IS NULL AND t.closed_at IS NULL
+       ORDER BY t.created_at DESC, t.id DESC
+       LIMIT 1`,
+      [agentId, userId, routineId, delivery === "thread"],
+    );
+    return rows[0]?.chat_id ?? null;
+  }
+
   /** The chat a routine run's send_message landed in: the routine's feed, or
    *  the chat the run opened in new_chat mode. Null when this run sent
    *  nothing — the newest delivery into a feed carries that run's origin. */
