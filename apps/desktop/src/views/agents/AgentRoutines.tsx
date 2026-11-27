@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { createAgentThread, sendAgentTurn, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
-import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, ToneBadge } from "./agent-ui";
+import { ErrorState, LoadingRows, Mono, RunStatusBadge, ToneBadge } from "./agent-ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -161,7 +161,7 @@ function RoutineList({
   const work = import.meta.env.MODE !== "control";
   const create = canManage && (
     <Button variant={work ? "ghost" : "default"} size={work ? "icon" : "sm"}
-      aria-label="New routine" title={work ? "New routine" : undefined}
+      aria-label={work ? "New scheduled task" : "New routine"} title={work ? "New scheduled task" : undefined}
       onClick={() => void start()} disabled={starting}>
       {starting ? <Loader2 className="animate-spin" /> : <Plus />}
       {!work && "New routine"}
@@ -170,11 +170,11 @@ function RoutineList({
 
   return (
     <>
-      {work && <PageHeader variant="work" title="Scheduled" actions={create || undefined} />}
+      {work && <PageHeader variant="work" title="Scheduled tasks" actions={create || undefined} />}
       <div className={work ? "work-page-content space-y-4 pb-8" : "space-y-4"}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
-            Routines run on a schedule in an isolated context. Ask the agent to create or change one.
+            {work ? "Create or change scheduled tasks in chat." : "Routines run on a schedule in an isolated context. Ask the agent to create or change one."}
           </p>
           {!work && create}
         </div>
@@ -184,7 +184,7 @@ function RoutineList({
         {routines !== null && routines.length === 0 && (
           <EmptyState
             icon={Clock}
-            title="No routines yet"
+            title={work ? "No scheduled tasks yet" : "No routines yet"}
             hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
           />
         )}
@@ -322,7 +322,7 @@ function RoutineDetail({
   };
 
   const work = import.meta.env.MODE !== "control";
-  const destinations = { label: work ? "Scheduled" : "Routines", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
+  const destinations = { label: work ? "Scheduled tasks" : "Routines", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
   const header = (
     <PageHeader variant={work ? "work" : "bar"} title={routine?.name ?? destinations.label} back={destinations} />
   );
@@ -334,7 +334,7 @@ function RoutineDetail({
         <div className={work ? "work-page-content pt-3" : "pt-3"}>
           {error !== null
             ? <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
-            : <InlineLoading label="Loading routine" />}
+            : <LoadingRows rows={3} />}
         </div>
       </>
     );
@@ -368,7 +368,7 @@ function RoutineDetail({
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Routine actions" title="Routine actions">
+                  <Button variant="ghost" size="icon" aria-label={work ? "Scheduled task actions" : "Routine actions"} title={work ? "Scheduled task actions" : "Routine actions"}>
                     <Ellipsis />
                   </Button>
                 </DropdownMenuTrigger>
@@ -395,7 +395,7 @@ function RoutineDetail({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="thread">One chat for this routine</SelectItem>
+              <SelectItem value="thread">{work ? "One chat for this task" : "One chat for this routine"}</SelectItem>
               <SelectItem value="new_chat">A new chat for each message</SelectItem>
             </SelectContent>
           </Select>
@@ -406,9 +406,9 @@ function RoutineDetail({
         <section aria-label="Run history" className="space-y-2 border-t border-border pt-4">
           <h2 className="font-semibold">Run history</h2>
           {runs === null ? (
-            <InlineLoading label="Loading runs" />
+            <LoadingRows rows={2} />
           ) : runs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">This routine has not run yet.</p>
+            <p className="text-sm text-muted-foreground">{work ? "This task has not run yet." : "This routine has not run yet."}</p>
           ) : (
             <ul className="divide-y divide-border">
               {runs.map((run) => (

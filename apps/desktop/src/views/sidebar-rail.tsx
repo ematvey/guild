@@ -71,7 +71,7 @@ export function WorkNavigation({
     { label: "Search", icon: Search, open: onSearch },
     { id: "projects", label: "Projects", icon: Folder, open: onProjects },
     { id: "apps", label: "Apps", icon: LayoutGrid, open: () => onTabChange("apps") },
-    { id: "routines", label: "Scheduled", icon: CalendarClock, open: onOpenRoutines },
+    { id: "routines", label: "Scheduled tasks", icon: CalendarClock, open: onOpenRoutines },
     { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
   ];
   return (

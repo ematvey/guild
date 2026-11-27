@@ -45,6 +45,7 @@ import { SidebarSurface } from "./surfaces/sidebar-surface";
 import { RoutePage } from "./surfaces/route-page";
 import { SettingsPage } from "./surfaces/settings-page";
 import { SkillsPage } from "./surfaces/skills-page";
+import { LoadingRows } from "../agents/agent-ui";
 import { AgentRoutinesPage } from "../agents/AgentRoutines";
 import { AppsSurface } from "./surfaces/apps-page";
 import { APPS_HOME } from "../apps/apps-route";
@@ -514,7 +515,7 @@ function ThreadView(props: ThreadProps) {
   const activeTitle =
     facts.type === "user"
       ? (listedChat?.title ?? childTree?.title ?? (viewChatId === null ? "New chat" : ""))
-      : (childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread"));
+      : (childTree?.title ?? (facts.type === "routine" ? "Scheduled task run" : "Subagent thread"));
   const chatArchived = facts.archived;
   // Another member's chat an admin reads: every write is the owner's.
   const foreignChat = facts.owned === false;
@@ -706,7 +707,7 @@ function ThreadView(props: ThreadProps) {
         {renderSidebar("projects")}
       </RoutePage>
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
-      <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title="Scheduled tasks" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {agent.personalAgent?.id === route.agents.agentId ? (
             <div>
@@ -720,10 +721,12 @@ function ThreadView(props: ThreadProps) {
             </div>
           ) : (
             <>
-              <PageHeader variant="work" title="Scheduled" />
-              <p className="work-page-content">
-                {agent.agentsList === null ? "Loading routines…" : "This personal agent is unavailable."}
-              </p>
+              <PageHeader variant="work" title="Scheduled tasks" />
+              <div className="work-page-content">
+                {agent.agentsList === null
+                  ? <LoadingRows rows={3} />
+                  : <p className="text-muted-foreground">Scheduled tasks are unavailable.</p>}
+              </div>
             </>
           )}
         </div>

@@ -10,7 +10,7 @@
 
 - Keep the sidebar toggle and back/forward controls in a stable top-left toolbar. The browser or webview owns the navigation history. Collapsing the sidebar gives the content pane the full width. Reopening restores the chat list’s scroll position and expanded sections.
 - Use one 44 px toolbar row and align its heading and controls to the same vertical center. Carry the sidebar background through its part of the toolbar. Use the standard foreground for the sidebar toggle. Respect the macOS traffic-light inset and Windows caption controls.
-- Use one vertical scroll area for New, Search, Projects, Apps, Scheduled, Customize, and the chat history. Keep the account footer outside that scroller. Allow vertical thumb dragging and show the thumb on window hover when the list overflows. Clip horizontal overflow.
+- Use one vertical scroll area for New, Search, Projects, Apps, Scheduled tasks, Customize, and the chat history. Keep the account footer outside that scroller. Allow vertical thumb dragging and show the thumb on window hover when the list overflows. Clip horizontal overflow.
 - Keep the right gutter narrow. Place the thin resize indicator at the sidebar’s right edge, outside the scrollbar’s hit area.
 - Keep Pinned and Chats and tasks in the history. Put Archived at the bottom. Keep section labels on one line. A separate arrow opens the shadcn history filter. Clicking the heading toggles its section.
 - Use matching ghost buttons in the footer. The account button shows the avatar and name. Workspace switching belongs in its menu. The adjacent device icon opens a dedicated setup and pairing dialog. Device management lives in personal Settings.
@@ -21,7 +21,7 @@
 - Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available.
 - Use the `text-base` size throughout Work, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.
-- Scheduled details lead with the routine name, schedule, next run, and delivery destination. Show run history before the full prompt. Keep the prompt collapsed until the member opens it. Put Run now in the body, with editing and pause or resume in the routine actions menu.
+- Scheduled task details lead with the task name, schedule, next run, and delivery destination. Show run history before the full prompt. Keep the prompt collapsed until the member opens it. Put Run now in the body, with editing and pause or resume in the task actions menu.
 
 ## Interaction and checks
 
