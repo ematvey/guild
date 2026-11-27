@@ -930,7 +930,11 @@ function ThreadView(props: ThreadProps) {
                   onOpenDrawer={openDrawer}
                   chatId={viewChatId}
                   title={activeTitle}
-                  project={viewChatId !== null ? currentProject : null}
+                  project={viewChatId !== null
+                    ? currentProject
+                    : route.newChat && pickedProject?.name && pickedProject.id === route.projectId
+                      ? pickedProject
+                      : null}
                   onOpenProject={(projectId) => {
                     pushRoute({ ...CHAT_ROOT, projectId });
                     if (!isMobile) sidebarState.setCollapsed(false);
