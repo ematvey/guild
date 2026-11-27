@@ -278,7 +278,7 @@ export function SkillsPanel({
           the catalog's filter and sort. */}
       <PageHeader
         variant={route.management ? "bar" : "work"}
-        title={route.management ? "Skills" : "Customize"}
+        title="Skills"
         actions={
           <>
             <div className="relative w-full sm:w-[280px]">

@@ -100,3 +100,8 @@ html:hover .work-sidebar-scroll,
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
 }
+
+.work-skills .work-page-content {
+  max-width: none;
+  padding-inline: 1rem;
+}

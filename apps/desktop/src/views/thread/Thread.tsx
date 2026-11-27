@@ -728,7 +728,7 @@ function ThreadView(props: ThreadProps) {
         <AppsSurface route={route.apps} isMobile={isMobile} pushRoute={pushRoute} onOpenChat={openChat} />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
-      <RoutePage isMobile={isMobile} title="Customize" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>
         <SkillsPage
           route={route.skills}
           me={{ email, displayName: displayName ?? undefined, role }}

@@ -53,7 +53,7 @@ export function WorkSidebarHeader({
 
 const workPages = [
   { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "skills", label: "Customize", icon: Package },
+  { id: "skills", label: "Skills", icon: Package },
   { id: "apps", label: "Apps", icon: LayoutGrid },
   { id: "routines", label: "Scheduled", icon: CalendarClock },
 ] as const;
@@ -79,7 +79,7 @@ export function WorkNavigation({
     { id: "projects", label: "Projects", icon: Folder, open: onProjects },
     { id: "apps", label: "Apps", icon: LayoutGrid, open: () => onTabChange("apps") },
     { id: "routines", label: "Scheduled", icon: CalendarClock, open: onOpenRoutines },
-    { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
+    { id: "skills", label: "Skills", icon: Package, open: () => onTabChange("skills") },
   ];
   return (
     <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 border-b border-border/60 px-2 pb-2 pt-1">
