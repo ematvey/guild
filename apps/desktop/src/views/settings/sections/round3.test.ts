@@ -12,7 +12,7 @@ function source(file: string, start: string, end: string): string {
 
 describe("round 3 API key cache", () => {
   it("ignores a creation response after sign-out", async () => {
-    const code = source("./GatewaySection.tsx", "  async function create()", "  async function revoke()");
+    const code = source("../../../../../control-center/src/settings/GatewaySection.tsx", "  async function create()", "  async function revoke()");
     let epoch = 0;
     let resolve!: (result: unknown) => void;
     const response = new Promise((done) => {

@@ -214,39 +214,18 @@ console.log(msg.content[0].text);`,
   return (
     <div className="space-y-4">
       <PageHeader
+        inlineActions
         title="Gateway"
         description="The org's LLM gateway: call the routed models from outside the app — scripts, agents, SDKs."
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setDetails(true)}>
-              <BookOpen className="size-4" /> How to connect
-            </Button>
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="size-4" /> New API key
-            </Button>
-          </div>
+          <Button variant="ghost" size="icon" className="size-8" aria-label="New API key" title="New API key" onClick={() => setCreating(true)}>
+            <Plus />
+          </Button>
         }
       />
-
-      <div className="rounded-lg border border-border bg-card p-3 text-sm">
-        <p className="mb-2 font-medium">Connecting in three steps</p>
-        <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
-          <li>
-            Create an API key below (it starts with <code>gk_</code>).
-          </li>
-          <li>
-            Point your client at <code>{openaiBase}</code> (OpenAI-compatible) or <code>{anthropicBase}</code>{" "}
-            (Anthropic-compatible).
-          </li>
-          <li>
-            Authenticate with <code>Authorization: Bearer gk_…</code> or <code>x-api-key: gk_…</code> — any routed model
-            works, the same ones chats use.
-          </li>
-        </ol>
-        <Button variant="link" className="h-auto p-0 text-xs" onClick={() => setDetails(true)}>
-          Full examples for curl, Python, and TypeScript →
-        </Button>
-      </div>
+      <Button variant="ghost" onClick={() => setDetails(true)}>
+        <BookOpen className="size-4" /> How to connect
+      </Button>
 
       {loadError && keys === null ? (
         <p role="alert" className="text-sm text-destructive">
@@ -259,17 +238,17 @@ console.log(msg.content[0].text);`,
           No API keys yet. Create one to give an external client gateway access under your account.
         </p>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="divide-y divide-border border-y border-border">
           {keys.map((k) => (
             <div
               key={k.id}
-              className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-base"
+              className="flex items-center justify-between gap-2 py-2.5 text-base"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="truncate">{k.name}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="break-words">{k.name}</p>
+                  <p className="text-base text-muted-foreground">
                     <code>{k.prefix}…</code> · created {relativeTime(k.created_at)}
                     {k.revoked_at && ` · revoked ${relativeTime(k.revoked_at)}`}
                   </p>
@@ -279,7 +258,7 @@ console.log(msg.content[0].text);`,
                 <span className="shrink-0 pl-3 text-xs text-muted-foreground">revoked</span>
               ) : (
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   className="shrink-0 text-destructive"
                   onClick={() => setRevokeTarget(k)}

@@ -2,41 +2,36 @@ import { useCallback } from "react";
 import { useMachines } from "../../../lib/machines-store";
 import type { PickedProject } from "../../projects/projects";
 import { ChatsPanel } from "../../sidebar/chats-panel";
-import { SettingsPanel } from "../../sidebar/settings-panel";
 import { archivedProjectsStore, projectsStore, useSidebarRows } from "../chat-stores";
 import { useChatActions } from "../hooks/use-chat-actions";
 import type { ChatRoute } from "../route";
 
 export function SidebarSurface({
-  tab,
-  role,
+  mode,
+  historyFilter,
+  onHistoryFilter,
   chatId,
   projectId,
-  settingsSection,
-  onNewChat,
   onOpenChat,
   onNewChatInProject,
   onNewProject,
-  onSelectSection,
+  onOpenProject,
+  onBackToProjects,
   onOpenChatDeleted,
-  onCollapse,
-  onClose,
 }: {
-  tab: ChatRoute["tab"];
-  role: string;
+  mode?: "history" | "projects" | "search";
+  historyFilter?: ChatRoute["historyFilter"];
+  onHistoryFilter?: (filter: ChatRoute["historyFilter"] | null) => void;
   /** The chat selected by the route. */
   chatId: string | null;
   projectId: string | null;
-  settingsSection: string | null;
-  onNewChat: () => void;
   onOpenChat: (chatId: string) => void;
   onNewChatInProject: (project: PickedProject) => void;
   onNewProject: () => void;
-  onSelectSection: (id: string) => void;
+  onOpenProject?: (id: string) => void;
+  onBackToProjects?: () => void;
   /** The shown chat was deleted from its row. */
   onOpenChatDeleted: () => void;
-  onCollapse?: () => void;
-  onClose?: () => void;
 }) {
   const { chats, grouping, archivedRows } = useSidebarRows();
   const projects = projectsStore.use();
@@ -98,19 +93,11 @@ export function SidebarSurface({
     [unarchiveProject],
   );
 
-  if (tab === "settings") {
-    return (
-      <SettingsPanel
-        role={role}
-        activeSection={settingsSection}
-        onSelectSection={onSelectSection}
-        onCollapse={onCollapse}
-        onClose={onClose}
-      />
-    );
-  }
   return (
     <ChatsPanel
+      mode={mode}
+      historyFilter={historyFilter}
+      onHistoryFilter={onHistoryFilter}
       grouping={grouping}
       loadingChats={chats === null}
       chatId={chatId}
@@ -120,6 +107,8 @@ export function SidebarSurface({
       machines={machines}
       projectId={projectId}
       onNewProject={onNewProject}
+      onOpenProject={onOpenProject}
+      onBackToProjects={onBackToProjects}
       onNewChatInProject={onNewChatInProject}
       onRenameProject={renameProjectRow}
       onArchiveProject={archiveProjectRow}
@@ -127,10 +116,7 @@ export function SidebarSurface({
       onReorderPin={reorderPin}
       onPinChat={pinChat}
       onPinProject={pinProject}
-      onNewChat={onNewChat}
       onOpenChat={onOpenChat}
-      onCollapse={onCollapse}
-      onClose={onClose}
       onRenameChat={renameChatRow}
       onArchiveChat={archiveChatRow}
       onUnarchiveChat={unarchiveChatRow}

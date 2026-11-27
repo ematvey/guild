@@ -60,7 +60,7 @@ import {
   parseIntegrationsRoute,
   type IntegrationsRoute,
 } from "../integrations/integrations-route";
-import { canonicalSettings } from "../settings/section-nav";
+import { canonicalSettings, isControlSection } from "../settings/section-nav";
 import { appsRoutePath, parseAppsRoute, type AppsRoute } from "../apps/apps-route";
 import { DEFAULT_USAGE, parseUsageQuery, usageQueryString, type UsageQuery } from "../settings/usage-route";
 
@@ -84,6 +84,10 @@ export interface ChatRoute {
   /** Project context (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
+  gatewayInControl?: boolean;
+  projectsPage?: boolean;
+  searchOpen?: boolean;
+  historyFilter?: "chats" | "tasks";
   /** The skills page route, or null when the URL is not a skills one. */
   skills: SkillsRoute | null;
   /** The agents surface route, or null when the URL is not an agents one. */
@@ -136,7 +140,23 @@ const decodeSegment = (segment: string): string | null => {
 export const isImeEnter = (e: { keyCode?: number; nativeEvent?: { isComposing?: boolean } }): boolean =>
   e.nativeEvent?.isComposing === true || e.keyCode === 229;
 
-export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+export const CONTROL_PREFIX = "/control";
+
+export function isControlRoute(route: ChatRoute): boolean {
+  const agent = route.agents;
+  return (agent !== null && !(agent.view === "agent" && agent.personalRoutines)) ||
+    route.integrations !== null || route.skills?.management === true || route.apps?.management === true ||
+    (route.tab === "settings" && (route.settingsSection === "gateway" ? route.gatewayInControl === true : isControlSection(route.settingsSection)));
+}
+
+export function withoutControlPrefix(pathname: string): string {
+  if (pathname === CONTROL_PREFIX || pathname === CONTROL_PREFIX + "/") return "/";
+  return pathname.startsWith(CONTROL_PREFIX + "/") ? pathname.slice(CONTROL_PREFIX.length) : pathname;
+}
+
+const parseBaseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  const control = pathname.startsWith(CONTROL_PREFIX + "/");
+  pathname = withoutControlPrefix(pathname);
   const usage = parseUsageQuery(search);
   const raw = pathname
     .replace(/^\/+|\/+$/g, "")
@@ -293,6 +313,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     };
   }
   if (parts[0] === "apps") {
+    const apps = parseAppsRoute(parts.slice(1));
     return {
       chatId: null,
       projectId: null,
@@ -300,7 +321,7 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
       skills: null,
       agents: null,
       integrations: null,
-      apps: parseAppsRoute(parts.slice(1)),
+      apps: control ? { ...apps, management: true } : apps,
       tab: "chats",
       newChat: false,
       settingsSection: null,
@@ -332,12 +353,13 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     const section = parts.length > 1 ? parts[1] : null;
     // Segments arrive decoded once (each was encoded separately), so a model
     // id containing a literal "%" round-trips; a second decode would throw.
-    const detail = parts.length > 2 ? parts.slice(2).join("/") : null;
+    const setup = section === "machine" && parts.length === 3 && parts[2] === "device";
+    const detail = !setup && parts.length > 2 ? parts.slice(2).join("/") : null;
     return {
       chatId: null,
       projectId: null,
       tab: "settings",
-      overlay: null,
+      overlay: setup ? { kind: "device" } : null,
       skills: null,
       agents: null,
       integrations: null,
@@ -351,11 +373,12 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1), search);
+    const management = skills.view !== "machine" && (control || skills.editor !== null || skills.view === "activity");
     return {
       chatId: null,
       projectId: null,
       overlay: null,
-      skills,
+      skills: management ? { ...skills, management: true } : skills,
       agents: null,
       integrations: null,
       tab: "chats",
@@ -380,6 +403,22 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
     newChat,
     // The pane shows a thread's file, so it exists only with an open thread.
     ...(chatId === null || preview === null ? {} : { preview, previewFull: previewFullOf(search) }),
+  };
+};
+
+export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  const projectsPage = /^\/projects\/?$/.test(pathname);
+  const route = parseBaseChatRoute(projectsPage ? "/chats" : pathname, search);
+  const gatewayInControl = route.tab === "settings" && route.settingsSection === "gateway" &&
+    (pathname === CONTROL_PREFIX || pathname.startsWith(CONTROL_PREFIX + "/"));
+  const query = new URLSearchParams(search);
+  const filter = query.get("history");
+  return {
+    ...route,
+    ...(gatewayInControl ? { gatewayInControl: true } : {}),
+    ...(projectsPage ? { projectsPage: true } : {}),
+    ...(query.get("search") === "1" ? { searchOpen: true } : {}),
+    ...(filter === "chats" || filter === "tasks" ? { historyFilter: filter } : {}),
   };
 };
 
@@ -413,6 +452,10 @@ export function previewQuery(route: ChatRoute): string {
 }
 
 export interface RoutePatch {
+  gatewayInControl?: boolean;
+  projectsPage?: boolean;
+  searchOpen?: boolean;
+  historyFilter?: ChatRoute["historyFilter"] | null;
   chatId?: string | null;
   projectId?: string | null;
   overlay?: ChatOverlay;
@@ -538,9 +581,22 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
           ? null
           : (route.preview ?? null);
   const previewFull = preview !== null && ("previewFull" in next ? !!next.previewFull : route.previewFull === true);
+  const projectsPage = next.projectsPage ?? (
+    route.projectsPage && !("chatId" in next || "tab" in next || opensOther || onSurface || ov !== null)
+  );
+  const searchOpen = next.searchOpen ?? (
+    route.searchOpen && Object.keys(next).every((key) => key === "historyFilter")
+  );
+  const gatewayInControl = tab === "settings" && settingsSection === "gateway" &&
+    (next.gatewayInControl ?? (!("settingsSection" in next) && route.gatewayInControl));
+  const historyFilter = "historyFilter" in next ? next.historyFilter : route.historyFilter;
   return {
     chatId,
     projectId,
+    ...(gatewayInControl ? { gatewayInControl: true } : {}),
+    ...(projectsPage ? { projectsPage: true } : {}),
+    ...(searchOpen ? { searchOpen: true } : {}),
+    ...(historyFilter ? { historyFilter } : {}),
     overlay: ov,
     skills: sk,
     agents: ag,
@@ -632,6 +688,7 @@ export const chatRoutePath = (
     return "/install";
   }
   if (overlay?.kind === "device") {
+    if (tab === "settings" && settingsSection === "machine") return "/settings/machine/device";
     // /settings/<seg> parses as a Settings-tab section, so a device dialog
     // pushed over the Settings tab detours through /chats — the dialog is
     // chat-independent anyway.
@@ -681,6 +738,7 @@ export function canonicalRoute(route: ChatRoute, ctx: RouteContext): RoutePatch 
     }
   }
   if (route.integrations !== null && ctx.role !== "admin") return { ...CHAT_ROOT, tab: "chats" };
+  if (route.apps?.management && ctx.role !== "admin") return { apps: { appId: route.apps.appId } };
   if (
     route.tab === "settings" &&
     route.overlay === null &&

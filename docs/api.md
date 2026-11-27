@@ -4,6 +4,19 @@ HTTP examples for the org server. They assume the server runs on
 `http://localhost:8080`. `$TOKEN` is a member session token from
 `POST /api/v1/auth/login`.
 
+## Application contracts
+
+| App | HTTP base | Live session |
+| --- | --- | --- |
+| Guild, including the desktop webview | `/api/v1` | `POST /api/v1/ws/ticket` and `GET /api/v1/ws` |
+| Guild Control Center | `/api/v1/control` | `POST /api/v1/control/ws/ticket` and `GET /api/v1/control/ws` |
+
+Guild serves chat, projects, machine use and pairing, approvals, member app use, skill installation, and personal routines. Control serves agent setup, integration and registry management, skill publishing, workspace policy, usage and activity. Identity and the catalog operations used by both clients have an address in each contract. Each route applies the permissions of the same signed-in member. The Guild client sends `X-Guild-Client-Surface: guild` on member requests to select its contract. Control Center routes are registered under their own prefix.
+
+A socket ticket is valid on its issuing contract. Work receives chat, project and machine state. Control receives management state and selected Activity views. Both receive the member, workspace, models, agents, Apps and skills relevant to their surfaces. The `WorkClientFrame`, `WorkServerFrame`, `ControlClientFrame`, and `ControlServerFrame` definitions in [the socket schema](../protocol/socket.schema.json) specify the frames each contract accepts and sends.
+
+Existing desktop builds can still use `/api/v1/work`. Native engine and external callers can use `/api/v1` without a surface header. The examples below use those root endpoints. OpenAI- and Anthropic-compatible requests retain their gateway addresses.
+
 ## Headless client
 
 The engine binary is also a CLI. It logs in and chats without the GUI:
@@ -29,6 +42,7 @@ curl -X POST localhost:8080/api/v1/agents/$AGENT/routines \
 # run it now, and read its runs:
 curl -X POST localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/run -H "authorization: Bearer $TOKEN"
 curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/runs -H "authorization: Bearer $TOKEN"
+curl localhost:8080/api/v1/agents/$AGENT/routines/$ROUTINE/delivery-chat -H "authorization: Bearer $TOKEN"
 ```
 
 `GET`/`PATCH`/`DELETE /api/v1/agents/:id/routines/:rid` read, change and

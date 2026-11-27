@@ -33,7 +33,7 @@ function useServerList(): ServerList | null {
   return list;
 }
 
-/** The switcher rows: the "Servers" header (the "+" rides on it) and one
+/** The switcher rows: the "Workspaces" header (the "+" rides on it) and one
  * row per signed-in server with the active one highlighted. `list` omitted
  * means self-fetch (standalone use, e.g. the settings window's account menu). */
 export function ServerMenuItems({
@@ -69,12 +69,12 @@ export function ServerMenuItems({
   return (
     <>
       <div className="flex items-center justify-between px-2 pb-1 pt-1.5">
-        <span className="text-xs font-medium text-muted-foreground">Servers</span>
+        <span className="text-base font-medium text-muted-foreground">Workspaces</span>
         {onAddWorkspace && (
           <button
             onClick={() => onAddWorkspace()}
-            title="Add server"
-            aria-label="Add server"
+            title="Add workspace"
+            aria-label="Add workspace"
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5" />
@@ -98,7 +98,7 @@ export function ServerMenuItems({
               void switchTo(w.base_url);
             }}
             title={w.has_token ? w.base_url : `Sign in again to ${w.base_url}`}
-            className={isActive ? "bg-accent/40" : undefined}
+            className={isActive ? "bg-accent/40 text-base" : "text-base"}
           >
             {w.logo_url ? (
               <img
@@ -107,7 +107,7 @@ export function ServerMenuItems({
                 className="size-4 shrink-0 rounded object-contain"
               />
             ) : (
-              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
+              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-muted text-base font-semibold text-muted-foreground">
                 {label.slice(0, 1).toUpperCase()}
               </span>
             )}
@@ -126,7 +126,7 @@ export function ServerMenuItems({
                 <X className="size-3.5" />
               </span>
             ) : (
-              <span className="text-xs text-destructive">sign in again</span>
+              <span className="text-base text-destructive">sign in again</span>
             )}
           </DropdownMenuItem>
         );

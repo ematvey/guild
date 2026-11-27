@@ -7,7 +7,7 @@ import type { SkillActivityEvent } from "./skills-api";
 const api = vi.hoisted(() => ({ skillsActivity: vi.fn() }));
 vi.mock("./skills-api", async (importOriginal) => ({ ...(await importOriginal<object>()), ...api }));
 
-import { ActivityFeed } from "./ActivityFeed";
+import { ActivityFeed } from "../../../../control-center/src/skills/ActivityFeed";
 
 const published: SkillActivityEvent = {
   kind: "registry.published",

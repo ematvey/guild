@@ -26,3 +26,113 @@ body {
 html {
   overflow-x: clip;
 }
+
+/* Work appearance preferences are applied at the document root so dialogs
+   and menus rendered in portals use the same typography and palette. */
+html[data-work-font="System"] { --font-sans: system-ui, sans-serif; }
+html[data-work-font="Serif"] { --font-sans: ui-serif, Georgia, serif; }
+html[data-work-font="Mono"] { --font-sans: "JetBrains Mono Variable", ui-monospace, monospace; }
+html[data-work-font] body { font-family: var(--font-sans); }
+
+[data-palette-swatch="Slate"] { background: oklch(0.58 0.075 255); }
+[data-palette-swatch="Jade"] { background: oklch(0.56 0.13 165); }
+[data-palette-swatch="Ember"] { background: oklch(0.58 0.13 58); }
+[data-palette-swatch="Ocean"] { background: oklch(0.57 0.12 225); }
+[data-palette-swatch="Iris"] { background: oklch(0.58 0.15 295); }
+[data-palette-swatch="Rose"] { background: oklch(0.58 0.15 12); }
+
+html[data-work-palette="Slate"] { --work-hue: 255; --work-primary-chroma: 0.06; }
+html[data-work-palette="Jade"] { --work-hue: 165; }
+html[data-work-palette="Ember"] { --work-hue: 58; }
+html[data-work-palette="Ocean"] { --work-hue: 225; }
+html[data-work-palette="Iris"] { --work-hue: 295; }
+html[data-work-palette="Rose"] { --work-hue: 12; }
+
+html[data-work-palette] {
+  --background: oklch(0.995 0.004 var(--work-hue));
+  --card: oklch(0.985 0.011 var(--work-hue));
+  --secondary: oklch(0.943 0.014 var(--work-hue));
+  --muted: oklch(0.95 0.012 var(--work-hue));
+  --chat-background: #fff;
+  --chat-composer-background: #ededed;
+  --primary: oklch(0.43 var(--work-primary-chroma, 0.115) var(--work-hue));
+  --primary-foreground: oklch(0.99 0 0);
+  --accent: oklch(0.95 0.018 var(--work-hue));
+  --accent-foreground: oklch(0.29 0.045 var(--work-hue));
+  --ring: oklch(0.56 0.11 var(--work-hue));
+  --chat-user-message: oklch(0.94 0.028 var(--work-hue));
+}
+
+html.dark[data-work-palette] {
+  --background: oklch(0.155 0.01 var(--work-hue));
+  --card: oklch(0.211 0.018 var(--work-hue));
+  --secondary: oklch(0.265 0.02 var(--work-hue));
+  --muted: oklch(0.258 0.016 var(--work-hue));
+  --chat-background: #0a0a0a;
+  --chat-composer-background: #262626;
+  --primary: oklch(0.77 var(--work-primary-chroma, 0.105) var(--work-hue));
+  --primary-foreground: oklch(0.18 0.015 var(--work-hue));
+  --accent: oklch(0.26 0.025 var(--work-hue));
+  --accent-foreground: oklch(0.93 0.025 var(--work-hue));
+  --ring: oklch(0.68 0.105 var(--work-hue));
+  --chat-user-message: oklch(0.272 0.033 var(--work-hue));
+}
+
+html[data-work-palette] .guild-chat-surface {
+  --background: var(--chat-background);
+}
+
+html[data-work-palette] .guild-sidebar-theme {
+  --sidebar: oklch(0.97 0.008 var(--work-hue, 255));
+  --sidebar-accent: oklch(0.93 0.015 var(--work-hue, 255));
+  --guild-sidebar-selection: oklch(0.92 0.034 var(--work-hue, 255));
+  --guild-sidebar-selection-text: oklch(0.37 0.11 var(--work-hue, 255));
+}
+html.dark[data-work-palette] .guild-sidebar-theme {
+  --sidebar: oklch(0.19 0.016 var(--work-hue, 255));
+  --sidebar-accent: oklch(0.25 0.023 var(--work-hue, 255));
+  --guild-sidebar-selection: oklch(0.31 0.055 var(--work-hue, 255));
+  --guild-sidebar-selection-text: oklch(0.87 0.068 var(--work-hue, 255));
+}
+
+/* Keep the native thumb draggable and its gutter stable as the pointer
+   enters and leaves the window. The mobile drawer uses the same scroller. */
+.work-sidebar-scroll {
+  --work-scroll-thumb: transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--work-scroll-thumb) transparent;
+}
+
+html:hover .work-sidebar-scroll,
+.work-sidebar-scroll:focus-visible {
+  --work-scroll-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+@supports selector(::-webkit-scrollbar) {
+  .work-sidebar-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  .work-sidebar-scroll::-webkit-scrollbar {
+    display: block;
+    width: 4px;
+  }
+}
+
+.work-sidebar-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--work-scroll-thumb);
+}
+
+@utility work-page-content {
+  width: 100%;
+  padding-inline: 1rem;
+}
+
+/* Work has one text size, including menus and dialogs portaled to the body. */
+html[data-work-ui] body,
+html[data-work-ui] body :where(*) {
+  font-size: var(--text-base);
+}

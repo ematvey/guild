@@ -22,7 +22,8 @@ import type { UserRow } from "../store/identity.js";
 import { uuidv7, isUuid } from "../time.js";
 import type { LiveHub, LiveMember } from "../../hub/live.js";
 import { SocketSink } from "../../hub/sink.js";
-import { DEFERRED_UNTIL_SYNC, parseClientMsg, serializeServerMsg, type WsServerMsg } from "../../hub/protocol.js";
+import { DEFERRED_UNTIL_SYNC, acceptsSurfaceFrame, parseClientMsg, serializeServerMsg, type WsServerMsg } from "../../hub/protocol.js";
+import { CONTROL_API, WORK_API, isWorkRequest } from "./client-contract.js";
 import type { TicketIdentity } from "../../hub/tickets.js";
 
 // A socket that cannot flush its terminal notice within this deadline is
@@ -99,7 +100,9 @@ export function registerWsRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: Ide
     // the hash + expiry the ticket identity carries into the upgrade.
     const user = await requireUser(ctx, req);
     const [sessionHash, expiresAt] = await ctx.identity.sessionGrant(token);
-    const ticket = chats.wsTickets.mint({ user, session_hash: sessionHash, expires_at: expiresAt });
+    const url = req.routeOptions.url;
+    const surface = url?.startsWith(CONTROL_API + "/") ? "control" : isWorkRequest(req) ? "work" : undefined;
+    const ticket = chats.wsTickets.mint({ user, session_hash: sessionHash, expires_at: expiresAt, surface });
     return reply.status(200).send({ ticket });
   });
 }
@@ -121,13 +124,19 @@ export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityC
       return;
     }
     const identity = chats.wsTickets.consume(query.ticket);
-    if (identity === null) {
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    const surface = pathname === CONTROL_API + "/ws" ? "control" : pathname === WORK_API + "/ws" ? "work" : pathname === "/api/v1/ws" && identity?.surface === "work" ? "work" : undefined;
+    if (identity === null || identity.surface !== surface || (!surface && pathname !== "/api/v1/ws")) {
       rejectUpgrade(socket, 401, "invalid or expired ticket");
       return;
     }
     void sessionValid(auth, identity.session_hash).then((valid) => {
       if (!valid) {
         rejectUpgrade(socket, 401, "session expired or revoked");
+        return;
+      }
+      if (surface !== undefined && query.machine_id !== null) {
+        rejectUpgrade(socket, 400, "machine connections require the engine contract");
         return;
       }
       if (query.machine_id !== null && query.instance_id === null) {
@@ -317,7 +326,7 @@ async function driveSocket(
 ): Promise<void> {
   const { user, session_hash: sessionHash, expires_at: expiresAt } = identity;
   const hub = chats.hub;
-  const sink = new SocketSink(query.features);
+  const sink = new SocketSink(query.features, identity.surface);
   const connId = uuidv7();
   const meta = metaFromQuery(query);
   const machineId = query.machine_id;
@@ -467,14 +476,14 @@ async function driveSocket(
       if (current === null) return;
 
       if (message.type === "sync") {
-        if (machineId === null) {
+        if (machineId === null && identity.surface !== "work") {
           sink.runView = message.run_id ?? null;
           sink.runViewChat = null;
           sink.activityConversation = message.activity_chat_id ?? null;
           sink.coordinationAgent = message.coordination_agent_id ?? null;
           await chats.sockets.syncActivity(current, sink);
         }
-        if (message.chat_id === null) {
+        if (message.chat_id === null || identity.surface === "control") {
           // The socket displays no chat: no chat's view frames reach it.
           sink.view = null;
           return;
@@ -519,6 +528,10 @@ async function driveSocket(
     if (finished || isBinary) return;
     const message = parseClientMsg(data.toString("utf8"));
     if (message === null) return; // unknown envelopes are discarded, not fatal
+    if (identity.surface && !acceptsSurfaceFrame(identity.surface, message)) {
+      sink.send({ type: "error", message: "Frame is outside this socket contract" });
+      return;
+    }
     // Liveness ping: echoed without the per-message DB revalidation the
     // other client messages run — the ping path must stay cheap and can
     // never queue behind them.

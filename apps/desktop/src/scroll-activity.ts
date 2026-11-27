@@ -56,7 +56,7 @@ function reveal(el: Element) {
 document.addEventListener(
   "scroll",
   (e) => {
-    if (e.target instanceof Element) reveal(e.target);
+    if (e.target instanceof Element && !e.target.classList.contains("work-sidebar-scroll")) reveal(e.target);
     else if (e.target === document) reveal(document.documentElement);
   },
   { capture: true, passive: true },

@@ -2,10 +2,14 @@
 // single source of truth, and every navigation pushes history and route state
 // together.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HAS_ENGINE } from "../../../lib/session";
+import { openExternal } from "../../../lib/open-external";
+import { HAS_ENGINE, HAS_SHELL, installState, installSurface, serverUrl } from "../../../lib/session";
 import {
   applyRoutePatch,
   canonicalRoute,
+  CONTROL_PREFIX,
+  isControlRoute,
+  withoutControlPrefix,
   chatRoutePath,
   parseChatRoute,
   previewQuery,
@@ -24,7 +28,7 @@ export type PushRoute = (next: RoutePatch, options?: RouteNavOptions) => void;
 
 /** The address a resolved route lives at. */
 export function routePath(resolved: ChatRoute): string {
-  const path = chatRoutePath(
+  const path = resolved.projectsPage ? "/projects" : chatRoutePath(
     resolved.chatId,
     resolved.projectId,
     resolved.overlay,
@@ -38,8 +42,13 @@ export function routePath(resolved: ChatRoute): string {
     resolved.integrations,
     resolved.apps ?? null,
   );
-  const query = previewQuery(resolved);
-  return query === "" ? path : `${path}?${query}`;
+  const [pathname, existingQuery] = path.split("?");
+  const query = new URLSearchParams(existingQuery);
+  new URLSearchParams(previewQuery(resolved)).forEach((value, key) => query.set(key, value));
+  if (resolved.searchOpen) query.set("search", "1");
+  if (resolved.historyFilter && !isControlRoute(resolved)) query.set("history", resolved.historyFilter);
+  const surfacePath = isControlRoute(resolved) ? CONTROL_PREFIX + pathname : pathname;
+  return query.size === 0 ? surfacePath : `${surfacePath}?${query}`;
 }
 
 /** Applies one navigation to the history stack: a new entry, or a rewrite of
@@ -78,6 +87,25 @@ export function useThreadRoute({ role }: { role: string }) {
   // stable, so callbacks built on it keep their identity across renders.
   const pushRoute = useCallback<PushRoute>((next, options) => {
     const resolved = applyRoutePatch(routeRef.current, next);
+    if (import.meta.env.MODE !== "control" && isControlRoute(resolved)) {
+      const path = routePath(resolved);
+      if (HAS_SHELL) {
+        if (!options?.replace) openExternal(serverUrl() + path);
+        return;
+      }
+      if (installState(installSurface()) === "installed") {
+        // Keep the handoff in the click gesture. Route normalization can
+        // show the explicit launch button when a management link lands here.
+        if (!options?.replace) openExternal(serverUrl() + path, { link: true });
+        return;
+      }
+      if (options?.replace) {
+        if (window.location.pathname + window.location.search !== path) window.location.replace(path);
+      } else {
+        window.location.assign(path);
+      }
+      return;
+    }
     commitRoute(window.history, `${window.location.pathname}${window.location.search}`, resolved, options);
     routeRef.current = resolved;
     setRoute(resolved);
@@ -87,8 +115,13 @@ export function useThreadRoute({ role }: { role: string }) {
   // shows and the entry is rewritten, so reload and back/forward never land
   // on the non-canonical address again.
   useEffect(() => {
-    const patch = canonicalRoute(route, { role, hasEngine: HAS_ENGINE, pathname: window.location.pathname });
-    if (patch !== null) pushRoute(patch, { replace: true });
+    const pathname = window.location.pathname;
+    const patch = canonicalRoute(route, { role, hasEngine: HAS_ENGINE, pathname: withoutControlPrefix(pathname) });
+    if (patch !== null) {
+      pushRoute(patch, { replace: true });
+    } else if (pathname.startsWith(CONTROL_PREFIX + "/") !== isControlRoute(route) || pathname === CONTROL_PREFIX) {
+      pushRoute({}, { replace: true });
+    }
   }, [route, role, pushRoute]);
 
   return { route, setRoute, pushRoute };

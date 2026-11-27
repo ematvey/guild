@@ -15,6 +15,7 @@ import { ApiError } from "../platform/errors.js";
 import { agentWorkspaceDir } from "./workspace-config.js";
 import { IdentityStore, type UserRow } from "../platform/store/identity.js";
 import { startThreadRun, ThreadRunRefused, ThreadRunSubmitFailed } from "./thread-run.js";
+import { selectRoutine } from "./store/routines.js";
 import { createOccurrence, nextOccurrence, previousOccurrence } from "./routines.js";
 import {
   type ClaimedOccurrence,
@@ -133,32 +134,36 @@ export class AgentScheduler {
    *  the materialization cap only the latest missed instant is inserted. */
   async materializeDue(now: Date = this.now()): Promise<void> {
     const due = await dueRoutines(this.deps.pool, now.toISOString());
-    for (const routine of due) {
+    for (const candidate of due) {
       try {
-        if (routine.kind === "once") {
-          await createOccurrence(this.deps.pool, routine.id, routine.next_run_at);
-          await setNextRunAt(this.deps.pool, routine.id, null);
-          continue;
-        }
-        if (routine.schedule === null) continue;
-        let cursor = new Date(routine.next_run_at);
-        const missed: Date[] = [];
-        while (cursor.getTime() <= now.getTime() && missed.length < 1_000) {
-          missed.push(cursor);
-          cursor = nextOccurrence(routine.schedule, routine.timezone, new Date(cursor.getTime() + 1_000));
-        }
-        if (cursor.getTime() <= now.getTime()) {
-          const latest = previousOccurrence(routine.schedule, routine.timezone, now);
-          if (latest !== null) await createOccurrence(this.deps.pool, routine.id, latest);
-          cursor = nextOccurrence(routine.schedule, routine.timezone, now);
-        } else {
-          for (const scheduled of missed) {
-            await createOccurrence(this.deps.pool, routine.id, scheduled);
+        await withTransaction(this.deps.pool, async (client) => {
+          const routine = await selectRoutine(client, candidate.agent_id, candidate.id, true);
+          if (!routine?.enabled || !routine.next_run_at || Date.parse(routine.next_run_at) > now.getTime()) return;
+          if (routine.kind === "once") {
+            await createOccurrence(client, routine.id, routine.next_run_at);
+            await setNextRunAt(client, routine.id, null);
+            return;
           }
-        }
-        await setNextRunAt(this.deps.pool, routine.id, cursor.toISOString());
+          if (routine.schedule === null) return;
+          let cursor = new Date(routine.next_run_at);
+          const missed: Date[] = [];
+          while (cursor.getTime() <= now.getTime() && missed.length < 1_000) {
+            missed.push(cursor);
+            cursor = nextOccurrence(routine.schedule, routine.timezone, new Date(cursor.getTime() + 1_000));
+          }
+          if (cursor.getTime() <= now.getTime()) {
+            const latest = previousOccurrence(routine.schedule, routine.timezone, now);
+            if (latest !== null) await createOccurrence(client, routine.id, latest);
+            cursor = nextOccurrence(routine.schedule, routine.timezone, now);
+          } else {
+            for (const scheduled of missed) {
+              await createOccurrence(client, routine.id, scheduled);
+            }
+          }
+          await setNextRunAt(client, routine.id, cursor.toISOString());
+        });
       } catch (error) {
-        this.deps.log.warn({ err: error, routineId: routine.id }, "routine materialization failed");
+        this.deps.log.warn({ err: error, routineId: candidate.id }, "routine materialization failed");
       }
     }
   }
@@ -315,7 +320,7 @@ export async function runRoutineNow(
   deps: Pick<AgentSchedulerDeps, "pool" | "store" | "threads" | "runtime">,
   agent: Agent,
   routine: AgentRoutine,
-): Promise<AgentRun> {
+): Promise<{ run: AgentRun; chat_id: string }> {
   if (agent.status !== "active") throw new Error("agent is not active");
   const now = new Date();
   const occurrence = await createOccurrence(deps.pool, routine.id, now);
@@ -347,7 +352,7 @@ export async function runRoutineNow(
         await linkOccurrenceRun(deps.pool, occurrence.id, run.id);
       },
     });
-    return run;
+    return { run, chat_id: thread.chat_id };
   } catch (error) {
     if (error instanceof ThreadRunRefused) throw refusalError(error);
     throw error instanceof ThreadRunSubmitFailed ? (error.cause ?? error) : error;

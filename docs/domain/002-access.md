@@ -119,6 +119,10 @@ The Approval gate then decides, in this order:
 2. **Otherwise the Member's own policy** for that tool class.
 3. **Otherwise the judge:** a model call with the Org's auto-approval policy prompt. An approving verdict runs the call silently. Any other result, including a judge failure, asks the Member, and the card shows the judge's reason.
 
+The work app links to the web Control Center for Agent setup, Integration
+configuration, and workspace management. Members can open the configuration
+they have permission to manage. Both surfaces use the same access checks. Guild uses `/api/v1` with the member surface header. Guild Control Center uses `/api/v1/control`.
+
 Only Machine actions and Integration calls can enter approval policy. Internal Guild tools, including `send_message`, run under their own access checks without approval review. Server sandbox commands still pass static exec policy and the server shell setting. An Integration tool marked `always_ask` asks in independently Member-started Threads. A Tool marked `always_allow` or classified as `read` runs directly unless curation requires approval. Other Integration Tools follow the Thread’s approval mode. Current and legacy names share the same Tool policy.
 
 An App data function an Agent calls with `call_app` follows the same gate. A `read`-class function runs at once; a function's class is its tool's or its own declaration (see 004). A function curated `always_ask` asks in an interactive Thread. Coordinator-managed work and Routines instead return the automatic judge verdict as a tool result. A `write`- or `admin`-class function goes to the Thread's approval mode, so `full_access` runs it and `ask` asks. The Agent never inherits a viewer's standing grant: the page's grants stay the page's.

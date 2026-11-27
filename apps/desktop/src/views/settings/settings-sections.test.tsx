@@ -14,8 +14,8 @@ vi.mock("../../lib/session", () => ({
   refreshSession: async () => false,
 }));
 
-import { DEFAULT_USAGE } from "./usage-route";
-import { SETTINGS_SECTIONS, SettingsSectionPane } from "./settings-sections";
+import { SETTINGS_SECTIONS } from "./settings-catalog";
+import { SettingsSectionPane } from "./settings-sections";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -41,10 +41,6 @@ function pane(sectionId: string, role: string) {
       sectionId={sectionId}
       email="m@example.com"
       role={role}
-      detail={null}
-      onDetailChange={() => {}}
-      usage={DEFAULT_USAGE}
-      onUsageChange={() => {}}
     />,
   );
 }
@@ -59,10 +55,10 @@ describe("SettingsSectionPane", () => {
     expect(adminRequests()).toEqual([]);
   });
 
-  it("renders the admin section for an admin", async () => {
+  it("keeps admin requests out of the work settings for admins", async () => {
     pane("users", "admin");
     await new Promise((r) => setTimeout(r, 0));
-    expect(adminRequests().some((url) => url.includes("/admin/users"))).toBe(true);
+    expect(adminRequests()).toEqual([]);
   });
 
   it("marks every workspace section admin-only", () => {

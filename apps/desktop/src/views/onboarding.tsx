@@ -454,11 +454,11 @@ export function OnboardingGuide({
         if (!o) onDone(null);
       }}
     >
-      <DialogContent className="max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-3xl">
+      <DialogContent className="guild-sidebar-theme max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto p-0 sm:max-w-3xl">
         <DialogTitle className="sr-only">Guild guide</DialogTitle>
-        <div className="grid grid-cols-1 sm:min-h-[26rem] sm:grid-cols-[minmax(0,1fr)_13rem]">
+        <div className="grid grid-cols-1 sm:min-h-[26rem] sm:grid-cols-[13rem_minmax(0,1fr)]">
           {/* selected section */}
-          <div className="flex flex-col p-6">
+          <div className="order-2 flex flex-col p-6">
             <div className="mb-4 flex items-center gap-3">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50">
                 <Icon className="size-5 text-muted-foreground" />
@@ -490,7 +490,7 @@ export function OnboardingGuide({
             </div>
           </div>
           {/* section list */}
-          <div className="flex flex-row gap-1 overflow-x-auto border-t border-border bg-muted/40 p-2 sm:flex-col sm:overflow-visible sm:border-l sm:border-t-0 sm:p-3">
+          <div className="order-1 flex flex-row gap-1 overflow-x-auto border-b border-border bg-sidebar p-2 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3">
             {sections.map((s, i) => {
               const SIcon = s.icon;
               return (
@@ -498,8 +498,8 @@ export function OnboardingGuide({
                   key={s.id}
                   type="button"
                   onClick={() => setStep(i)}
-                  aria-current={step === i}
-                  className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-none transition-colors ${
+                  aria-current={step === i ? "page" : undefined}
+                  className={`guild-sidebar-current flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-none transition-colors ${
                     step === i
                       ? "bg-card font-medium text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"

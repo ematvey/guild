@@ -60,6 +60,7 @@ export interface Config {
    *  apps/desktop/dist next to the server package). Null = no dist
    *  directory configured — pages answer with the 503 hint. */
   webDistDir: string | null;
+  controlDistDir: string | null;
   /** Platform Postgres pool cap (GUILD_POOL_MAX, default 10). Test
    *  harnesses set it lower so the shared dev server's connection budget
    *  fits several suites. */
@@ -258,6 +259,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     serverCommit: serverManifest.guildBuildCommit,
     faroUrl,
     webDistDir,
+    controlDistDir: env.GUILD_CONTROL_DIST || path.resolve(process.cwd(), "../control-center/dist"),
     internalKey,
     selfBaseUrl,
     clickhouseUrl,

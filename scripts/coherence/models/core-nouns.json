@@ -24,7 +24,7 @@
           "role": "domain"
         },
         {
-          "where": "apps/desktop/src/views/settings/sections/GeneralSection.tsx",
+          "where": "apps/control-center/src/settings/GeneralSection.tsx",
           "role": "ui"
         },
         {
@@ -144,7 +144,7 @@
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/skills/SkillEditor.tsx",
+          "where": "apps/control-center/src/skills/SkillEditor.tsx",
           "role": "ui"
         },
         {
@@ -196,11 +196,11 @@
           "role": "domain"
         },
         {
-          "where": "apps/desktop/src/views/agents/AgentPage.tsx",
+          "where": "apps/control-center/src/agents/AgentPage.tsx",
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/agents/agent-settings.tsx",
+          "where": "apps/control-center/src/agents/agent-settings.tsx",
           "role": "ui"
         },
         {

@@ -83,9 +83,9 @@ function serveFile(dist: ChatDist, path: string, reply: FastifyReply): FastifyRe
   return reply.status(200).type(mimeGuess(path)).header("cache-control", cache).send(content);
 }
 
-export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDistDir">): void {
-  const dist = new ChatDist(cfg);
-  const hint = "chat app not built — run `npm --prefix apps/desktop run build`";
+export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDistDir" | "controlDistDir">): void {
+  const work = new ChatDist(cfg);
+  const control = new ChatDist({ webDistDir: cfg.controlDistDir });
   const fallback = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     // Only GET/HEAD serve pages; other methods answer the not-found handler.
     if (req.method !== "GET" && req.method !== "HEAD") return;
@@ -95,21 +95,29 @@ export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDi
     // Unmatched paths under the LLM gateway surfaces fall through the same
     // way.
     if (path.startsWith("/openai/v1") || path.startsWith("/anthropic/v1")) return;
+    const controlPath = path === "/control" || path.startsWith("/control/");
+    const dist = controlPath ? control : work;
+    const asset = controlPath ? path.slice("/control".length) : path;
     // A real bundled file wins; every other non-API path is an SPA route
     // and serves index.html — including paths with dots (model ids,
     // provider slugs).
-    if (path !== "/") {
-      const served = serveFile(dist, path.replace(/^\//, ""), reply);
+    if (asset !== "" && asset !== "/") {
+      const served = serveFile(dist, asset.replace(/^\//, ""), reply);
       if (served !== null) {
         return;
       }
+    }
+    if (asset.startsWith("/assets/")) {
+      applySecurityHeaders(reply);
+      await reply.status(404).send();
+      return;
     }
     const index = serveFile(dist, "index.html", reply);
     if (index !== null) {
       return;
     }
     applySecurityHeaders(reply);
-    await reply.status(503).type("text/plain; charset=utf-8").send(hint);
+    await reply.status(503).type("text/plain; charset=utf-8").send(controlPath ? "Control Center not built — run npm run build:control" : "Work app not built — run npm --workspace apps/desktop run build");
   };
   app.addHook("onRequest", fallback);
 }

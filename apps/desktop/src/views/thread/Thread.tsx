@@ -5,32 +5,37 @@ import { request } from "../../lib/api/request";
 // this file assembles the component tree.
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 
+import { ArrowUp } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@guild/ui/components/dialog";
+import { SettingsPanel } from "../sidebar/settings-panel";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 
 import { readDraft, writeDraft } from "../../lib/drafts";
 import { HAS_ENGINE, HAS_SHELL } from "../../lib/session";
-import { apiUrl } from "../../lib/session";
+import { openExternal } from "../../lib/open-external";
+import { apiUrl, serverUrl } from "../../lib/session";
 import { useModelOptions } from "../agents/agent-model";
 import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../../lib/workspace-store";
 import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
-import { AGENTS_ACTIVITY, AGENTS_DIRECTORY, agentsRailTab } from "../agents/agents-route";
-import { SidebarRail, type RailTab } from "../sidebar-rail";
-import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
+import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
+import { SidebarMenu, WorkNavigation, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
+import { TITLE_BAR_INSET, titleBarDrag, titleBarDragDeep } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
   agentDeleting,
   busyFrom,
-  offlineMachine,
+  remoteMachine,
   pruneStopping,
   tabPaneLayout,
   threadAccess,
   threadFacts,
 } from "./status";
-import { CHAT_ROOT, SURFACE_BASE } from "./route";
+import { CHAT_ROOT, SURFACE_BASE, applyRoutePatch, isControlRoute, type RoutePatch } from "./route";
 import { archivedChatsStore, chatsStore, resetChatStores } from "./chat-stores";
 import { ThreadPane } from "./thread-pane";
 import { GenuiHostContext, type GenuiHost } from "../genui/actions";
@@ -41,12 +46,11 @@ import { SidebarSurface } from "./surfaces/sidebar-surface";
 import { RoutePage } from "./surfaces/route-page";
 import { SettingsPage } from "./surfaces/settings-page";
 import { SkillsPage } from "./surfaces/skills-page";
-import { AgentsPage } from "./surfaces/agents-page";
-import { IntegrationsSurface } from "./surfaces/integrations-page";
-import { INTEGRATIONS_HOME } from "../integrations/integrations-route";
+import { LoadingRows } from "../agents/agent-ui";
+import { AgentRoutinesPage } from "../agents/AgentRoutines";
 import { AppsSurface } from "./surfaces/apps-page";
 import { APPS_HOME } from "../apps/apps-route";
-import { useThreadRoute } from "./hooks/use-thread-route";
+import { routePath, useThreadRoute } from "./hooks/use-thread-route";
 import { useChatData } from "./hooks/use-chat-data";
 import { useThreadStore } from "./hooks/use-thread-store";
 import { useComposer } from "./hooks/use-composer";
@@ -269,13 +273,7 @@ function ThreadView(props: ThreadProps) {
   sendRef.current = outgoing.send;
   const genuiHost = useMemo<GenuiHost>(() => ({ send: (text) => void sendRef.current("normal", text) }), []);
   const recoverMissingChatRef = useRef<() => void>(() => {});
-  const activityRunId = route.agents?.view === "run" ? route.agents.runId : null;
-  const activityChatId = route.agents?.view === "chat" ? route.agents.chatId : null;
-  const coordinationAgentId = route.agents?.view === "agent" && route.agents.tab === "activity" ? route.agents.agentId : null;
   const { socketRef } = useMemberSocket({
-    coordinationAgentId,
-    runId: activityRunId,
-    activityChatId,
     signOut,
     thread,
     outgoing: { outgoingRef, observedUserIdsRef: composer.observedUserIdsRef, settleOutgoing: outgoing.settleOutgoing },
@@ -286,6 +284,12 @@ function ThreadView(props: ThreadProps) {
   thread.resyncRef.current = () => socketRef.current?.resync();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
+  const [sidebarScrolled, setSidebarScrolled] = useState(false);
+  const sidebarScroller = useRef<HTMLDivElement | null>(null);
+  const syncSidebarScroll = useCallback((element: HTMLDivElement | null) => {
+    sidebarScroller.current = element;
+    if (element) setSidebarScrolled(element.scrollTop > 0);
+  }, []);
   // Desktop sidebar: one shared width and collapse flag, persisted, so the
   // chat, project, settings, apps and integrations lists behave alike.
   const sidebarState = useSidebar();
@@ -296,7 +300,8 @@ function ThreadView(props: ThreadProps) {
   // A browser tab reloads into the bundle the server serves, once nothing
   // is in flight: the identity frame names the served bundle on connect and
   // after every deploy. The desktop shell runs its own local bundle.
-  const servedBundle = useWorkspaceIdentity()?.web_bundle;
+  const workspace = useWorkspaceIdentity();
+  const servedBundle = workspace?.web_bundle;
   useEffect(() => {
     if (HAS_SHELL || !webBundleOutdated(servedBundle, runningWebBundle())) return;
     if (busy || threadLoading || outgoingRef.current.size > 0) return;
@@ -378,7 +383,7 @@ function ThreadView(props: ThreadProps) {
   }, [chatId]);
   useEffect(() => {
     socketRef.current?.resync();
-  }, [chatId, activityRunId, activityChatId, coordinationAgentId, socketRef]);
+  }, [chatId, socketRef]);
 
   // The composer belongs to the displayed chat, not the route target: a
   // pending swap keeps the old transcript and its draft until the one
@@ -407,7 +412,7 @@ function ThreadView(props: ThreadProps) {
       // step with the URL.
       const row = chatsStore.get()?.find((c) => c.id === id) ?? archivedChatsStore.get()?.find((c) => c.id === id);
       setOpen(false);
-      pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
+      pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null, tab: "chats" });
     },
     [pushRoute],
   );
@@ -517,7 +522,7 @@ function ThreadView(props: ThreadProps) {
   const activeTitle =
     facts.type === "user"
       ? (listedChat?.title ?? childTree?.title ?? (viewChatId === null ? "New chat" : ""))
-      : (childTree?.title ?? (facts.type === "routine" ? "Routine run" : "Subagent thread"));
+      : (childTree?.title ?? (facts.type === "routine" ? "Scheduled task run" : "Subagent thread"));
   const chatArchived = facts.archived;
   // Another member's chat an admin reads: every write is the owner's.
   const foreignChat = facts.owned === false;
@@ -546,7 +551,12 @@ function ThreadView(props: ThreadProps) {
     await deleteChat(viewChatId);
     pushRoute(CHAT_ROOT);
   }, [viewChatId, deleteChat, pushRoute]);
-  const offlineMachineBanner = offlineMachine(chats, machines, viewChatId, localMachineId);
+  const boundProject = projects?.find((project) => project.id === currentProject?.id);
+  const projectChat = currentProject && openRow?.project_id === currentProject.id ? openRow : undefined;
+  const projectMachineId = projectChat?.machine_id ?? boundProject?.machine_id;
+  const machineLabel = projectChat?.machine_label ?? currentProject?.machine_label;
+  const machine = remoteMachine({ machineId: projectMachineId, rowLabel: machineLabel, machines, localMachineId });
+  const projectMachineLabel = machine?.label ?? machineLabel;
 
   const loadEarlierNearTop = useCallback(() => {
     void loadEarlier();
@@ -559,7 +569,7 @@ function ThreadView(props: ThreadProps) {
     earlierAnchor,
     displayedChatId,
     blocks,
-    repinKeys: [subagentNodes, compacting, busy, hasMore, offlineMachineBanner?.label],
+    repinKeys: [subagentNodes, compacting, busy, hasMore],
     onNearTop: loadEarlierNearTop,
   });
   // A first send on the scratch surface, from the click until the server
@@ -567,38 +577,34 @@ function ThreadView(props: ThreadProps) {
   // the created thread.
   const holdingFirstSend = outgoing.pendingSubmitId !== null && chatId === null;
 
-  const activeProjectIds = new Set(projects?.map((project) => project.id));
-  const unreadChats =
-    chats?.filter(
-      (chat) =>
-        (chatStatus[chat.id]?.unread ?? chat.unread) &&
-        (!chat.project_id || activeProjectIds.has(chat.project_id)),
-    ).length ?? 0;
-
-  const railTab: RailTab =
-    route.skills !== null
-      ? "skills"
-      : route.integrations !== null
-        ? "integrations"
-        : (route.apps ?? null) !== null
-          ? "apps"
-          : route.agents !== null
-            ? agentsRailTab(route.agents)
-            : route.tab;
+  const railTab: RailTab = route.skills ? "skills" : route.apps ? "apps" : route.tab;
+  const controlRoute = isControlRoute(route);
   const paneLayout = tabPaneLayout(route, isMobile);
   const settingsSection = route.settingsSection;
+  const projectsDestination = route.projectsPage || (
+    route.projectId !== null && route.chatId === null && !route.newChat && paneLayout.mainPane === "chat"
+  );
+  const lastChat = useRef<{ chatId: string | null; projectId: string | null }>({ chatId: null, projectId: null });
+  useEffect(() => {
+    if (paneLayout.mainPane === "chat" && !projectsDestination && route.overlay === null) {
+      lastChat.current = { chatId: route.chatId, projectId: route.projectId };
+    }
+  }, [paneLayout.mainPane, projectsDestination, route.chatId, route.projectId, route.overlay]);
   const switchTab = (tab: RailTab) => {
-    // The skills and agents tabs are URL routes, not persisted panel state:
-    // entering them navigates to their root, leaving returns to the chat
-    // root — so back/forward crosses surfaces like any other route pair,
-    // and a reload lands back on the page.
+    if (tab === "chats") {
+      if (paneLayout.mainPane !== "chat" || projectsDestination) {
+        pushRoute({ ...CHAT_ROOT, ...lastChat.current, tab: "chats", agents: null, settingsSection: null, settingsDetail: null });
+        sidebarState.setCollapsed(false);
+      }
+      return;
+    }
     const target = tabPaneLayout(
       {
         ...route,
         tab: tab === "settings" ? tab : "chats",
         skills: tab === "skills" ? SKILLS_CATALOG : null,
-        agents: tab === "agents" ? AGENTS_DIRECTORY : tab === "activity" ? AGENTS_ACTIVITY : null,
-        integrations: tab === "integrations" ? INTEGRATIONS_HOME : null,
+        agents: null,
+        integrations: null,
         apps: tab === "apps" ? APPS_HOME : null,
       },
       isMobile,
@@ -614,79 +620,67 @@ function ThreadView(props: ThreadProps) {
       pushRoute({ ...SURFACE_BASE, skills: SKILLS_CATALOG, agents: null, integrations: null });
       return;
     }
-    if (tab === "integrations") {
-      pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: INTEGRATIONS_HOME });
-      return;
-    }
-    if (tab === "agents") {
-      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_DIRECTORY });
-      return;
-    }
-    if (tab === "activity") {
-      pushRoute({ ...SURFACE_BASE, skills: null, integrations: null, agents: AGENTS_ACTIVITY });
-      return;
-    }
-    // Panel tabs navigate too: each owns its address, back/forward walks
-    // tab history, and the navigation clears the open chat — a tab switch
-    // always lands on a fresh composer, never the previously selected chat.
-    // Entering Settings lands on the current section, or the default one —
-    // the Settings tab always has a sectioned address.
-    pushRoute({
-      chatId: null,
-      projectId: null,
-      overlay: null,
-      skills: null,
-      agents: null,
-      apps: null,
-      tab,
-      newChat: false,
-      ...(tab === "settings" ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null } : {}),
-    });
+    pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: route.settingsSection ?? "account" });
   };
   // Mobile drawer picks: a panel tab keeps the sheet open on its panel; the
   // route tabs (agents / activity) render in the main column, so the
   // sheet gets out of the way. Picking the already-active panel tab does
   // nothing — it must not clear the open chat.
   const mobileSwitchTab = (tab: RailTab) => {
-    if (tab === "agents" || tab === "activity" || tab === "skills" || tab === "integrations" || tab === "apps") {
+    if (tab === "skills" || tab === "apps") {
       switchTab(tab);
       setOpen(false);
       return;
     }
-    if (tab === railTab) return;
+    if (tab === railTab && route.agents === null) {
+      setOpen(false);
+      return;
+    }
     switchTab(tab);
+    setOpen(false);
   };
+  const openControl = (destination: RoutePatch) => {
+    openExternal(serverUrl() + routePath(applyRoutePatch(route, { ...CHAT_ROOT, ...destination })), { link: true });
+  };
+  const manageAgent = agent.shownAgent?.can_manage ? agent.shownAgent : null;
+  const agentModel = agent.shownAgent?.model;
+  const agentModelUnavailable = !!agentModel && models !== null && !models.some((option) => option.id === agentModel);
+  const configureModels =
+    models?.length === 0 && role === "admin"
+      ? () => openControl({ tab: "settings", settingsSection: "models" })
+      : agentModelUnavailable && manageAgent
+        ? () => openControl({ agents: agentTabRoute(manageAgent.id, "settings") })
+        : agentModelUnavailable && role === "admin"
+          ? () => openControl({ tab: "settings", settingsSection: "models" })
+          : undefined;
   const openSettingsSection = useCallback(
     (id: string) => {
       // Navigation: the section pick owns its /settings/<section> address, so
       // back/forward walks the sections and a reload restores the pick.
-      pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
-      // The section renders in the main column, behind the drawer.
+      pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: id, settingsDetail: null });
+      // Close the mobile drawer before showing the Settings dialog.
       if (isMobile) setOpen(false);
     },
     [pushRoute, isMobile],
   );
 
-  const sidebarCollapse = useCallback(() => sidebarState.setCollapsed(true), [sidebarState.setCollapsed]);
   const sidebarClose = useCallback(() => setOpen(false), []);
   // The mobile drawer carries the rail too, so every panel tab renders there;
   // its header X closes the sheet (the built-in corner close is suppressed:
   // it would sit on top of the header's new-thread plus).
-  const sidebar = (
+  const renderSidebar = (mode: "history" | "projects" | "search") => (
     <SidebarSurface
-      tab={route.tab}
-      role={role}
+      mode={mode}
+      historyFilter={route.historyFilter}
+      onHistoryFilter={(historyFilter) => pushRoute({ historyFilter })}
       chatId={chatId}
       projectId={route.projectId}
-      settingsSection={settingsSection}
-      onNewChat={newChat}
       onOpenChat={openChat}
       onNewChatInProject={newChatInProject}
       onNewProject={openCreateProject}
-      onSelectSection={openSettingsSection}
+      onOpenProject={(projectId) => pushRoute({ ...CHAT_ROOT, tab: "chats", projectId })}
+      onBackToProjects={() => pushRoute({ ...CHAT_ROOT, tab: "chats", projectsPage: true })}
       onOpenChatDeleted={leaveDeletedChat}
-      onCollapse={isMobile ? undefined : sidebarCollapse}
-      onClose={isMobile ? sidebarClose : undefined}
     />
   );
 
@@ -710,256 +704,392 @@ function ThreadView(props: ThreadProps) {
     if (projectId) pushRoute({ projectId }, { replace: true });
   }, [route.chatId, route.projectId, chats, archivedChats, pushRoute]);
 
-  // The main column: a route page (agents, skills, settings) owns the whole
-  // column right of the rail; the chat comes back on any chat route.
+  const openCreationChat = (request: string) => {
+    const draft = readDraft(draftStorage, null);
+    const prompt = draft === request || draft?.startsWith(`${request}\n\n`)
+      ? draft
+      : draft ? `${request}\n\n${draft}` : request;
+    writeDraft(draftStorage, null, prompt);
+    composer.setPrompt(prompt);
+    newChat();
+  };
+  // A route page takes the column right of the rail until the member returns to chat.
   const routePage =
-    route.agents !== null ? (
+    controlRoute ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
-        <AgentsPage
-          route={route.agents}
-          viewer={{ email, displayName, role }}
-          pushRoute={pushRoute}
-          onOpenChat={openChat}
-          onRefreshConversation={() => socketRef.current?.resync()}
-        />
+        <div className="m-auto flex flex-col items-center gap-4 p-4">
+          <Button onClick={() => openExternal(serverUrl() + routePath(route), { link: true })}>Open Guild Control Center</Button>
+          <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
+        </div>
       </RoutePage>
-    ) : paneLayout.mainPane === "integrationsPage" && route.integrations !== null ? (
-      <RoutePage isMobile={isMobile} title="Integrations" onOpenDrawer={openDrawer}>
-        <IntegrationsSurface route={route.integrations} isMobile={isMobile} pushRoute={pushRoute} />
+    ) : projectsDestination ? (
+      <RoutePage isMobile={isMobile} title="Projects" onOpenDrawer={openDrawer}>
+        {renderSidebar("projects")}
+      </RoutePage>
+    ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
+      <RoutePage isMobile={isMobile} title="Scheduled tasks" onOpenDrawer={openDrawer}>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {agent.personalAgent?.id === route.agents.agentId ? (
+            <div>
+              <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
+                routineRunId={route.agents.routineRunId}
+                canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
+                onNavigate={(next) => {
+                  if (next.view === "agent" && next.tab === "routines") {
+                    pushRoute({ ...CHAT_ROOT, agents: { ...next, personalRoutines: true } });
+                  }
+                }} />
+            </div>
+          ) : (
+            <>
+              <PageHeader variant="work" title="Scheduled tasks" />
+              <div className="work-page-content">
+                {agent.agentsList === null
+                  ? <LoadingRows rows={3} />
+                  : <p className="text-muted-foreground">Scheduled tasks are unavailable.</p>}
+              </div>
+            </>
+          )}
+        </div>
       </RoutePage>
     ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (
       <RoutePage isMobile={isMobile} title="Apps" onOpenDrawer={openDrawer}>
-        <AppsSurface route={route.apps} isMobile={isMobile} pushRoute={pushRoute} onOpenChat={openChat} />
+        <AppsSurface
+          route={route.apps}
+          isMobile={isMobile}
+          pushRoute={pushRoute}
+          onOpenChat={openChat}
+          onCreateApp={() => openCreationChat("Help me build an app. Ask what it should do, who will use it, and what data it needs.")}
+        />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
-      <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title="Customize" onOpenDrawer={openDrawer}>
         <SkillsPage
           route={route.skills}
           me={{ email, displayName: displayName ?? undefined, role }}
-          pushRoute={pushRoute}
-        />
-      </RoutePage>
-    ) : route.tab === "settings" && settingsSection !== null ? (
-      <RoutePage isMobile={isMobile} title="Settings" onOpenDrawer={openDrawer}>
-        <SettingsPage
-          section={settingsSection}
-          detail={route.settingsDetail}
-          usage={route.usage}
-          email={email}
-          role={role}
+          onCreateSkill={() => openCreationChat("Help me create a reusable skill. Ask what it should do, when to use it, and what examples or files it needs.")}
           pushRoute={pushRoute}
         />
       </RoutePage>
     ) : null;
 
-  const railProps = {
-    activeTab: railTab,
-    collapsed: sidebarState.collapsed,
-    onToggleCollapse: sidebarState.toggleCollapsed,
-    email,
-    displayName,
-    avatarUrl,
-    onOpenDevice: () => pushRoute({ overlay: { kind: "device" } }),
-    onSignOut: signOut,
-    onAddWorkspace,
-    role,
-    unreadChats,
+  const composerEnabled = models === null || Boolean(model);
+  const composerVisible = routePage === null && route.tab === "chats" && !route.previewFull;
+  useEffect(() => {
+    if (isMobile || !composerVisible || !composerEnabled || access === "readonly" || navigating || overlay || route.searchOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const textarea = ta.current;
+      if (!textarea) return;
+      textarea.focus({ preventScroll: true });
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isMobile, composerVisible, composerEnabled, chatId, route.projectId, route.newChat, access, navigating, overlay, route.searchOpen, ta]);
+
+  const openRoutines = agent.personalAgent ? () => {
+    if (!agent.personalAgent) return;
+    if (isMobile) setOpen(false);
+    pushRoute({ ...CHAT_ROOT, agents: {
+      view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
+    } });
+  } : undefined;
+  const openSearch = () => {
+    if (isMobile) setOpen(false);
+    pushRoute({ searchOpen: true });
   };
+  const openProjects = () => {
+    if (isMobile) setOpen(false);
+    pushRoute({ ...CHAT_ROOT, tab: "chats", agents: null, projectsPage: true });
+  };
+  const workNavigation = (
+    <WorkNavigation
+      active={projectsDestination ? "projects" : route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
+      onNewChat={newChat}
+      showNewChatShortcut={!isMobile}
+      onSearch={openSearch}
+      onProjects={openProjects}
+      onTabChange={isMobile ? mobileSwitchTab : switchTab}
+      onOpenRoutines={openRoutines}
+    />
+  );
+  const sidebarBody = (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={syncSidebarScroll}
+        onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
+        className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+      >
+        {workNavigation}
+        {renderSidebar("history")}
+      </div>
+      {sidebarScrolled && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Scroll sidebar to top"
+          title="Scroll sidebar to top"
+          className="absolute right-2 top-2 z-20 size-8 rounded-full border border-border bg-sidebar text-muted-foreground shadow-sm hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:bg-sidebar-accent focus-visible:text-sidebar-foreground"
+          onClick={(event) => {
+            const scroller = sidebarScroller.current;
+            if (event.detail === 0) scroller?.querySelector<HTMLButtonElement>("nav button")?.focus({ preventScroll: true });
+            scroller?.scrollTo({
+              top: 0,
+              behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+            });
+          }}
+        >
+          <ArrowUp aria-hidden="true" />
+        </Button>
+      )}
+    </div>
+  );
+  const menu = (
+    <SidebarMenu
+      onOpenSettings={openSettingsSection}
+      onSetupDevice={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ overlay: { kind: "device" } });
+      }}
+      onOpenControl={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway", gatewayInControl: role !== "admin" });
+      }}
+      onOpenHelp={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } });
+      }}
+      email={email}
+      displayName={displayName}
+      avatarUrl={avatarUrl}
+      onSignOut={signOut}
+      onAddWorkspace={onAddWorkspace}
+      workspaceName={workspace?.name}
+    />
+  );
 
   return (
-    <div ref={shell} data-shell className="fixed inset-0 flex bg-background text-foreground">
-      {/* icon rail: desktop only, always visible — it switches the sidebar
-          panel between chats / work / skills / settings and carries the
-          account menu */}
+    <div ref={shell} data-shell className="guild-sidebar-theme fixed inset-0 flex flex-col bg-background text-foreground">
       {!isMobile && (
-        <SidebarRail
-          {...railProps}
-          onTabChange={switchTab}
-          onOpenHelp={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } })}
-        />
-      )}
-      {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
-      {isMobile ? (
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent
-            side="left"
-            className="w-72 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
-            hideClose
-          >
-            <SheetTitle className="sr-only">Sidebar</SheetTitle>
-            <div className="flex min-h-0 flex-1">
-              <SidebarRail
-                {...railProps}
-                onTabChange={mobileSwitchTab}
-                onOpenHelp={() =>
-                  pushRoute({
-                    chatId: null,
-                    projectId: null,
-                    skills: null,
-                    newChat: false,
-                    overlay: { kind: "onboard" },
-                  })
-                }
-                isMobile
-              />
-              <div className="flex min-w-0 flex-1 flex-col">{sidebar}</div>
-            </div>
-          </SheetContent>
-        </Sheet>
-      ) : !paneLayout.aside ? null : (
-        // Collapsed = the column is gone (the icon rail stays and offers
-        // the expand button); the central pane reflows on toggle.
-        <Sidebar collapsed={sidebarState.collapsed}>{sidebar}</Sidebar>
-      )}
-
-      {/* main column */}
-      <div
-        {...titleBarDrag}
-        className={`relative flex min-w-0 flex-1 flex-col ${TITLE_BAR_INSET}`}
-        onDragOver={(e) => {
-          if (![...e.dataTransfer.types].includes("Files")) return;
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          // only leaving the pane itself (not entering a child) clears the hint
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
-        }}
-        onDrop={(e) => {
-          const files = Array.from(e.dataTransfer.files ?? []);
-          if (files.length === 0) return;
-          e.preventDefault();
-          setDragOver(false);
-          addFiles(files);
-        }}
-      >
-        {dragOver && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
-              Drop files to attach
-            </div>
+        <header {...titleBarDragDeep} className={`relative shrink-0 ${TITLE_BAR_INSET}`}>
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar shadow-[inset_-1px_0_var(--border)] ${sidebarScrolled && !sidebarState.collapsed ? "border-b border-border/60" : ""} ${sidebarState.resizing ? "" : "transition-[width] duration-150 motion-reduce:transition-none"}`}
+            style={{ width: sidebarState.collapsed ? 0 : sidebarState.width }}
+          />
+          <div className="relative">
+            <WorkSidebarHeader onToggle={sidebarState.toggleCollapsed} expanded={!sidebarState.collapsed} />
           </div>
+        </header>
+      )}
+      <div className="flex min-h-0 flex-1">
+        {isMobile ? (
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetContent
+              side="left"
+              className="guild-sidebar-theme w-72 gap-0 bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+              hideClose
+            >
+              <SheetTitle className="sr-only">Guild sidebar</SheetTitle>
+              <WorkSidebarHeader onClose={sidebarClose} showDivider={sidebarScrolled} />
+              {sidebarBody}
+              {menu}
+            </SheetContent>
+          </Sheet>
+        ) : (
+          <Sidebar {...sidebarState}>
+            {sidebarBody}
+            {menu}
+          </Sidebar>
         )}
-        {routePage ?? (
-          <div className="flex min-h-0 min-w-0 flex-1">
-            {/* The chat column takes the rest of the row and sets no minimum
-                of its own; the preview pane carries the minimum width. It is
-                the positioning box for the composer, so the card stays under
-                the chat and not under the pane. */}
-            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              <ThreadHeader
-                isMobile={isMobile}
-                onOpenDrawer={openDrawer}
-                chatId={viewChatId}
-                title={activeTitle}
-                project={viewChatId !== null ? currentProject : null}
-                onOpenProject={(projectId) => {
-                  pushRoute({ ...CHAT_ROOT, projectId });
-                  if (isMobile) openDrawer();
-                  else sidebarState.setCollapsed(false);
-                }}
-                titleLoading={threadLoading && blocks.length === 0}
-                childTree={childTree}
-                isSubagent={facts.type === "subagent"}
-                showMenu={
-                  !!viewChatId && (listedChat !== undefined || foreignChat) &&
-                  facts.type === "user" && !facts.deleted && !assistantInbox
-                }
-                foreign={foreignChat}
-                archived={chatArchived}
-                renameSeed={activeChat?.title ?? ""}
-                onOpenChat={openChat}
-                onRename={renameOpenChat}
-                onArchiveToggle={headerArchive}
-                onDelete={headerDelete}
-              />
 
-              {offlineMachineBanner && (
-                <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
-                  {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
-                </div>
+        {/* main column */}
+        <div
+          {...titleBarDrag}
+          className={`relative flex min-w-0 flex-1 flex-col ${!isMobile && !sidebarState.collapsed ? "-mt-11" : ""}`}
+          onDragOver={(e) => {
+            if (![...e.dataTransfer.types].includes("Files")) return;
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            // only leaving the pane itself (not entering a child) clears the hint
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer.files ?? []);
+            if (files.length === 0) return;
+            e.preventDefault();
+            setDragOver(false);
+            addFiles(files);
+          }}
+        >
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+              <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
+                Drop files to attach
+              </div>
+            </div>
+          )}
+          {routePage ?? (
+            <div className="flex min-h-0 min-w-0 flex-1">
+              {/* The chat column takes the rest of the row and sets no minimum
+                  of its own; the preview pane carries the minimum width. It is
+                  the positioning box for the composer, so the card stays under
+                  the chat and not under the pane. */}
+              <div className={`guild-chat-surface relative flex min-h-0 min-w-0 flex-1 flex-col bg-background ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:64rem]" : ""}`}>
+                <ThreadHeader
+                  isMobile={isMobile}
+                  onOpenDrawer={openDrawer}
+                  chatId={viewChatId}
+                  title={activeTitle}
+                  project={viewChatId !== null
+                    ? currentProject
+                    : route.newChat && pickedProject?.name && pickedProject.id === route.projectId
+                      ? pickedProject
+                      : null}
+                  machineLabel={projectMachineLabel}
+                  machineOnline={machine?.online}
+                  onOpenDevices={() => openSettingsSection("machine")}
+                  onOpenProject={(projectId) => {
+                    pushRoute({ ...CHAT_ROOT, projectId });
+                    if (!isMobile) sidebarState.setCollapsed(false);
+                  }}
+                  titleLoading={threadLoading && blocks.length === 0}
+                  childTree={childTree}
+                  isSubagent={facts.type === "subagent"}
+                  showMenu={
+                    !!viewChatId && (listedChat !== undefined || foreignChat) &&
+                    facts.type === "user" && !facts.deleted && !assistantInbox
+                  }
+                  foreign={foreignChat}
+                  archived={chatArchived}
+                  renameSeed={activeChat?.title ?? ""}
+                  onOpenChat={openChat}
+                  onRename={renameOpenChat}
+                  onArchiveToggle={headerArchive}
+                  onMakeRecurring={
+                    viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
+                      ? () => {
+                        const request = "Help me turn the work in this conversation into a scheduled task. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
+                        const draft = composer.promptRef.current;
+                        composer.setPrompt(draft ? `${draft}\n\n${request}` : request);
+                        ta.current?.focus();
+                      }
+                      : undefined
+                  }
+                  onDelete={headerDelete}
+                />
+
+                <NotificationsOffer />
+
+                <PreviewProvider value={openPreview}>
+                  <GenuiHostContext.Provider value={genuiHost}>
+                    <ThreadPane
+                      blocks={blocks}
+                      loading={threadLoading}
+                      viewChatId={viewChatId}
+                      noModels={models !== null && models.length === 0}
+                      navigating={navigating}
+                      hasMore={hasMore}
+                      loadingEarlier={loadingEarlier}
+                      onLoadEarlier={loadEarlierNearTop}
+                      compacting={compacting}
+                      busy={busy}
+                      stopping={stopping}
+                      subagentNodes={subagentNodes}
+                      originLink={childTree?.origin ?? null}
+                      onOpenChat={openChat}
+                      onOpenChildChat={openChildChat}
+                      scroll={{
+                        pane,
+                        onScroll: scroll.onScroll,
+                        setContentEl: scroll.setContentEl,
+                        composerH: scroll.composerH,
+                        onFrameToggle: scroll.onFrameToggle,
+                        atBottom,
+                        scrollToBottom: scroll.scrollToBottom,
+                      }}
+                    />
+                  </GenuiHostContext.Provider>
+                </PreviewProvider>
+
+                <ThreadComposer
+                  assistantInbox={assistantInbox}
+                  composer={composer}
+                  sending={outgoing}
+                  agent={agent}
+                  approval={approval}
+                  viewChatId={viewChatId}
+                  blocks={blocks}
+                  busy={busy}
+                  navigating={navigating}
+                  holdingFirstSend={holdingFirstSend}
+                  openGenerating={openGenerating}
+                  stopping={stopping}
+                  models={models}
+                  model={model}
+                  access={{
+                    readOnly: access === "readonly",
+                    unknown: access === "unknown",
+                    facts,
+                    foreign: foreignChat,
+                    deletingAgent,
+                    onUnarchive: () => void headerArchive(),
+                  }}
+                  currentProject={currentProject}
+                  machineLabel={projectMachineLabel}
+                  machineOnline={machine?.online}
+                  setComposerEl={scroll.setComposerEl}
+                  agentModelUnavailable={agentModelUnavailable}
+                  onConfigureModels={configureModels}
+                  onManageAgents={() => openControl({
+                    agents: manageAgent
+                      ? agentTabRoute(manageAgent.id, "settings")
+                      : AGENTS_DIRECTORY,
+                  })}
+                />
+              </div>
+              {previewRef !== null && (
+                <PreviewPane
+                  tabs={previewTabs}
+                  active={previewRef}
+                  full={route.previewFull === true}
+                  isMobile={isMobile}
+                  onSelect={selectPreview}
+                  onClose={closePreviewTab}
+                  onCloseAll={closePreview}
+                  onToggleFull={togglePreviewFull}
+                />
               )}
-
-              <NotificationsOffer />
-
-              <PreviewProvider value={openPreview}>
-                <GenuiHostContext.Provider value={genuiHost}>
-                  <ThreadPane
-                    blocks={blocks}
-                    loading={threadLoading}
-                    viewChatId={viewChatId}
-                    noModels={models !== null && models.length === 0}
-                    navigating={navigating}
-                    hasMore={hasMore}
-                    loadingEarlier={loadingEarlier}
-                    onLoadEarlier={loadEarlierNearTop}
-                    compacting={compacting}
-                    busy={busy}
-                    stopping={stopping}
-                    subagentNodes={subagentNodes}
-                    originLink={childTree?.origin ?? null}
-                    onOpenChat={openChat}
-                    onOpenChildChat={openChildChat}
-                    scroll={{
-                      pane,
-                      onScroll: scroll.onScroll,
-                      setContentEl: scroll.setContentEl,
-                      composerH: scroll.composerH,
-                      onFrameToggle: scroll.onFrameToggle,
-                      atBottom,
-                      scrollToBottom: scroll.scrollToBottom,
-                    }}
-                  />
-                </GenuiHostContext.Provider>
-              </PreviewProvider>
-
-              <ThreadComposer
-                assistantInbox={assistantInbox}
-                composer={composer}
-                sending={outgoing}
-                agent={agent}
-                approval={approval}
-                viewChatId={viewChatId}
-                blocks={blocks}
-                busy={busy}
-                navigating={navigating}
-                holdingFirstSend={holdingFirstSend}
-                openGenerating={openGenerating}
-                stopping={stopping}
-                models={models}
-                model={model}
-                access={{
-                  readOnly: access === "readonly",
-                  unknown: access === "unknown",
-                  facts,
-                  foreign: foreignChat,
-                  deletingAgent,
-                  onUnarchive: () => void headerArchive(),
-                }}
-                currentProject={currentProject}
-                localMachineId={localMachineId}
-                setComposerEl={scroll.setComposerEl}
-                onManageAgents={() =>
-                  pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, agents: AGENTS_DIRECTORY })
-                }
-              />
             </div>
-            {previewRef !== null && (
-              <PreviewPane
-                tabs={previewTabs}
-                active={previewRef}
-                full={route.previewFull === true}
-                isMobile={isMobile}
-                onSelect={selectPreview}
-                onClose={closePreviewTab}
-                onCloseAll={closePreview}
-                onToggleFull={togglePreviewFull}
-              />
-            )}
-          </div>
-        )}
+          )}
+        </div>
+
       </div>
 
+      <Dialog open={route.searchOpen === true} onOpenChange={(open) => {
+        if (!open) pushRoute({ searchOpen: false });
+      }}>
+        <DialogContent className="max-w-xl" aria-describedby={undefined}>
+          <DialogTitle className="text-base">Search</DialogTitle>
+          {renderSidebar("search")}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={route.tab === "settings" && !controlRoute && settingsSection !== null} onOpenChange={(open) => {
+        if (!open && route.overlay === null) switchTab("chats");
+      }}>
+        <DialogContent className="guild-sidebar-theme flex h-[min(42rem,90dvh)] w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0" aria-describedby={undefined}>
+          <DialogTitle className="border-b border-border px-5 py-3 text-base">{settingsSection === "machine" ? "Devices" : "Settings"}</DialogTitle>
+          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+            <div className="max-h-[30dvh] shrink-0 overflow-y-auto border-b border-border sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
+              <SettingsPanel role={role} activeSection={settingsSection} onSelectSection={openSettingsSection} />
+            </div>
+            {settingsSection !== null && <SettingsPage section={settingsSection} email={email} role={role}
+              onSetupDevice={() => pushRoute({ overlay: { kind: "device" } })} />}
+          </div>
+        </DialogContent>
+      </Dialog>
       <ThreadOverlays
         deviceOpen={overlay?.kind === "device"}
         onboardOpen={route.overlay?.kind === "onboard"}

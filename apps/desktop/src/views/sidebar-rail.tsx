@@ -1,207 +1,170 @@
-// Icon rail left of the sidebar panel (desktop): switches the panel between
-// chats and skills. Help and Settings sit at the bottom,
-// above the account menu — all global across tabs and never scroll away.
-
 import {
-  Activity,
-  Bot,
-  CircleHelp,
-  LayoutGrid,
-  MessageSquare,
-  Package,
-  PanelLeftOpen,
-  Plug,
+  ArrowUpRight,
+  CalendarClock,
+  ArrowLeft,
+  ArrowRight,
+  MonitorSmartphone,
+  Folder,
+  Search,
+  SquarePen,
   Settings,
+  LayoutGrid,
+  Package,
 } from "lucide-react";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@guild/ui/components/dropdown-menu";
-import { DesktopTooltip } from "../components/desktop-tooltip";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@guild/ui/components/dropdown-menu";
+import { Button } from "@guild/ui/components/button";
+import { modKey } from "../components/hotkey-hint";
+import { HAS_SHELL } from "../lib/session";
 import { UserBadge } from "../components/user-badge";
-import { OVERLAY_TITLE_BAR, TITLE_BAR_INSET, TOP_ROW, titleBarDrag, titleBarDragDeep } from "../lib/titlebar";
 import { ServerMenuItems } from "./server-menu";
+import { CloseSidebarButton, CollapseButton } from "./sidebar/chrome";
+import { TOP_ROW, titleBarDragDeep } from "../lib/titlebar";
 import type { ChatRoute } from "./thread/route";
 
-/** A rail entry is a projection of the route, never stored panel state: the
- *  panel tabs come from ChatRoute.tab, and the full-page surfaces from
- *  their own route fields. */
-export type RailTab = ChatRoute["tab"] | "agents" | "activity" | "skills" | "apps" | "integrations";
+export type RailTab = ChatRoute["tab"] | "skills" | "apps";
 
-const TABS: { id: RailTab; label: string; icon: typeof MessageSquare }[] = [
-  { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "agents", label: "Agents", icon: Bot },
-  { id: "skills", label: "Skills", icon: Package },
-  { id: "apps", label: "Apps", icon: LayoutGrid },
-  { id: "integrations", label: "Integrations", icon: Plug },
-  { id: "activity", label: "Activity", icon: Activity },
-];
-
-/** Rail entries only admins see: their surfaces are admin pages. */
-const ADMIN_TABS: RailTab[] = ["activity", "integrations"];
-
-function RailButton({
-  label,
-  icon: Icon,
-  active,
-  onClick,
-  badge,
+export function WorkSidebarHeader({
+  onToggle,
+  expanded,
+  onClose,
+  showDivider,
 }: {
-  label: string;
-  icon: typeof MessageSquare;
-  active: boolean;
-  onClick: () => void;
-  badge?: number;
+  onToggle?: () => void;
+  expanded?: boolean;
+  onClose?: () => void;
+  showDivider?: boolean;
 }) {
   return (
-    <DesktopTooltip label={label} side="right">
-      <button
-        type="button"
-        aria-label={label}
-        aria-current={active}
-        onClick={onClick}
-        className={`relative flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
-          active ? "bg-sidebar-accent text-sidebar-foreground" : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <Icon className="size-6" />
-        {badge !== undefined && badge > 0 && (
-          <span
-            aria-label={`${badge} unread`}
-            className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-3xs font-semibold leading-4 text-black"
-          >
-            {badge > 99 ? "99+" : badge}
-          </span>
-        )}
-      </button>
-    </DesktopTooltip>
+    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 px-1.5 ${TOP_ROW} ${showDivider ? "border-b border-border/60" : "border-b border-transparent"}`}>
+      <CollapseButton onCollapse={onToggle} expanded={expanded} />
+      {onToggle && (
+        <div className="flex shrink-0 items-center">
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Go back" title="Go back" onClick={() => window.history.back()}>
+            <ArrowLeft />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Go forward" title="Go forward" onClick={() => window.history.forward()}>
+            <ArrowRight />
+          </Button>
+        </div>
+      )}
+      {onClose && <CloseSidebarButton onClose={onClose} />}
+    </div>
   );
 }
 
-/** The rail's first slot: the Guild mark while the sidebar is open, and the
- *  expand button while it is collapsed. Without a toggle (the mobile
- *  drawer) it is the mark alone. */
-function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle?: () => void }) {
-  if (collapsed) {
-    return <RailButton label="Expand sidebar" icon={PanelLeftOpen} active={false} onClick={() => onToggle?.()} />;
-  }
-  const logo = (
-    <>
-      <img src="/brand/guild-icon-light.svg" alt="" className="size-7 dark:hidden" />
-      <img src="/brand/guild-icon-dark.svg" alt="" className="hidden size-7 dark:block" />
-    </>
-  );
-  if (!onToggle) {
-    return <span className="flex size-9 items-center justify-center">{logo}</span>;
-  }
-  return (
-    <DesktopTooltip label="Collapse sidebar" hotkey="mod+B" side="right">
-      <button
-        type="button"
-        aria-label="Collapse sidebar"
-        onClick={onToggle}
-        className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-      >
-        {logo}
-      </button>
-    </DesktopTooltip>
-  );
-}
-
-export function SidebarRail({
-  activeTab,
+export function WorkNavigation({
+  active,
+  onNewChat,
+  onSearch,
+  onProjects,
   onTabChange,
+  onOpenRoutines,
+  showNewChatShortcut = true,
+}: {
+  active: RailTab | "routines" | "projects";
+  onNewChat: () => void;
+  onSearch: () => void;
+  onProjects: () => void;
+  onTabChange: (tab: RailTab) => void;
+  onOpenRoutines?: () => void;
+  showNewChatShortcut?: boolean;
+}) {
+  const newChatShortcut = showNewChatShortcut ? `${modKey()}${HAS_SHELL ? "" : "+Alt"}+N` : null;
+  const items = [
+    { label: "New", icon: SquarePen, open: onNewChat },
+    { label: "Search", icon: Search, open: onSearch },
+    { id: "projects", label: "Projects", icon: Folder, open: onProjects },
+    { id: "apps", label: "Apps", icon: LayoutGrid, open: () => onTabChange("apps") },
+    { id: "routines", label: "Scheduled tasks", icon: CalendarClock, open: onOpenRoutines },
+    { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
+  ];
+  return (
+    <nav aria-label="Guild navigation" className="shrink-0 space-y-0.5 pl-1.5 pr-0.5 pb-4 pt-1">
+      {items.map(({ id, label, icon: Icon, open }) => (
+        <Button
+          key={label}
+          variant="ghost"
+          size="sm"
+          className="guild-sidebar-current group h-8 w-full justify-start px-2 text-base font-normal pointer-coarse:h-10"
+          aria-current={id === active ? "page" : undefined}
+          aria-haspopup={label === "Search" ? "dialog" : undefined}
+          onClick={open}
+          disabled={!open}
+        >
+          <Icon aria-hidden="true" />
+          {label}
+          {label === "New" && newChatShortcut && (
+            <kbd className="invisible ml-2 whitespace-nowrap font-sans text-muted-foreground group-[&:hover]:visible group-focus-visible:visible">
+              {newChatShortcut}
+            </kbd>
+          )}
+        </Button>
+      ))}
+    </nav>
+  );
+}
+
+export function SidebarMenu({
+  onOpenSettings,
+  onSetupDevice,
+  onOpenControl,
   onOpenHelp,
   email,
   displayName,
   avatarUrl,
-  onOpenDevice,
   onSignOut,
   onAddWorkspace,
-  role,
-  isMobile,
-  unreadChats,
-  collapsed = false,
-  onToggleCollapse,
+  workspaceName,
 }: {
-  activeTab: RailTab;
-  onTabChange: (tab: RailTab) => void;
-  /** The big help/learn popup (a route overlay, not a panel tab). */
+  onOpenSettings: (section: string) => void;
+  onSetupDevice: () => void;
+  onOpenControl?: () => void;
   onOpenHelp: () => void;
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
-  onOpenDevice: () => void;
   onSignOut: () => void;
-  /** Desktop multi-workspace: the account menu carries the switcher rows
-   *  and the add-a-server action. */
   onAddWorkspace?: (baseUrl?: string) => void;
-  /** Activity is an admin surface; members never see its rail entry. */
-  role?: string;
-  /** Mobile drawer: the skills page is a desktop-only surface (its main
-   *  column does not render on mobile), so its tab is dropped. */
-  isMobile?: boolean;
-  /** Unseen chats the Chats panel lists. */
-  unreadChats?: number;
-  /** Unseen chats the Projects panel lists. */
-  /** The sidebar panel is collapsed: the first slot offers to expand it. */
-  collapsed?: boolean;
-  /** Absent in the mobile drawer, where there is no sidebar to collapse. */
-  onToggleCollapse?: () => void;
+  workspaceName?: string;
 }) {
-  const tabs = (role === "admin" ? TABS : TABS.filter((tab) => !ADMIN_TABS.includes(tab.id))).filter(
-    (tab) => !(isMobile && tab.id === "skills"),
-  );
   return (
-    <nav
-      {...titleBarDrag}
-      className={`relative flex h-full w-12 shrink-0 flex-col items-center bg-sidebar pb-2 text-sidebar-foreground ${
-        OVERLAY_TITLE_BAR ? "" : "border-r border-border"
-      } ${TITLE_BAR_INSET}`}
-    >
-      {/* The overlay title bar merges the rail with the sidebar panel: the
-          divider starts below the traffic lights, not under them. */}
-      {OVERLAY_TITLE_BAR && <div className="pointer-events-none absolute bottom-0 right-0 top-7 w-px bg-border" />}
-      <div {...titleBarDragDeep} className={`flex shrink-0 items-center justify-center ${TOP_ROW}`}>
-        <SidebarToggle collapsed={collapsed} onToggle={onToggleCollapse} />
+    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-1.5 py-2">
+      <div className="min-w-0 flex-1">
+        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+          {onAddWorkspace ? (
+            <>
+              <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
+              <DropdownMenuSeparator />
+            </>
+          ) : workspaceName && (
+            <>
+              <div className="min-w-0 px-2 py-1.5">
+                <div className="text-base text-muted-foreground">Workspace</div>
+                <div className="truncate text-base font-medium" title={workspaceName}>{workspaceName}</div>
+              </div>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
+          <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("machine")}><MonitorSmartphone />Devices</DropdownMenuItem>
+          {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
+          <DropdownMenuItem className="text-base" onClick={onOpenHelp}>Help</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="text-base text-destructive focus:text-destructive" onClick={onSignOut}>
+            Sign out
+          </DropdownMenuItem>
+        </UserBadge>
       </div>
-      <div className="flex flex-col items-center gap-1">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <RailButton
-            key={id}
-            label={label}
-            icon={Icon}
-            active={activeTab === id}
-            onClick={() => onTabChange(id)}
-            badge={id === "chats" ? unreadChats : undefined}
-          />
-        ))}
-      </div>
-      <div className="mt-auto flex flex-col items-center gap-1">
-        <RailButton label="Help / Learn" icon={CircleHelp} active={false} onClick={onOpenHelp} />
-        <RailButton
-          label="Settings"
-          icon={Settings}
-          active={activeTab === "settings"}
-          onClick={() => onTabChange("settings")}
-        />
-        <div className="p-1">
-          <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
-            {/* Desktop multi-workspace: every signed-in server, the add
-                action and the per-server sign-out. The web has one server,
-                so the section is absent there. */}
-            {onAddWorkspace && (
-              <>
-                <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
-                <DropdownMenuSeparator />
-              </>
-            )}
-            <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-              Sign out
-            </DropdownMenuItem>
-          </UserBadge>
-        </div>
-      </div>
-    </nav>
+      <Button variant="ghost" size="icon"
+        aria-label="Set up a device" title="Set up a device" aria-haspopup="dialog"
+        className="shrink-0 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={onSetupDevice}
+      >
+        <MonitorSmartphone />
+      </Button>
+    </div>
   );
 }

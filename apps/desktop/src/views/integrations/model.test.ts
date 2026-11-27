@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CatalogRow, ShopItem, UsageSummaryRow } from "./integrations-api";
-import { availableUpdates, buildCatalog, compactCount, findCatalogEntry, installedStatus, statusLine } from "./model";
+import type { CatalogRow, ShopItem, UsageSummaryRow } from "../../../../control-center/src/integrations/integrations-api";
+import { availableUpdates, buildCatalog, compactCount, findCatalogEntry, installedStatus, statusLine } from "../../../../control-center/src/integrations/model";
 
 function item(p: Partial<ShopItem>): ShopItem {
   return {

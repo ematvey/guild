@@ -8,7 +8,7 @@
 //! machine: its row goes, its session is revoked and its socket closes.
 
 import { useState } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu, Plus } from "lucide-react";
 import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import {
@@ -25,7 +25,7 @@ import { useMachines } from "../../../lib/machines-store";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../../../components/page-header";
 
-export function MachineSection() {
+export function MachineSection({ onSetupDevice }: { onSetupDevice?: () => void }) {
   // The registry is shared app state: the member socket sends the rows and
   // patches the connected flag live, so an open page follows a machine
   // coming up or going down without a refetch.
@@ -50,22 +50,26 @@ export function MachineSection() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Machines" />
+      <PageHeader
+        inlineActions
+        title="Devices"
+        description="Connect computers that can run project tasks and access local files."
+        actions={onSetupDevice && <Button variant="ghost" size="icon" className="size-8" aria-label="Set up a device" title="Set up a device" onClick={onSetupDevice}><Plus /></Button>}
+      />
       {machines === null ? (
         <SkeletonForm />
       ) : machines.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
-          No machines yet. Start the Guild desktop app on the machine and sign it in with a device token (Settings →
-          Connect desktop app in the web app generates one); the machine appears here once it signs in.
+          No devices connected. Set up a device to install Guild or pair an existing installation.
         </p>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="divide-y divide-border border-y border-border">
           {machines.map((m) => {
             const meta = [m.os, m.app_version, m.last_ip].filter(Boolean).join(" · ");
             return (
               <div
                 key={m.machine_id}
-                className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-base"
+                className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-base"
               >
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   {m.connected ? (
@@ -75,22 +79,22 @@ export function MachineSection() {
                   )}
                   <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-2">
-                      <span className="truncate">{m.name}</span>
+                    <span className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="min-w-0 break-words">{m.name}</span>
                       {!m.connected && (
-                        <span className="shrink-0 text-xs text-muted-foreground">
+                        <span className="shrink-0 text-base text-muted-foreground">
                           last seen {relativeTime(m.last_seen_at)}
                         </span>
                       )}
                     </span>
                     {!m.connected && meta && (
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{meta}</span>
+                      <span className="mt-0.5 block break-words text-base text-muted-foreground">{meta}</span>
                     )}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 pl-3">
-                  <span className="text-xs text-muted-foreground">{m.connected ? "connected" : ""}</span>
-                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setTarget(m)}>
+                  <span className="text-base text-muted-foreground">{m.connected ? "connected" : ""}</span>
+                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setTarget(m)}>
                     Deauthorize
                   </Button>
                 </div>
@@ -99,11 +103,6 @@ export function MachineSection() {
           })}
         </div>
       )}
-      <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
-        Machines bind at device sign-in: sign in with a device token on the machine and it shows up here, ready for your
-        chats. A chat runs on the machine its project names — bind the project, not the chat.
-      </p>
-
       <Dialog open={target !== null} onOpenChange={(open) => !open && setTarget(null)}>
         <DialogContent>
           <DialogHeader>

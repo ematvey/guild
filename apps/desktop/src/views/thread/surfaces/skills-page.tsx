@@ -12,18 +12,24 @@ export function SkillsPage({
   route,
   me,
   pushRoute,
+  onCreateSkill,
 }: {
   route: SkillsRoute;
   me: { email: string; displayName?: string; role: string };
   pushRoute: PushRoute;
+  onCreateSkill?: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
       <SkillsPanel
         me={me}
+        onCreateSkill={onCreateSkill}
         route={clampSkillsRoute(route, HAS_ENGINE)}
         onNavigate={(next: SkillsRoute, options?: { replace?: boolean }) =>
-          pushRoute({ ...SURFACE_BASE, skills: next }, options)
+          pushRoute({
+            ...SURFACE_BASE,
+            skills: route.management && next.view !== "machine" ? { ...next, management: true } : next,
+          }, options)
         }
       />
     </div>

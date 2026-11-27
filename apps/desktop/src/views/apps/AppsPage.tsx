@@ -1,3 +1,5 @@
+import { Input } from "@guild/ui/components/input";
+import { PageHeader } from "../../components/page-header";
 // The Apps page: the Apps the member sees on the left — their own and those
 // shared with the org — and the open App on the right, running in its frame.
 // On a phone the list and the App take turns. Every state is an /apps
@@ -6,6 +8,8 @@
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
+  Plus,
   Globe,
   LayoutGrid,
   MessageSquare,
@@ -27,7 +31,6 @@ import type { App } from "@guild/wire/rest";
 import { useMemberProfile } from "../../lib/profile-store";
 import { CollapseButton } from "../sidebar/chrome";
 import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
-import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { relativeTime } from "../../lib/relative-time";
 import { useApps } from "./apps-store";
 import { APPS_HOME, type AppsRoute } from "./apps-route";
@@ -183,9 +186,9 @@ function NoApps() {
 function AppHeader({
   app,
   detail,
-  isOwner,
+  canShare,
   canDelete,
-  isMobile,
+  showBack,
   onBack,
   onOpenChat,
   onDeleted,
@@ -194,9 +197,9 @@ function AppHeader({
 }: {
   app: App;
   detail: AppDetail | null;
-  isOwner: boolean;
+  canShare: boolean;
   canDelete: boolean;
-  isMobile: boolean;
+  showBack: boolean;
   onBack: () => void;
   onOpenChat: ((chatId: string) => void) | null;
   onDeleted: () => void;
@@ -220,97 +223,107 @@ function AppHeader({
   const asks = (detail?.functions ?? []).some(
     (fn) => fn.available && fn.confirm,
   );
-  return (
-    <header className={`shrink-0 border-b border-border bg-background px-4 py-3 ${CAPTION_BUTTONS_INSET}`}>
-      <div className="flex items-center gap-2">
-        {isMobile && (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="All apps"
-            onClick={onBack}
+  const work = import.meta.env.MODE !== "control";
+  const metadata = (
+    <p className={work ? "whitespace-normal break-words text-muted-foreground" : "truncate text-xs text-muted-foreground"}>
+      {app.visibility === "org" ? "Shared with the org" : "Private"} · by {app.owner_label}
+      {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v{app.version} · updated {relativeTime(app.updated_at)}
+    </p>
+  );
+  const hasActions = canShare || canDelete || asks || (onOpenChat !== null && app.chat_id !== null);
+  const actions = (work || hasActions) && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant={work ? "ghost" : "outline"}
+          size={work ? "icon" : "sm"}
+          className={work ? "size-8 text-muted-foreground" : undefined}
+          aria-label={work ? "App options" : undefined}
+          title={work ? "App options" : undefined}
+          disabled={busy}
+        >
+          {work ? <ChevronDown aria-hidden="true" /> : "Manage"}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={work ? "start" : "end"} className={work ? "w-80 max-w-[calc(100vw-2rem)]" : "w-56"}>
+        {work && (
+          <>
+            <div className="px-2 py-1.5">{metadata}</div>
+            {hasActions && <DropdownMenuSeparator />}
+          </>
+        )}
+        {onOpenChat !== null && app.chat_id !== null && (
+          <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
+            <MessageSquare className="size-4" /> Open the chat that built
+            it
+          </DropdownMenuItem>
+        )}
+        {asks && (
+          <DropdownMenuItem
+            onSelect={() =>
+              void act(async () => {
+                await clearAppGrants(app.id);
+                onGrantsCleared();
+              })
+            }
           >
-            <ArrowLeft />
-          </Button>
+            <ShieldCheck className="size-4" /> Ask again before data
+            access
+          </DropdownMenuItem>
         )}
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold">{app.name}</h2>
-          <p className="truncate text-xs text-muted-foreground">
-            {app.visibility === "org" ? "Shared with the org" : "Private"} · by{" "}
-            {app.owner_label}
-            {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v
-            {app.version} · updated {relativeTime(app.updated_at)}
-          </p>
+        {canShare && (
+          <DropdownMenuItem onSelect={() => onEditAccess()}>
+            <Users className="size-4" /> Sharing
+          </DropdownMenuItem>
+        )}
+        {canDelete && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={() => {
+                if (
+                  !window.confirm(
+                    `Delete ${app.name}? Everyone it is shared with loses it.`,
+                  )
+                )
+                  return;
+                void act(async () => {
+                  await deleteApp(app.id);
+                  onDeleted();
+                });
+              }}
+            >
+              <Trash2 className="size-4" /> Delete
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  return (
+    <div className={`shrink-0 border-b border-border bg-background ${work ? "" : `px-4 py-3 ${CAPTION_BUTTONS_INSET}`}`}>
+      {work ? (
+        <PageHeader variant="work" inlineActions title={app.name} back={{ label: "Apps", onClick: onBack }} actions={actions || undefined} />
+      ) : (
+        <div className="flex items-center gap-2">
+          {showBack && (
+            <Button variant="ghost" size="icon" aria-label="All apps" onClick={onBack}><ArrowLeft /></Button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-bold">{app.name}</h2>
+            {metadata}
+          </div>
+          {actions}
         </div>
-        {(isOwner ||
-          app.can_edit ||
-          canDelete ||
-          asks ||
-          (onOpenChat !== null && app.chat_id !== null)) && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" disabled={busy}>
-                Manage
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {onOpenChat !== null && app.chat_id !== null && (
-                <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
-                  <MessageSquare className="size-4" /> Open the chat that built
-                  it
-                </DropdownMenuItem>
-              )}
-              {asks && (
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void act(async () => {
-                      await clearAppGrants(app.id);
-                      onGrantsCleared();
-                    })
-                  }
-                >
-                  <ShieldCheck className="size-4" /> Ask again before data
-                  access
-                </DropdownMenuItem>
-              )}
-              {(isOwner || app.can_edit) && (
-                <DropdownMenuItem onSelect={() => onEditAccess()}>
-                  <Users className="size-4" /> Sharing
-                </DropdownMenuItem>
-              )}
-              {canDelete && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => {
-                      if (
-                        !window.confirm(
-                          `Delete ${app.name}? Everyone it is shared with loses it.`,
-                        )
-                      )
-                        return;
-                      void act(async () => {
-                        await deleteApp(app.id);
-                        onDeleted();
-                      });
-                    }}
-                  >
-                    <Trash2 className="size-4" /> Delete
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+      )}
       {error !== null && (
-        <p role="alert" className="mt-2 text-xs text-destructive">
+        <p role="alert" className={`mt-2 text-xs text-destructive ${work ? "work-page-content" : ""}`}>
           {error}
         </p>
       )}
       {unavailable.length > 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className={`mt-2 text-xs text-muted-foreground ${work ? "work-page-content" : ""}`}>
           Some data is not available to you:{" "}
           {unavailable
             .map((fn) => `${fn.name} (${fn.reason ?? "no access"})`)
@@ -318,20 +331,22 @@ function AppHeader({
           .
         </p>
       )}
-    </header>
+    </div>
   );
 }
 
 function OpenApp({
   app,
+  management,
   me,
-  isMobile,
+  showBack,
   navigate,
   onOpenChat,
 }: {
   app: App;
+  management: boolean;
   me: { id: string; role: string } | null;
-  isMobile: boolean;
+  showBack: boolean;
   navigate: Navigate;
   onOpenChat: ((chatId: string) => void) | null;
 }) {
@@ -356,7 +371,9 @@ function OpenApp({
     };
   }, [app.id, app.version, epoch]);
   const isOwner = me !== null && app.owner_user_id === me.id;
-  const canDelete = isOwner || me?.role === "admin";
+  const admin = me?.role === "admin";
+  const canDelete = isOwner || (management && admin);
+  const canShare = isOwner || (app.can_edit && (!admin || management));
   const [accessOpen, setAccessOpen] = useState(false);
   const current = detail !== null && detail.app.id === app.id ? detail : null;
   return (
@@ -364,9 +381,9 @@ function OpenApp({
       <AppHeader
         app={app}
         detail={current}
-        isOwner={isOwner}
+        canShare={canShare}
         canDelete={canDelete}
-        isMobile={isMobile}
+        showBack={showBack}
         onBack={() => navigate(APPS_HOME)}
         onOpenChat={onOpenChat}
         onDeleted={() => navigate(APPS_HOME, { replace: true })}
@@ -410,14 +427,16 @@ export function AppsPage({
   navigate,
   isMobile,
   onOpenChat,
+  onCreateApp,
 }: {
   route: AppsRoute;
   navigate: Navigate;
   isMobile: boolean;
   onOpenChat: ((chatId: string) => void) | null;
+  onCreateApp?: () => void;
 }) {
   const apps = useApps();
-  const sidebar = useSidebar();
+  const [query, setQuery] = useState("");
   const profile = useMemberProfile();
   const me = profile === null ? null : { id: profile.id, role: profile.role };
   const open =
@@ -431,8 +450,9 @@ export function AppsPage({
       <OpenApp
         key={open.id}
         app={open}
+        management={route.management === true}
         me={me}
-        isMobile={isMobile}
+        showBack={isMobile || !route.management}
         navigate={navigate}
         onOpenChat={onOpenChat}
       />
@@ -456,6 +476,47 @@ export function AppsPage({
       <NoApps />
     );
 
+  if (!route.management) {
+    if (route.appId !== null) return page;
+    const needle = query.trim().toLowerCase();
+    const visible = apps?.filter((app) => `${app.name} ${app.description}`.toLowerCase().includes(needle));
+    const groups = [
+      { label: "Your apps", items: visible?.filter((app) => app.owner_user_id === me?.id) ?? [] },
+      { label: "Shared with you", items: visible?.filter((app) => app.owner_user_id !== me?.id) ?? [] },
+    ];
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PageHeader variant="work" title="Apps" actions={onCreateApp && (
+          <Button variant="ghost" size="icon" aria-label="Create app in chat" title="Create app in chat" onClick={onCreateApp}>
+            <Plus />
+          </Button>
+        )} />
+        <div className="work-page-content pb-2">
+          <Input className="w-full sm:w-[280px]" type="search" aria-label="Search apps" placeholder="Search apps"
+            value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className="work-page-content space-y-6 pb-8 pt-3">
+            {visible === undefined ? <SkeletonRows rows={4} /> : apps?.length === 0 ? (
+              <NoApps />
+            ) : visible.length === 0 ? (
+              <EmptyState icon={LayoutGrid} title="No matching apps" />
+            ) : groups.filter(({ items }) => items.length > 0).map(({ label, items }) => (
+              <section key={label} className="space-y-2">
+                <h2 className="text-base font-semibold">{label}</h2>
+                <ul className="divide-y divide-border border-y border-border">
+                  {items.map((app) => (
+                    <AppRow key={app.id} app={app} selected={false} onClick={() => navigate({ appId: app.id })} />
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isMobile) {
     return route.appId === null ? (
       <ListPane
@@ -468,17 +529,17 @@ export function AppsPage({
       page
     );
   }
+  const list = (
+    <ListPane
+      apps={apps}
+      route={route}
+      navigate={navigate}
+      me={me?.id ?? null}
+    />
+  );
   return (
     <div className="flex h-full min-h-0">
-      <Sidebar collapsed={sidebar.collapsed}>
-        <ListPane
-          apps={apps}
-          route={route}
-          navigate={navigate}
-          me={me?.id ?? null}
-          onCollapse={() => sidebar.setCollapsed(true)}
-        />
-      </Sidebar>
+      <aside className="w-64 shrink-0 border-r border-border bg-sidebar">{list}</aside>
       <section className="min-w-0 flex-1">{page}</section>
     </div>
   );

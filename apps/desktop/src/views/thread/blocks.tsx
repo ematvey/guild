@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Brain, Check, Copy } from "lucide-react";
 import Markdown from "react-markdown";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
+import { FadeTitle } from "../sidebar/chrome";
 import { Frame } from "../frame";
 import { PayloadPre } from "../payload-pre";
 import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
@@ -12,7 +13,7 @@ import type { CompactionBlock } from "../../lib/thread-reducer";
 /// The conversation column: the transcript, the composer card, the loading
 /// skeleton and the jump-to-bottom row share one cap at every breakpoint and
 /// narrow with the pane below it.
-export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[48rem]";
+export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[var(--chat-column-width,48rem)]";
 
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
@@ -54,9 +55,9 @@ export function ThreadTitle({ chatId, title, loading }: { chatId: string | null;
   // stays that way until its first message, so it says so instead of
   // holding a skeleton open forever.
   if (title === "") {
-    return <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">New thread</span>;
+    return <span className="flex min-w-0 font-bold text-muted-foreground"><FadeTitle text="New thread" /></span>;
   }
-  return <span className="min-w-0 flex-1 truncate font-medium">{title}</span>;
+  return <span className="flex min-w-0 font-bold"><FadeTitle text={title} /></span>;
 }
 
 /// Collapsible "Thinking" frame for a reasoning block; default collapsed,

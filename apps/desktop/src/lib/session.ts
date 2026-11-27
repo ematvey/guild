@@ -43,8 +43,20 @@ export function serverBase(): string {
 }
 
 /** Absolute URL for a server path ("/api/…"), base-aware. */
+export function clientApiPath(path: string): string {
+  if (import.meta.env.MODE === "test" || !path.startsWith("/api/v1/") || /^\/api\/v1\/(?:work|control)\//.test(path)) return path;
+  return import.meta.env.MODE === "control" ? `/api/v1/control/${path.slice("/api/v1/".length)}` : path;
+}
+
+export function guildSurfaceHeaders(path: string): Record<string, string> {
+  return import.meta.env.MODE !== "control" && import.meta.env.MODE !== "test" &&
+    path.startsWith("/api/v1/") && !path.startsWith("/api/v1/control/")
+    ? { "x-guild-client-surface": "guild" }
+    : {};
+}
+
 export function apiUrl(path: string): string {
-  return `${serverBase()}${path}`;
+  return `${serverBase()}${clientApiPath(path)}`;
 }
 
 /** The real server origin ("https://guild.example"). Web: the page origin.
@@ -97,7 +109,7 @@ export function refreshSession(): Promise<void> {
 
 async function doRefresh(bearer: string | null): Promise<void> {
   const base = serverBase();
-  const response = await fetch(`${base}/api/v1/auth/refresh`, {
+  const response = await fetch(`${base}${clientApiPath("/api/v1/auth/refresh")}`, {
     method: "POST",
     headers: { authorization: `Bearer ${bearer}` },
     signal: AbortSignal.timeout(10000),
@@ -118,7 +130,7 @@ export async function mintTicket(refreshed = false): Promise<string> {
   const res = await fetch(apiUrl("/api/v1/ws/ticket"), {
     method: "POST",
     signal: AbortSignal.timeout(10000),
-    headers: { authorization: `Bearer ${getToken()}` },
+    headers: { ...guildSurfaceHeaders("/api/v1/ws/ticket"), authorization: `Bearer ${getToken()}` },
   });
   if (res.status === 401 && !refreshed) {
     await refreshSession();

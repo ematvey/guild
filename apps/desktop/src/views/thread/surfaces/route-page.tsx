@@ -36,9 +36,12 @@ export function RoutePage({
   children: ReactNode;
 }) {
   return (
-    <>
-      {isMobile && <MobileNavBar onOpenDrawer={onOpenDrawer} title={title} />}
+    <section
+      aria-label={title}
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-base"
+    >
+      {isMobile && <MobileNavBar onOpenDrawer={onOpenDrawer} />}
       {children}
-    </>
+    </section>
   );
 }

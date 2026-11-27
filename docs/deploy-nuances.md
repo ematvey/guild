@@ -14,8 +14,7 @@ forwards to `GUILD_FARO_URL` (an empty value disables forwarding).
 The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
 absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
 The value rides the `workspace_identity` frame, so every client starts or
-stops collecting live. There is no per-device toggle; About shows the state
-read-only.
+stops collecting live.
 
 Tests use isolated databases and buckets on the configured test services.
 Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`, and
@@ -25,6 +24,8 @@ gitignored `test.env` at the repository root.
 ---
 
 ## 1. Build and deploy the server
+
+The image builds and embeds the Work frontend and the Control Center independently. The server serves Work at `/` and Control Center at `/control`. For local builds, run `npm run build --workspace apps/desktop` and `npm run build:control`. The Tauri build embeds the Work output.
 
 Set `version` to the product version for a stable release or to the intended
 preview version for a develop installation. Set `image` to an immutable image

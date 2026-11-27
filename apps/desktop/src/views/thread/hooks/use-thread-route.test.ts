@@ -1,3 +1,4 @@
+import { isControlRoute, withoutControlPrefix } from "../route";
 import { describe, expect, it } from "vitest";
 import { applyRoutePatch, canonicalRoute, canonicalSurfacePath, parseChatRoute, SURFACE_BASE } from "../route";
 import { INTEGRATIONS_HOME } from "../../integrations/integrations-route";
@@ -93,7 +94,7 @@ describe("canonicalRoute", () => {
   const ctx = (role = "admin", hasEngine = true) => ({ role, hasEngine });
   const fix = (path: string, role = "admin", hasEngine = true) => {
     const route = parseChatRoute(path.split("?")[0]!, path.includes("?") ? path.slice(path.indexOf("?")) : "");
-    const patch = canonicalRoute(route, { ...ctx(role, hasEngine), pathname: path.split("?")[0]! });
+    const patch = canonicalRoute(route, { ...ctx(role, hasEngine), pathname: withoutControlPrefix(path.split("?")[0]!) });
     return patch === null ? null : routePath(applyRoutePatch(route, patch));
   };
 
@@ -109,10 +110,10 @@ describe("canonicalRoute", () => {
   });
 
   it("moves a member off the admin activity surfaces", () => {
-    expect(fix("/activity", "member")).toBe("/agents");
-    expect(fix("/runs/r1", "member")).toBe("/agents");
-    expect(fix("/sessions/c1", "member")).toBe("/agents");
-    expect(fix("/agents/a1/activity", "member")).toBe("/agents/a1");
+    expect(fix("/activity", "member")).toBe("/control/agents");
+    expect(fix("/runs/r1", "member")).toBe("/control/agents");
+    expect(fix("/sessions/c1", "member")).toBe("/control/agents");
+    expect(fix("/agents/a1/activity", "member")).toBe("/control/agents/a1");
   });
 
   it("keeps the settings address while a surface opened from it owns the URL", () => {
@@ -139,8 +140,8 @@ describe("canonicalRoute", () => {
   });
 
   it("rewrites a surface address the parser read past, and the old chat alias", () => {
-    expect(fix("/agents/a1/bogus")).toBe("/agents/a1");
-    expect(fix("/sessions/c1")).toBe("/chats/c1");
+    expect(fix("/agents/a1/bogus")).toBe("/control/agents/a1");
+    expect(fix("/sessions/c1")).toBe("/control/chats/c1");
   });
 
   it("is stable: a canonical result needs no second pass", () => {
@@ -204,4 +205,49 @@ describe("commitRoute (history entries per navigation)", () => {
     commitRoute(history, history.current, parseChatRoute("/thread/c1", ""));
     expect(history.length).toBe(1);
   });
+});
+
+describe("work and Control Center addresses", () => {
+  const fixControlRole = (path: string) => {
+    const route = parseChatRoute(path);
+    const patch = canonicalRoute(route, { role: "member", hasEngine: false, pathname: withoutControlPrefix(path) });
+    return patch ? routePath(applyRoutePatch(route, patch)) : routePath(route);
+  };
+
+  it("keeps legacy management links and persists control subpages", () => {
+    expect(routePath(parseChatRoute("/settings/users/new"))).toBe("/control/settings/users/new");
+    expect(routePath(parseChatRoute("/control/agents/a1/settings"))).toBe("/control/agents/a1/settings");
+    expect(isControlRoute(parseChatRoute("/control"))).toBe(false);
+    expect(isControlRoute(parseChatRoute("/control/"))).toBe(false);
+    expect(routePath(parseChatRoute("/settings/gateway"))).toBe("/settings/gateway");
+    expect(routePath(parseChatRoute("/control/settings/gateway"))).toBe("/control/settings/gateway");
+    expect(routePath(parseChatRoute("/skills/new"))).toBe("/control/skills/new");
+    expect(routePath(parseChatRoute("/control/skills"))).toBe("/control/skills");
+    expect(routePath(parseChatRoute("/skills"))).toBe("/skills");
+    expect(routePath(parseChatRoute("/control/apps/app1"))).toBe("/control/apps/app1");
+    expect(fixControlRole("/control/apps/app1")).toBe("/apps/app1");
+  });
+
+  it("reloads device setup over Devices and closes back to the same page", () => {
+    const route = parseChatRoute("/settings/machine/device");
+    expect(route.overlay).toEqual({ kind: "device" });
+    expect(routePath(route)).toBe("/settings/machine/device");
+    expect(routePath(applyRoutePatch(route, { overlay: null }))).toBe("/settings/machine");
+  });
+
+  it("keeps personal routines and member settings in the work app", () => {
+    expect(routePath(parseChatRoute("/routines/a1/r1"))).toBe("/routines/a1/r1");
+    expect(routePath(parseChatRoute("/routines/a1/r1/runs/run1"))).toBe("/routines/a1/r1/runs/run1");
+    expect(routePath(parseChatRoute("/agents/a1/routines/r1"))).toBe("/control/agents/a1/routines/r1");
+    expect(routePath(parseChatRoute("/settings/appearance"))).toBe("/settings/appearance");
+    expect(routePath(parseChatRoute("/thread/c1"))).toBe("/thread/c1");
+  });
+});
+
+
+it("round-trips Work Projects, search and the chat history filter", () => {
+  const projects = parseChatRoute("/projects", "?search=1&history=tasks");
+  expect(routePath(projects)).toBe("/projects?search=1&history=tasks");
+  expect(routePath(applyRoutePatch(projects, { searchOpen: false }))).toBe("/projects?history=tasks");
+  expect(routePath(applyRoutePatch(projects, { chatId: "c1" }))).toBe("/thread/c1?history=tasks");
 });

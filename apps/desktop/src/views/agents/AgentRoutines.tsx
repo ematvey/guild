@@ -1,12 +1,16 @@
+import Markdown from "react-markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
+import { Clock, Ellipsis, Loader2, Pencil, Play, Plus } from "lucide-react";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
-import { nextRunLabel, relativeTime } from "../../lib/relative-time";
+import { nextRunLabel } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { listRoutineRuns, runRoutine, setRoutineDelivery, type AgentRoutine, type AgentRun } from "./agents-api";
+import { createAgentThread, sendAgentTurn, getScheduledTaskDeliveryChat, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
-import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
+import { ErrorState, LoadingRows, RunStatusBadge, ToneBadge } from "./agent-ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -63,33 +67,83 @@ export function scheduleLabel(routine: AgentRoutine): string {
   return `${humanSchedule(routine.schedule ?? "")} · ${routine.timezone}`;
 }
 
+export function AgentRoutinesPage({ agentId, routineId, routineRunId, canManage, onNavigate, onOpenChat }: {
+  agentId: string;
+  routineId?: string;
+  routineRunId?: string;
+  canManage: boolean;
+  onNavigate: (route: AgentsRoute) => void;
+  onOpenChat: (chatId: string) => void;
+}) {
+  /** Routines are written in chat: open a fresh thread and hand the agent the
+   *  intent, so the schedule, prompt and later changes all live in the
+   *  transcript instead of a form. */
+  const startRoutineThread = async (title: string, message: string) => {
+    const row = await createAgentThread(agentId, title);
+    await sendAgentTurn(agentId, { thread_id: row.id, message });
+    onOpenChat(row.chat_id);
+  };
+
+  const newRoutine = () =>
+    startRoutineThread(
+      "New scheduled task",
+      "I want to create a scheduled task. Ask me what it should do, how often it should run " +
+        "(for example weekdays at 09:00), and the timezone. Once I answer, create it with " +
+        "create_routine and show me the human-readable schedule.",
+    );
+
+  const editRoutine = (routine: AgentRoutine) => {
+    const current =
+      routine.kind === "once"
+        ? `once on ${routine.run_at ? new Date(routine.run_at).toLocaleString() : "an unset date"}`
+        : `${humanSchedule(routine.schedule ?? "")} (${routine.timezone})`;
+    return startRoutineThread(
+      `Edit scheduled task: ${routine.name}`,
+      `I want to change the scheduled task "${routine.name}" (${routine.id}). Its current schedule is ` +
+        `${current}. Ask me what to change, then update it with update_routine. If I ask to remove ` +
+        "it, use delete_routine. Describe schedule changes in plain language, not cron.",
+    );
+  };
+
+  return <AgentRoutines agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage}
+    onNavigate={onNavigate} onNewRoutine={newRoutine} onEditRoutine={editRoutine} onOpenChat={onOpenChat} />;
+}
+
 export function AgentRoutines({
   agentId,
   routineId,
+  routineRunId,
+  canManage,
   onNavigate,
   onNewRoutine,
   onEditRoutine,
+  onOpenChat,
 }: {
   agentId: string;
   routineId?: string;
+  routineRunId?: string;
+  canManage: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
+  onOpenChat: (chatId: string) => void;
 }) {
   if (routineId && routineId !== "new") {
     return (
-      <RoutineDetail agentId={agentId} routineId={routineId} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
+      <RoutineDetail agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} onOpenChat={onOpenChat} />
     );
   }
-  return <RoutineList agentId={agentId} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
+  return <RoutineList agentId={agentId} canManage={canManage} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
 }
 
 function RoutineList({
   agentId,
+  canManage,
   onNavigate,
   onNewRoutine,
 }: {
   agentId: string;
+  canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
 }) {
@@ -105,102 +159,112 @@ function RoutineList({
     try {
       await onNewRoutine();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open a routine thread.");
+      setError(err instanceof Error ? err.message : "Could not open a chat for this scheduled task.");
     } finally {
       setStarting(false);
     }
   };
 
+  const work = import.meta.env.MODE !== "control";
+  const create = canManage && (
+    <Button variant={work ? "ghost" : "default"} size={work ? "icon" : "sm"}
+      aria-label="New scheduled task" title={work ? "New scheduled task" : undefined}
+      onClick={() => void start()} disabled={starting}>
+      {starting ? <Loader2 className="animate-spin" /> : <Plus />}
+      {!work && "New scheduled task"}
+    </Button>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm text-muted-foreground">
-          Routines run on a schedule in an isolated context. Ask the agent to create or change one.
-        </p>
-        <div className="flex-1" />
-        <Button size="sm" onClick={() => void start()} disabled={starting}>
-          {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-          New routine
-        </Button>
-      </div>
-      {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
-      {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
-      {routines === null && loadError === null && <LoadingRows rows={3} />}
-      {routines !== null && routines.length === 0 && (
-        <EmptyState
-          icon={Clock}
-          title="No routines yet"
-          hint="Start a chat with the agent and describe what should run, when, and in which timezone."
-          action={
-            <Button size="sm" onClick={() => void start()} disabled={starting}>
-              {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-              New routine
-            </Button>
-          }
-        />
-      )}
-      {routines !== null && routines.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          {routines.map((routine) => (
-            <button
-              key={routine.id}
-              type="button"
-              onClick={() =>
-                onNavigate({
-                  view: "agent",
-                  agentId,
-                  tab: "routines",
-                  routineId: routine.id,
-                })
-              }
-              className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
-            >
-              <Clock className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">{routine.name}</span>
-                  <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                    {routine.enabled ? "Enabled" : "Paused"}
-                  </ToneBadge>
-                  {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
-                </span>
-                <span
-                  className="mt-0.5 block truncate text-xs text-muted-foreground"
-                  title={routine.schedule ?? undefined}
-                >
-                  {scheduleLabel(routine)}
-                  {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
-                </span>
-              </span>
-              {routine.last_run && <RunStatusBadge status={routine.last_run.status} />}
-            </button>
-          ))}
+    <>
+      {work && <PageHeader variant="work" title="Scheduled tasks" actions={create || undefined} />}
+      <div className={work ? "work-page-content space-y-4 pb-8" : "space-y-4"}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            Create or change scheduled tasks in chat.
+          </p>
+          {!work && create}
         </div>
-      )}
-    </div>
+        {error !== null && <ErrorState title="Could not open a chat for this scheduled task" message={error} />}
+        {loadError !== null && <ErrorState title="Could not load scheduled tasks" message={loadError} onRetry={retry} />}
+        {routines === null && loadError === null && <LoadingRows rows={3} />}
+        {routines !== null && routines.length === 0 && (
+          <EmptyState
+            icon={Clock}
+            title="No scheduled tasks yet"
+            hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
+          />
+        )}
+        {routines !== null && routines.length > 0 && (
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            {routines.map((routine) => (
+              <button
+                key={routine.id}
+                type="button"
+                onClick={() =>
+                  onNavigate({
+                    view: "agent",
+                    agentId,
+                    tab: "routines",
+                    routineId: routine.id,
+                  })
+                }
+                className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
+              >
+                <Clock className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-sm font-medium">{routine.name}</span>
+                    {!routine.enabled && <ToneBadge tone="neutral">Paused</ToneBadge>}
+                    {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
+                  </span>
+                  <span
+                    className="mt-0.5 block truncate text-xs text-muted-foreground"
+                    title={routine.schedule ?? undefined}
+                  >
+                    {scheduleLabel(routine)}
+                    {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
+                  </span>
+                </span>
+                {routine.last_run && routine.last_run.status !== "succeeded" && <RunStatusBadge status={routine.last_run.status} />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
 function RoutineDetail({
   agentId,
   routineId,
+  routineRunId,
+  canManage,
   onNavigate,
   onEditRoutine,
+  onOpenChat,
 }: {
   agentId: string;
   routineId: string;
+  routineRunId?: string;
+  canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
+  onOpenChat: (chatId: string) => void;
 }) {
   // The routine comes from the agent's pushed routines; its run history is
   // seeded once and then follows every pushed run of this routine.
   const { rows: routines, error: loadError, retry } = useAgentRoutines(agentId);
   const routine = routines?.find((row) => row.id === routineId) ?? null;
-  const error = loadError ?? (routines !== null && routine === null ? "This routine no longer exists." : null);
+  const error = loadError ?? (routines !== null && routine === null ? "This scheduled task no longer exists." : null);
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [changingSchedule, setChangingSchedule] = useState(false);
+  const [openingDelivery, setOpeningDelivery] = useState(false);
+  const [deliveryMessage, setDeliveryMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -225,9 +289,10 @@ function RoutineDetail({
     setRunning(true);
     setActionError(null);
     try {
-      await runRoutine(agentId, routineId);
+      const { chat_id } = await runRoutine(agentId, routineId);
+      if (chat_id) onOpenChat(chat_id);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not start the routine.");
+      setActionError(err instanceof Error ? err.message : "Could not run the scheduled task.");
     } finally {
       setRunning(false);
     }
@@ -235,10 +300,39 @@ function RoutineDetail({
 
   const changeDelivery = async (delivery: AgentRoutine["delivery"]) => {
     setActionError(null);
+    setDeliveryMessage(null);
     try {
-      await setRoutineDelivery(agentId, routineId, delivery);
+      await updateRoutine(agentId, routineId, { delivery });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not change where the routine delivers.");
+      setActionError(err instanceof Error ? err.message : "Could not change where the task sends messages.");
+    }
+  };
+
+  const openDeliveryChat = async () => {
+    setOpeningDelivery(true);
+    setActionError(null);
+    setDeliveryMessage(null);
+    try {
+      const { chat_id } = await getScheduledTaskDeliveryChat(agentId, routineId);
+      if (chat_id) onOpenChat(chat_id);
+      else setDeliveryMessage("This task has not delivered any messages to this destination yet.");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not open the delivery chat.");
+    } finally {
+      setOpeningDelivery(false);
+    }
+  };
+
+  const toggleSchedule = async () => {
+    if (!routine) return;
+    setChangingSchedule(true);
+    setActionError(null);
+    try {
+      await updateRoutine(agentId, routineId, { enabled: !routine.enabled });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not change the schedule status.");
+    } finally {
+      setChangingSchedule(false);
     }
   };
 
@@ -249,134 +343,156 @@ function RoutineDetail({
     try {
       await onEditRoutine(routine);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not open a routine thread.");
+      setActionError(err instanceof Error ? err.message : "Could not open a chat for this scheduled task.");
     } finally {
       setEditing(false);
     }
   };
 
-  if (error !== null) {
+  const work = import.meta.env.MODE !== "control";
+  const destinations = { label: "Scheduled tasks", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
+  const header = (
+    <PageHeader variant={work ? "work" : "bar"} title={routine?.name ?? destinations.label} back={destinations} />
+  );
+
+  if (error !== null || routine === null) {
     return (
-      <div className="space-y-4">
-        <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
-      </div>
+      <>
+        {header}
+        <div className={work ? "work-page-content pt-3" : "pt-3"}>
+          {error !== null
+            ? <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
+            : <LoadingRows rows={3} />}
+        </div>
+      </>
     );
   }
-  if (routine === null) return <InlineLoading label="Loading routine" />;
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running}>
-          {running ? <Loader2 className="animate-spin" /> : <Play />}
-          Run now
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => void edit()} disabled={editing}>
-          {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
-          Edit via agent
-        </Button>
-      </div>
+  const formatDate = (date: string) => new Date(date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-      <Section title="Routine" description="Schedules and prompts are managed in chat.">
-        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Name</dt>
-            <dd className="mt-0.5">{routine.name}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Status</dt>
-            <dd className="mt-0.5">
-              <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                {routine.enabled ? "Enabled" : "Paused"}
-              </ToneBadge>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Schedule</dt>
-            <dd className="mt-0.5" title={routine.schedule ?? undefined}>
-              {scheduleLabel(routine)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Next run</dt>
-            <dd className="mt-0.5 text-muted-foreground">
-              {routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}
-            </dd>
-          </div>
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-medium text-muted-foreground">Messages go to</dt>
-            <dd className="mt-1">
-              <Select
-                value={routine.delivery}
-                onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}
-              >
-                <SelectTrigger className="max-w-72" aria-label="Messages go to">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="thread">One chat for this routine</SelectItem>
-                  <SelectItem value="new_chat">A new chat for each message</SelectItem>
-                </SelectContent>
-              </Select>
-            </dd>
-          </div>
-        </dl>
-        <div className="mt-4">
-          <p className="text-xs font-medium text-muted-foreground">Prompt</p>
-          <p className="mt-1 whitespace-pre-wrap rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm leading-relaxed">
-            {routine.prompt}
-          </p>
+  if (routineRunId) {
+    const run = runs?.find((item) => item.id === routineRunId);
+    const date = run?.started_at ?? run?.created_at;
+    return (
+      <>
+        <PageHeader variant="work" title={date ? formatDate(date) : "Run"}
+          back={{ label: routine.name, onClick: () => onNavigate({ view: "agent", agentId, tab: "routines", routineId }) }} />
+        <div className="work-page-content space-y-3 pb-8 pt-3">
+          {runs === null ? <LoadingRows rows={2} /> : run ? (
+            <>
+              {run.status !== "succeeded" && <RunStatusBadge status={run.status} />}
+              {(run.error_message || run.summary) && (
+                <div className={`${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
+                  <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{run.error_message || run.summary || ""}</Markdown>
+                </div>
+              )}
+            </>
+          ) : <ErrorState message="This run is unavailable." />}
         </div>
-        <p className="mt-3 text-2xs text-muted-foreground">
-          The run gets these instructions, this prompt and the workspace. It does not see the other threads.
-        </p>
-      </Section>
+      </>
+    );
+  }
 
-      {actionError !== null && (
-        <p role="alert" className="text-sm text-destructive">
-          {actionError}
-        </p>
-      )}
-
-      <Section title="Run history" description="Occurrences of this routine, newest first.">
-        {runs === null ? (
-          <InlineLoading label="Loading runs" />
-        ) : runs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">This routine has not run yet.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {runs.map((run) => (
-              <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-xs">
-                <RunStatusBadge status={run.status} />
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {run.summary?.trim() || "No summary"}
-                </span>
-                <Mono>{run.id.slice(0, 8)}</Mono>
-                <span className="text-muted-foreground">{relativeTime(run.started_at ?? run.created_at)}</span>
-                <button
-                  type="button"
-                  className="text-primary underline-offset-4 hover:underline"
-                  onClick={() => onNavigate({ view: "run", runId: run.id })}
-                >
-                  Open
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-    </div>
-  );
-}
-
-function BackButton({ agentId, onNavigate }: { agentId: string; onNavigate: (routes: AgentsRoute) => void }) {
   return (
-    <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "agent", agentId, tab: "routines" })}>
-      <ArrowLeft />
-      Routines
-    </Button>
+    <>
+      {header}
+      <div className={work ? "work-page-content space-y-6 pb-8 pt-3" : "space-y-6 py-3"}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <dl className="flex flex-wrap gap-x-8 gap-y-3">
+            <div>
+              <dt className="text-muted-foreground">Schedule</dt>
+              <dd className="mt-1 flex flex-wrap items-center gap-2" title={routine.schedule ?? undefined}>
+                {scheduleLabel(routine)}
+                {!routine.enabled && <ToneBadge tone="neutral">Paused</ToneBadge>}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Next run</dt>
+              <dd className="mt-1">{routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}</dd>
+            </div>
+          </dl>
+          {canManage && (
+            <div className="flex items-center gap-1">
+              <Button variant="outline" onClick={() => void runNow()} disabled={running}>
+                {running ? <Loader2 className="animate-spin" /> : <Play />}
+                Run now
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Scheduled task actions" title="Scheduled task actions">
+                    <Ellipsis />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => void edit()} disabled={editing}>
+                    <Pencil /> Edit in chat
+                  </DropdownMenuItem>
+                  {routine.kind === "cron" && (
+                    <DropdownMenuItem onSelect={() => void toggleSchedule()} disabled={changingSchedule}>
+                      {routine.enabled ? "Pause schedule" : "Resume schedule"}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label htmlFor="routine-delivery" className="text-muted-foreground">Messages go to</label>
+          <Select value={routine.delivery} disabled={!canManage}
+            onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}>
+            <SelectTrigger id="routine-delivery" className="w-fit max-w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="thread">One chat for this task</SelectItem>
+              <SelectItem value="new_chat">A new chat for each message</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="ghost" onClick={() => void openDeliveryChat()} disabled={openingDelivery}>
+            {openingDelivery && <Loader2 className="animate-spin" />}
+            Open
+          </Button>
+          {deliveryMessage && <p role="status" className="basis-full text-muted-foreground">{deliveryMessage}</p>}
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-muted-foreground">Prompt</h2>
+          <div className={`space-y-3 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
+            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{routine.prompt}</Markdown>
+          </div>
+        </div>
+
+        {actionError !== null && <p role="alert" className="text-destructive">{actionError}</p>}
+
+        <section aria-label="Run history" className="space-y-2 border-t border-border pt-4">
+          <h2 className="font-semibold">Run history</h2>
+          {runs === null ? (
+            <LoadingRows rows={2} />
+          ) : runs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This task has not run yet.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {runs.map((run) => {
+                const date = run.started_at ?? run.created_at;
+                return (
+                  <li key={run.id}>
+                    <button type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-2.5 text-left hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={() => onNavigate(work
+                        ? { view: "agent", agentId, tab: "routines", routineId, routineRunId: run.id }
+                        : { view: "run", runId: run.id })}>
+                      <time dateTime={date}>{formatDate(date)}</time>
+                      {run.status !== "succeeded" && <RunStatusBadge status={run.status} />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      </div>
+    </>
   );
 }

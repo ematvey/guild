@@ -9,6 +9,7 @@ import { ensureCoordinationThread, coordinationAdmission, coordinationSettings }
 // caller through the session and checks agent visibility/role before it
 // touches a store.
 
+import { isWorkRequest } from "./client-contract.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-contexts.js";
 import { ApiError } from "../errors.js";
@@ -925,10 +926,18 @@ export function registerAgentRoutes(
     return reply.send(download.stream);
   });
 
+  const requireRoutineAccess = async (req: FastifyRequest, user: Awaited<ReturnType<typeof requireUser>>, agentId: string, mode: "use" | "manage") => {
+    const result = await store.requireAccess(user, agentId, mode);
+    if (isWorkRequest(req) && (!result.agent.is_personal || result.agent.owner_user_id !== user.id)) {
+      throw ApiError.forbidden("manage shared agent routines in the Control Center");
+    }
+    return result;
+  };
+
   app.get("/api/v1/agents/:id/routines", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "use");
+    await requireRoutineAccess(req, user, agentId, "use");
     return sendJson(reply, {
       routines: await store.runs.listRoutines(agentId),
     });
@@ -937,7 +946,7 @@ export function registerAgentRoutes(
   app.post("/api/v1/agents/:id/routines", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "manage");
+    await requireRoutineAccess(req, user, agentId, "manage");
     const body = jsonBody(req);
     const kind = routineKindField(body) ?? "cron";
     const routine = await createRoutine(infra.pool, agentId, {
@@ -957,7 +966,7 @@ export function registerAgentRoutes(
   app.get("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "use");
+    await requireRoutineAccess(req, user, agentId, "use");
     return sendJson(reply, {
       routine: await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid")),
     });
@@ -966,7 +975,7 @@ export function registerAgentRoutes(
   app.patch("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "manage");
+    await requireRoutineAccess(req, user, agentId, "manage");
     const body = jsonBody(req);
     const routine = await updateRoutine(infra.pool, agentId, parseUuidParam(req, "rid"), {
       name: optionalString(body, "name"),
@@ -984,7 +993,7 @@ export function registerAgentRoutes(
   app.delete("/api/v1/agents/:id/routines/:rid", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "manage");
+    await requireRoutineAccess(req, user, agentId, "manage");
     await deleteRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
     return sendJson(reply, { deleted: true });
   });
@@ -992,10 +1001,10 @@ export function registerAgentRoutes(
   app.post("/api/v1/agents/:id/routines/:rid/run", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    const { agent } = await store.requireAccess(user, agentId, "manage");
+    const { agent } = await requireRoutineAccess(req, user, agentId, "manage");
     requireActiveAgent(agent);
     const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
-    const run = await runRoutineNow(
+    const result = await runRoutineNow(
       {
         pool: infra.pool,
         store,
@@ -1005,13 +1014,22 @@ export function registerAgentRoutes(
       agent,
       routine,
     );
-    return sendJson(reply, { run });
+    return sendJson(reply, result);
+  });
+
+  app.get("/api/v1/agents/:id/routines/:rid/delivery-chat", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const agentId = parseUuidParam(req, "id");
+    await requireRoutineAccess(req, user, agentId, "use");
+    const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
+    const chat_id = await store.threads.scheduledTaskDeliveryChat(agentId, user.id, routine.id, routine.delivery);
+    return sendJson(reply, { chat_id });
   });
 
   app.get("/api/v1/agents/:id/routines/:rid/runs", async (req, reply) => {
     const user = await requireUser(auth, req);
     const agentId = parseUuidParam(req, "id");
-    await store.requireAccess(user, agentId, "use");
+    await requireRoutineAccess(req, user, agentId, "use");
     const routineId = parseUuidParam(req, "rid");
     await getRoutine(infra.pool, agentId, routineId);
     return sendJson(reply, {

@@ -7,7 +7,7 @@
 // refresh is refused the call fails with code "unauthorized". Signing out
 // is the member socket's job (it hears auth_required), never a request's.
 
-import { apiUrl, getToken, refreshSession } from "../session";
+import { apiUrl, getToken, guildSurfaceHeaders, refreshSession } from "../session";
 
 export class ApiError extends Error {
   constructor(
@@ -55,6 +55,7 @@ export async function requestResponse(method: string, path: string, init: RawIni
       ...(init.signal !== undefined ? { signal: init.signal } : {}),
       headers: {
         ...init.headers,
+        ...guildSurfaceHeaders(path),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
     });

@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Avatar } from "@guild/ui/components/avatar";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
@@ -209,12 +210,13 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
   );
 }
 
-/** The slim top bar shared by every detail state: the "Skills › slug"
- *  breadcrumb (the Skills segment navigates back), and the action row at
- *  the right edge. */
+/** The slim breadcrumb bar shared by every detail state. */
 function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => void; actions?: ReactNode }) {
+  if (import.meta.env.MODE !== "control") {
+    return <PageHeader variant="work" title={slug} back={{ label: "Customize", onClick: onBack }} actions={actions} />;
+  }
   return (
-    <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-background px-5 py-2.5">
+    <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-background px-5 py-2.5">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
         <button
           className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground"
@@ -236,6 +238,8 @@ export interface SkillDetailProps {
   me: SkillMe;
   onBack: () => void;
   /** Opens the skill editor for this slug. */
+  management: boolean;
+  onManage: () => void;
   onEdit?: (slug: string) => void;
   /** Navigates to another skill's detail (used after a successful fork). */
   onOpenSkill?: (slug: string) => void;
@@ -248,6 +252,8 @@ export function SkillDetail({
   slug,
   me,
   onBack,
+  management,
+  onManage,
   onEdit,
   onOpenSkill,
   file = "SKILL.md",
@@ -365,7 +371,7 @@ export function SkillDetail({
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <DetailHeader slug={slug} onBack={onBack} />
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3">
+        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3" : "work-page-content pb-3"}>
           <Skeleton className="mb-2 h-6 w-2/3 rounded-lg" />
           <Skeleton className="mb-2 h-4 w-full rounded-md" />
           <SkeletonText lines={5} className="pt-3" />
@@ -374,7 +380,10 @@ export function SkillDetail({
     );
   }
 
+  const control = import.meta.env.MODE === "control";
   const actions = detailActions(detail, me);
+  const managementActions = new Set(["Edit", "Fork", "Unpublish", "Allow anyone to edit", "Restrict editing"]);
+  const visibleActions = import.meta.env.MODE === "control" && management ? actions : actions.filter((label) => !managementActions.has(label));
   const forkDraft = forkPayload(detail, forkSlug.trim());
   const files = source === null ? null : bundleFilePaths(source);
   const currentPath = files?.includes(selectedFile) ? selectedFile : "SKILL.md";
@@ -438,7 +447,10 @@ export function SkillDetail({
 
   const actionButtons = (
     <>
-      {actions.map((label) =>
+      {!management && actions.some((label) => managementActions.has(label)) && (
+        <Button variant="ghost" size="sm" onClick={onManage}>Manage skill</Button>
+      )}
+      {visibleActions.map((label) =>
         label === "Install" ? (
           <Button
             key={label}
@@ -472,7 +484,7 @@ export function SkillDetail({
           >
             {label}
           </Button>
-        ) : label === "Edit" ? (
+        ) : import.meta.env.MODE !== "control" ? null : label === "Edit" ? (
           <Button
             key={label}
             variant="outline"
@@ -539,12 +551,16 @@ export function SkillDetail({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <DetailHeader slug={detail.slug} onBack={onBack} actions={actionButtons} />
-      <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
-          {/* title block */}
+      <DetailHeader slug={detail.slug} onBack={onBack} actions={control ? actionButtons : undefined} />
+      <div className={`min-h-0 flex-1 overflow-y-auto ${management ? "" : "bg-muted/25"}`} data-scrollable>
+        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pt-4 pb-12"}>
+          <section className={management ? undefined : "rounded-xl border border-border bg-card p-4 sm:p-6"}>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>
+            {control ? (
+              management && <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>
+            ) : (
+              <h2 className="min-w-0 break-words text-base font-bold">{detail.slug}</h2>
+            )}
             {detail.maintainer_gated && (
               <Badge variant="secondary" className="gap-1">
                 <Lock className="size-3" /> {editAccessLabel(editAccess(detail), detail.owner?.label)}
@@ -568,7 +584,7 @@ export function SkillDetail({
             )}
             {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
           </div>
-          {detail.description !== "" && <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>}
+          {detail.description !== "" && <p className="mt-1.5 max-w-prose text-base text-muted-foreground">{detail.description}</p>}
           {detail.owner !== null && (
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
               owned by
@@ -583,6 +599,13 @@ export function SkillDetail({
               {detail.owner.kind === "team" && <span>(team)</span>}
             </p>
           )}
+
+            {!control && (
+              <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Skill actions">
+                {actionButtons}
+              </div>
+            )}
+          </section>
 
           {/* publish-gate notice */}
           {detail.maintainer_gated && (
@@ -734,7 +757,7 @@ export function SkillDetail({
             </div>
           </div>
 
-          {forkOpen && (
+          {import.meta.env.MODE === "control" && forkOpen && (
             <div className="mt-3.5 rounded-lg border border-border bg-card p-2.5">
               <p className="mb-1.5 text-sm text-muted-foreground">
                 Fork {detail.slug}
