@@ -105,7 +105,7 @@ suite("persistent coordination", () => {
     expect(ia.id).not.toBe(ib.id);
     const ordinary = await store.threads.createThread(agent.id, alice.id, "Assistant");
     const rows = await chats.listChats(agent.org_id, alice.id);
-    expect(rows.find((row) => row.id === ia.chat_id)?.assistant_inbox).toBe(true);
+    expect(rows.find((row) => row.id === ia.chat_id)?.shared_agent_inbox).toBe(true);
     expect(rows.find((row) => row.id === ordinary.chat_id)?.assistant_inbox).toBeUndefined();
     expect((await chats.listChats(agent.org_id, alice.id)).map((c) => c.id)).not.toContain(a.chat_id);
     await expect(chats.getChat(agent.org_id, ib.chat_id, alice)).rejects.toThrow();

@@ -5,7 +5,6 @@ import {
   ArchiveRestore,
   Folder,
   FolderOpen,
-  Circle,
   EllipsisVertical,
   Loader2,
   MessageCircle,
@@ -186,14 +185,12 @@ export function ChatListItem({
   dragProps,
   onPin,
   archiveLabel,
-  assistantInbox,
   showChatIcon,
   routine,
 }: {
   title: string;
   active: boolean;
   status: RowState;
-  assistantInbox?: boolean;
   showChatIcon?: boolean;
   /** The routine whose output this chat is: the row leads with its mark. */
   routine?: string;
@@ -210,7 +207,7 @@ export function ChatListItem({
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const hasActions = !assistantInbox && Boolean(onRename || onArchive || onDelete || onPin);
+  const hasActions = Boolean(onRename || onArchive || onDelete || onPin);
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -248,9 +245,7 @@ export function ChatListItem({
         type="button"
         className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
-        {assistantInbox ? (
-          <Circle aria-hidden="true" className="size-4 shrink-0" />
-        ) : routine !== undefined ? (
+        {routine !== undefined ? (
           <Repeat
             data-routine-mark
             aria-label={`Routine: ${routine}`}
@@ -369,7 +364,7 @@ export function ProjectHeader({
         {machine?.name && (
           <span
             title={machine.name}
-            className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground"
+            className="flex min-w-0 items-center gap-1.5 overflow-hidden text-base text-muted-foreground"
           >
             <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
             {machine.online !== undefined &&

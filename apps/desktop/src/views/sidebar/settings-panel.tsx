@@ -25,7 +25,7 @@ export function SettingsPanel({
           if (items.length === 0) return null;
           return (
             <div key={g.key}>
-              <p className="px-1 pb-1 pt-4 text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
+              <p className="px-1 pb-1 pt-4 text-base font-medium uppercase tracking-wider text-muted-foreground/60">
                 {g.label}
               </p>
               <div className="space-y-0.5">

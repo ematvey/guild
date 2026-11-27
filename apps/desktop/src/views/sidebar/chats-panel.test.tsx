@@ -99,10 +99,38 @@ it("shows synced pins, keeps project threads in Recent, and hides archived proje
   );
   const pinned = within(screen.getByRole("region", { name: "Pinned" }));
   const recent = within(screen.getByRole("region", { name: "Chats and tasks" }));
-  expect(pinned.getAllByText("Active conversation")).toHaveLength(2);
+  expect(pinned.getAllByText("Active conversation")).toHaveLength(1);
   expect(recent.getByText("Active conversation")).toBeDefined();
   expect(screen.queryByText("Hidden conversation")).toBeNull();
   expect(screen.getAllByText("Active folder")).toHaveLength(1);
   fireEvent.click(recent.getByRole("button", { name: "Unpin" }));
   expect(onPinChat).toHaveBeenCalledWith(liveChat.id, false);
+});
+
+
+it("keeps sidebar sections and project folders as the member left them when switching threads", () => {
+  const folder = project("p-live", "Project folder");
+  const pinned = { ...project("p-pin", "Pinned folder"), pinned_at: "2026-01-02T00:00:00Z" };
+  const chats = sidebarGrouping([]);
+  const panel = (chatId: string | null, projectId: string | null) => (
+    <ChatsPanel
+      grouping={chats}
+      projects={[folder, pinned]}
+      loadingChats={false}
+      chatId={chatId}
+      projectId={projectId}
+      onOpenChat={() => {}}
+    />
+  );
+  const { rerender } = render(panel("c-plain", null));
+  const pins = screen.getByRole("button", { name: /^Pinned$/ });
+  fireEvent.click(pins);
+  rerender(panel("c-project", folder.id));
+  expect(screen.queryByText("Project folder")).toBeNull();
+  rerender(panel("c-pinned-project", pinned.id));
+  expect(pins.getAttribute("aria-expanded")).toBe("false");
+
+  rerender(panel(null, pinned.id));
+  expect(pins.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("Pinned folder").closest("button")!.getAttribute("aria-expanded")).toBe("true");
 });

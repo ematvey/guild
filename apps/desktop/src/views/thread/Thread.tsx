@@ -1,5 +1,4 @@
 import { request } from "../../lib/api/request";
-import { openAssistant } from "../agents/agents-api";
 // The thread view: transcript, composer and sidebar for one chat. State
 // lives in the hooks under thread/hooks/ and the chat stores, pure
 // derivations in the sibling modules, the parts in their own components, and
@@ -169,39 +168,6 @@ function ThreadView(props: ThreadProps) {
     if (route.chatId === null) return;
     void request("POST", `/api/v1/chats/${route.chatId}/surface`, {}).catch(() => {});
   }, [route.chatId]);
-  // The Chats tab opens on the member's assistant, not on a blank composer:
-  // its inbox thread is the tab's home. A refused open (no model, coordination
-  // off) leaves the scratch composer in place, and a chat route, a surface
-  // page, an overlay or the addressed scratch composer (/chats/new) is not
-  // the tab root.
-  useEffect(() => {
-    if (route.chatId !== null || route.tab !== "chats" || route.newChat) return;
-    if (route.projectId !== null || route.projectsPage || route.searchOpen || route.overlay !== null) return;
-    if (route.skills !== null || route.agents !== null || route.integrations !== null) return;
-    if ((route.apps ?? null) !== null) return;
-    let live = true;
-    void openAssistant()
-      .then((result) => {
-        if (live) pushRoute({ chatId: result.chat_id }, { replace: true });
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [
-    route.chatId,
-    route.tab,
-    route.newChat,
-    route.projectsPage,
-    route.searchOpen,
-    route.projectId,
-    route.overlay,
-    route.skills,
-    route.agents,
-    route.integrations,
-    route.apps,
-    pushRoute,
-  ]);
   const chatId = route.chatId;
   const overlay = route.overlay;
   const thread = useThreadStore(chatId);
@@ -276,10 +242,6 @@ function ThreadView(props: ThreadProps) {
   // survives navigation, so returning to a chat renders its tree at once.
   const subagentNodes = viewChatId ? (subagentTrees[viewChatId] ?? []) : [];
   const currentProject = pickedProject ?? chatProjectOf(openRow);
-  // Ref mirror for effects that must read the pick without re-running on
-  // every pick change.
-  const currentProjectRef = useRef(currentProject);
-  currentProjectRef.current = currentProject;
   // This client's own engine: its machine runs its own tools, so it is never
   // a remote machine with presence to show.
   const localMachineId = HAS_ENGINE ? machineId() : undefined;
@@ -527,7 +489,7 @@ function ThreadView(props: ThreadProps) {
   // An archived thread is in the archived list, not the active one; its row
   // still supplies the title.
   const listedChat = activeChat ?? archivedChats?.find((c) => c.id === viewChatId);
-  const assistantInbox = listedChat?.assistant_inbox === true || listedChat?.shared_agent_inbox === true;
+  const assistantInbox = listedChat?.shared_agent_inbox === true;
   // A child chat is an execution transcript, not a sidebar chat: the lists
   // omit it, so it reads as read-only and never falls back to "New chat".
   // The tree node is checked first because it survives a state sync: a
@@ -695,7 +657,7 @@ function ThreadView(props: ThreadProps) {
       mode={mode}
       historyFilter={route.historyFilter}
       onHistoryFilter={(historyFilter) => pushRoute({ historyFilter })}
-      chatId={viewChatId}
+      chatId={chatId}
       projectId={route.projectId}
       onOpenChat={openChat}
       onNewChatInProject={newChatInProject}
@@ -708,8 +670,7 @@ function ThreadView(props: ThreadProps) {
   // /project/<id>/thread/<cid>, so the project context survives reload and
   // back/forward. A bare /thread/<id> for a project chat is rewritten in
   // place (replace: the bare address is not a step back) once the chat list
-  // names its project; a chat not yet listed (just sent) counts as bound
-  // while the composer still carries a project pick.
+  // identifies its project.
   const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!route.chatId || route.projectId !== null) {
@@ -719,10 +680,11 @@ function ThreadView(props: ThreadProps) {
     if (routeTabDecidedRef.current === route.chatId) return;
     if (chats === null || archivedChats === null) return;
     const row = chats.find((c) => c.id === route.chatId) ?? archivedChats.find((c) => c.id === route.chatId);
-    const projectId = row?.project_id ?? currentProjectRef.current?.id ?? null;
-    if (row || projectId) routeTabDecidedRef.current = route.chatId;
+    if (!row) return;
+    routeTabDecidedRef.current = route.chatId;
+    const projectId = row.project_id;
     if (projectId) pushRoute({ projectId }, { replace: true });
-  }, [route.chatId, route.projectId, chats, archivedChats, currentProject?.id, pushRoute]);
+  }, [route.chatId, route.projectId, chats, archivedChats, pushRoute]);
 
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
@@ -742,7 +704,7 @@ function ThreadView(props: ThreadProps) {
       <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto bg-muted/25 p-4 sm:p-6">
           <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card p-4 sm:p-6">
-          <h1 className="mb-4 text-lg font-semibold">Scheduled</h1>
+          <h1 className="mb-4 text-base font-semibold">Scheduled</h1>
           {agent.agentsList === null ? <p>Loading routines…</p> :
             agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
@@ -794,6 +756,12 @@ function ThreadView(props: ThreadProps) {
       onOpenRoutines={openRoutines}
     />
   );
+  const sidebarBody = (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {workNavigation}
+      {renderSidebar("history")}
+    </div>
+  );
   const menu = (collapsed = false) => (
     <SidebarMenu
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
@@ -830,8 +798,7 @@ function ThreadView(props: ThreadProps) {
           >
             <SheetTitle className="sr-only">Work sidebar</SheetTitle>
             <WorkSidebarHeader onClose={sidebarClose} />
-            {workNavigation}
-            {renderSidebar("history")}
+            {sidebarBody}
             {menu()}
           </SheetContent>
         </Sheet>
@@ -840,8 +807,7 @@ function ThreadView(props: ThreadProps) {
       ) : (
         <Sidebar collapsed={false}>
           <WorkSidebarHeader onCollapse={sidebarCollapse} />
-          {workNavigation}
-          {renderSidebar("history")}
+          {sidebarBody}
           {menu()}
         </Sidebar>
       )}
@@ -1015,7 +981,7 @@ function ThreadView(props: ThreadProps) {
         if (!open) pushRoute({ searchOpen: false });
       }}>
         <DialogContent className="max-w-xl" aria-describedby={undefined}>
-          <DialogTitle>Search</DialogTitle>
+          <DialogTitle className="text-base">Search</DialogTitle>
           {renderSidebar("search")}
         </DialogContent>
       </Dialog>
@@ -1023,7 +989,7 @@ function ThreadView(props: ThreadProps) {
         if (!open && route.overlay === null) switchTab("chats");
       }}>
         <DialogContent className="flex h-[min(42rem,90dvh)] w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0" aria-describedby={undefined}>
-          <DialogTitle className="border-b border-border px-5 py-3">{settingsSection === "machine" ? "Devices" : "Settings"}</DialogTitle>
+          <DialogTitle className="border-b border-border px-5 py-3 text-base">{settingsSection === "machine" ? "Devices" : "Settings"}</DialogTitle>
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
             <div className="max-h-[30dvh] shrink-0 overflow-y-auto border-b border-border sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
               <SettingsPanel role={role} activeSection={settingsSection} onSelectSection={openSettingsSection} />

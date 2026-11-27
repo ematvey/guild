@@ -88,7 +88,7 @@ export function WorkNavigation({
           key={label}
           variant="ghost"
           size="sm"
-          className="guild-sidebar-current h-8 w-full justify-start px-2 font-normal pointer-coarse:h-10"
+          className="guild-sidebar-current h-8 w-full justify-start px-2 text-base font-normal pointer-coarse:h-10"
           aria-current={id === active ? "page" : undefined}
           aria-haspopup={label === "Search" ? "dialog" : undefined}
           onClick={open}
@@ -155,8 +155,8 @@ export function SidebarMenu({
         ) : workspaceName && (
           <>
             <div className="min-w-0 px-2 py-1.5">
-              <div className="text-xs text-muted-foreground">Workspace</div>
-              <div className="truncate text-sm font-medium" title={workspaceName}>{workspaceName}</div>
+              <div className="text-base text-muted-foreground">Workspace</div>
+              <div className="truncate text-base font-medium" title={workspaceName}>{workspaceName}</div>
             </div>
             <DropdownMenuSeparator />
           </>
@@ -166,20 +166,20 @@ export function SidebarMenu({
             {workPages
               .filter(({ id }) => id !== "routines" || onOpenRoutines)
               .map(({ id, label }) => (
-                <DropdownMenuItem key={id} onSelect={() => (id === "routines" ? onOpenRoutines?.() : onTabChange(id))}>
+                <DropdownMenuItem className="text-base" key={id} onSelect={() => (id === "routines" ? onOpenRoutines?.() : onTabChange(id))}>
                   {label}
                 </DropdownMenuItem>
               ))}
             <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuItem onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onOpenSettings("machine")}><Cpu />Devices</DropdownMenuItem>
-        {collapsed && <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>}
-        {onOpenControl && <DropdownMenuItem onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
-        <DropdownMenuItem onClick={onOpenHelp}>Help</DropdownMenuItem>
+        <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
+        <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("machine")}><Cpu />Devices</DropdownMenuItem>
+        {collapsed && <DropdownMenuItem className="text-base" onClick={onOpenDevice}>Set up a device</DropdownMenuItem>}
+        {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
+        <DropdownMenuItem className="text-base" onClick={onOpenHelp}>Help</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+        <DropdownMenuItem className="text-base text-destructive focus:text-destructive" onClick={onSignOut}>
           Sign out
         </DropdownMenuItem>
       </UserBadge>

@@ -139,18 +139,20 @@ export function AgentSettings({
         </p>
         {assistantEnabled && (
           <>
-            <Button
-              className="mt-3"
-              variant="outline"
-              disabled={onOpenChat === undefined}
-              onClick={() => {
-                void openAssistant(agent.id)
-                  .then(({ chat_id }) => onOpenChat?.(chat_id))
-                  .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)));
-              }}
-            >
-              Open assistant
-            </Button>
+            {!agent.is_personal && (
+              <Button
+                className="mt-3"
+                variant="outline"
+                disabled={onOpenChat === undefined}
+                onClick={() => {
+                  void openAssistant(agent.id)
+                    .then(({ chat_id }) => onOpenChat?.(chat_id))
+                    .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)));
+                }}
+              >
+                Open assistant
+              </Button>
+            )}
             {!agent.is_personal && (
               <label className="mt-3 block space-y-1 text-xs">
                 Access scope

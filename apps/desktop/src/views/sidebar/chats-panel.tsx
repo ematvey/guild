@@ -50,7 +50,7 @@ function ChatSection({
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-xs font-medium text-muted-foreground hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left text-base font-medium text-muted-foreground hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 ${open ? "rotate-90" : ""}`} />
           {label}
@@ -115,7 +115,6 @@ export const ChatsPanel = memo(function ChatsPanel({
   onUnarchiveChat?: (id: string) => void;
   onDeleteChat?: (id: string) => void;
 }) {
-  const [scrolled, setScrolled] = useState(false);
   const [search, setSearch] = useState("");
   const [sections, setSections] = useState({ pinned: true, recent: true, archived: false });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -151,7 +150,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const hasProject = Boolean(activeProject || archivedProject);
   const activeProjectHeader = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!projectId || !hasProject || (!archivedProject && !activeProject?.pinned_at)) return;
+    if (chatId !== null || !projectId || !hasProject || (!archivedProject && !activeProject?.pinned_at)) return;
     setExpanded((current) => ({ ...current, [projectId]: true }));
     setSections((current) => ({ ...current, [activeSection]: true }));
     const frame = requestAnimationFrame(() => activeProjectHeader.current?.scrollIntoView?.({ block: "nearest" }));
@@ -161,10 +160,9 @@ export const ChatsPanel = memo(function ChatsPanel({
   const toggleSection = (section: keyof typeof sections) =>
     setSections((current) => ({ ...current, [section]: !current[section] }));
   const archivedProjectIds = new Set(archivedProjects?.map((project) => project.id));
-  const assistants = grouping.visible.filter((chat) => chat.assistant_inbox);
   const activeProjectIds = new Set(projects?.map((project) => project.id));
   const recent = [
-    ...grouping.visible.filter((chat) => !chat.assistant_inbox),
+    ...grouping.visible,
     ...Object.entries(grouping.chatsByProject).flatMap(([id, chats]) => (activeProjectIds.has(id) ? chats : [])),
   ].sort(byRecentActivity);
   const renderChat = (chat: ChatSummary, { restricted = false, showChatIcon = false } = {}) => {
@@ -173,7 +171,6 @@ export const ChatsPanel = memo(function ChatsPanel({
       <ChatListItem
         key={chat.id}
         title={chat.title ?? ""}
-        assistantInbox={chat.assistant_inbox}
         showChatIcon={showChatIcon}
         routine={chat.routine?.name}
         active={chat.id === chatId}
@@ -184,13 +181,13 @@ export const ChatsPanel = memo(function ChatsPanel({
           blocked: !!chat.blocked,
         }}
         dragProps={
-          !restricted && !chat.archived && !chat.assistant_inbox && !sharedInbox && onPinChat
+          !restricted && !chat.archived && !sharedInbox && onPinChat
             ? dragProps(chat.id, "chat", !!chat.pinned_at)
             : undefined
         }
         pinned={!!chat.pinned_at}
         onPin={
-          !restricted && !chat.assistant_inbox && !sharedInbox && onPinChat
+          !restricted && !sharedInbox && onPinChat
             ? () => onPinChat(chat.id, !chat.pinned_at)
             : undefined
         }
@@ -249,13 +246,13 @@ export const ChatsPanel = memo(function ChatsPanel({
             {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
             {history.slice(0, limit).map((chat) => renderChat(chat, { restricted: archived }))}
             {!loadingChats && history.length === 0 && (
-              <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
+              <p className="px-2 py-1 text-base text-muted-foreground">No chats yet.</p>
             )}
             {history.length > limit && (
               <button
                 type="button"
                 onClick={() => setLimits((current) => ({ ...current, [project.id]: limit + PROJECT_PAGE_STEP }))}
-                className="ml-1.5 mt-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                className="ml-1.5 mt-1 rounded-md px-2 py-1 text-base text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
                 Show more
               </button>
@@ -315,15 +312,15 @@ export const ChatsPanel = memo(function ChatsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
         <div className="mx-auto max-w-3xl">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <h1 className="text-xl font-semibold">Projects</h1>
-            <button type="button" onClick={onNewProject} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent">
+            <h1 className="text-base font-semibold">Projects</h1>
+            <button type="button" onClick={onNewProject} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-base hover:bg-accent">
               <Plus aria-hidden="true" className="size-4" /> New project
             </button>
           </div>
           <div aria-label="Projects" className="divide-y divide-border rounded-lg border border-border bg-card px-2">
             {projects === null && <SkeletonRows rows={3} />}
             {projects?.map((project) => renderProject(project))}
-            {projects?.length === 0 && <p className="p-4 text-sm text-muted-foreground">No projects yet.</p>}
+            {projects?.length === 0 && <p className="p-4 text-base text-muted-foreground">No projects yet.</p>}
           </div>
         </div>
       </div>
@@ -335,12 +332,12 @@ export const ChatsPanel = memo(function ChatsPanel({
         <div className="relative">
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input type="search" aria-label="Search chats by title" placeholder="Search chats by title"
-            value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" />
+            value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9 text-base md:text-base" />
         </div>
         <section aria-label="Chat search results" className="max-h-[55dvh] space-y-0.5 overflow-y-auto">
           {loadingChats && <SkeletonRows rows={3} />}
           {!loadingChats && query !== "" && matches.length === 0 && (
-            <p className="px-2 py-2 text-sm text-muted-foreground">No matching chats.</p>
+            <p className="px-2 py-2 text-base text-muted-foreground">No matching chats.</p>
           )}
           {matches.map((chat) => renderChat(chat, { restricted: true, showChatIcon: true }))}
         </section>
@@ -350,16 +347,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const history = recent.filter((chat) => !historyFilter || (chat.type === "routine" || Boolean(chat.routine)) === (historyFilter === "tasks"));
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      {assistants.length > 0 && (
-        <div
-          role="group"
-          aria-label="Assistant conversations"
-          className={`relative z-10 shrink-0 space-y-0.5 px-2 pt-1 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
-        >
-          {assistants.map((chat) => renderChat(chat))}
-        </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2" onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}>
+      <div className="px-2">
         <ChatSection
           label="Pinned"
           open={sections.pinned}
@@ -409,7 +397,7 @@ export const ChatsPanel = memo(function ChatsPanel({
           onToggle={() => toggleSection("recent")}
           action={onHistoryFilter && (
             <select aria-label="Filter history" value={historyFilter ?? ""}
-              className="max-w-20 rounded-md bg-sidebar px-1 text-xs text-muted-foreground hover:text-sidebar-foreground"
+              className="max-w-20 rounded-md bg-sidebar px-1 text-base text-muted-foreground hover:text-sidebar-foreground"
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 onHistoryFilter(value === "chats" || value === "tasks" ? value : null);
@@ -428,17 +416,17 @@ export const ChatsPanel = memo(function ChatsPanel({
         </ChatSection>
         <ChatSection label="Archived" open={sections.archived} onToggle={() => toggleSection("archived")}>
           {!archivedProjects?.length && !archivedThreads?.length && (
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">Nothing archived yet.</p>
+            <p className="px-2 py-1.5 text-base text-muted-foreground">Nothing archived yet.</p>
           )}
           {!!archivedProjects?.length && (
             <div role="group" aria-label="Archived projects" className="space-y-0.5">
-              <p className="px-2 py-1 text-xs text-muted-foreground">Projects</p>
+              <p className="px-2 py-1 text-base text-muted-foreground">Projects</p>
               {archivedProjects.map((project) => renderProject(project, true))}
             </div>
           )}
           {!!archivedThreads?.length && (
             <div role="group" aria-label="Archived chats" className="space-y-0.5">
-              <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
+              <p className="px-2 py-1 text-base text-muted-foreground">Chats</p>
               {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
             </div>
           )}

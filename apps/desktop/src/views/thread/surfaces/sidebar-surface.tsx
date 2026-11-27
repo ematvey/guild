@@ -20,7 +20,7 @@ export function SidebarSurface({
   mode?: "history" | "projects" | "search";
   historyFilter?: ChatRoute["historyFilter"];
   onHistoryFilter?: (filter: ChatRoute["historyFilter"] | null) => void;
-  /** The chat the main column shows. */
+  /** The chat selected by the route. */
   chatId: string | null;
   projectId: string | null;
   onOpenChat: (chatId: string) => void;

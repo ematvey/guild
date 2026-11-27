@@ -44,7 +44,7 @@ export function RoutePage({
         <MobileNavBar onOpenDrawer={onOpenDrawer} title={title} />
       ) : (
         title && (
-          <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-5 text-sm">
+          <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-5 text-base">
             <span className="text-muted-foreground">Work</span>
             <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
             <span className="font-medium">{title}</span>
