@@ -4,6 +4,7 @@
 // go through workspace-fs, which refuses the symlinks and non-regular files
 // the sandbox may plant.
 
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { seedFiles } from "./templates.js";
@@ -30,6 +31,8 @@ export interface AgentConfigFiles {
   files: Map<string, string>;
   /** Required files that are absent. */
   missing: string[];
+  /** Hash of the full workspace memory bytes, when available. */
+  memoryRevision?: string;
 }
 
 /** The agent workspace subpath, relative to the workspace volume. */
@@ -69,6 +72,7 @@ function ignoreRefusal(error: unknown): void {
 export async function readAgentConfig(dir: string): Promise<AgentConfigFiles> {
   const files = new Map<string, string>();
   const missing: string[] = [];
+  let memoryRevision: string | undefined;
   const read = async (name: string): Promise<string | null> => {
     try {
       const { bytes, truncated } = await readWorkspaceFile(dir, name, {
@@ -76,6 +80,9 @@ export async function readAgentConfig(dir: string): Promise<AgentConfigFiles> {
         overflow: "truncate",
       });
       const text = bytes.toString("utf8");
+      if (name === "MEMORY.md" && !truncated && Buffer.from(text).equals(bytes)) {
+        memoryRevision = createHash("sha256").update(bytes).digest("hex");
+      }
       return truncated ? `${text}\n\n(truncated at ${CONFIG_MAX_BYTES} bytes — read the file for the rest)` : text;
     } catch {
       return null;
@@ -93,7 +100,7 @@ export async function readAgentConfig(dir: string): Promise<AgentConfigFiles> {
   if (agents === null) missing.push("AGENTS.md");
   const memory = await read("MEMORY.md");
   if (memory !== null) files.set("MEMORY.md", memory);
-  return { files, missing };
+  return { files, missing, memoryRevision };
 }
 
 /** The agent's workspace path inside its sandbox (the sandbox cwd). */

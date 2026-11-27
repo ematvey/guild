@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupGatewayStack, type GatewayStack } from "./support/gateway-stack.js";
 import { pendingReflectionInputs, recentCoordinationWork } from "../agents/store/coordination.js";
+import { agentWorkspaceDir, TOTAL_MAX_CHARS } from "../agents/workspace-config.js";
 import { waitFor } from "./support/wait.js";
 
 const final = (text: string) =>
@@ -26,6 +29,47 @@ afterAll(async () => {
 }, 30000);
 
 describe("configured coordinator conversation", () => {
+  it("records the exact complete MEMORY.md shown in the prompt before any file tool runs", async () => {
+    const { app, config, db } = stack.env;
+    const headers = { authorization: `Bearer ${stack.memberToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/api/v1/agents", headers,
+      payload: { name: "Memory reader", model: "coordination-test" },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const agentId = created.json().agent.id as string;
+    const root = agentWorkspaceDir(config.agentWorkspaceWriteRoot, stack.orgId, agentId);
+    await mkdir(root, { recursive: true });
+    const workspaceMemory = path.join(root, "MEMORY.md");
+    const memory = "  # Workspace memory fixture\n\n";
+    await writeFile(workspaceMemory, memory);
+
+    const submit = async () => {
+      const opened = await app.inject({
+        method: "POST", url: `/api/v1/agents/${agentId}/threads`, headers, payload: { title: "Memory fixture" },
+      });
+      expect(opened.statusCode, opened.body).toBe(200);
+      const threadId = opened.json().thread.id as string;
+      const before = stack.mock.requests.length;
+      stack.mock.setResponses([{ body: final("Memory fixture complete") }]);
+      const result = await app.inject({
+        method: "POST", url: `/api/v1/agents/${agentId}/threads/${threadId}/turns`,
+        headers, payload: { message: "Reply with the fixture result." },
+      });
+      expect(result.statusCode, result.body).toBeLessThan(300);
+      await waitFor(() => stack.mock.requests.slice(before).some((r) => JSON.stringify(r.body).includes("Workspace memory fixture")), 10000);
+      const revision = await db.query("SELECT hash FROM agent_memory_reads WHERE thread_id=$1 AND path='MEMORY.md'", [threadId]);
+      await waitFor(async () => (await db.query(
+        "SELECT 1 FROM agent_runs WHERE thread_id=$1 AND status NOT IN ('pending','running')", [threadId],
+      )).rowCount !== 0, 10000);
+      return revision.rows[0]?.hash;
+    };
+
+    expect(await submit()).toBe(createHash("sha256").update(memory).digest("hex"));
+    await writeFile(workspaceMemory, memory + "x".repeat(TOTAL_MAX_CHARS));
+    expect(await submit()).toBeUndefined();
+  }, 30000);
+
   it("refuses to open the personal Assistant inbox", async () => {
     const app = stack.env.app;
     const headers = { authorization: `Bearer ${stack.memberToken}` };

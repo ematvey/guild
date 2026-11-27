@@ -1,4 +1,4 @@
-import { acceptedWorkForThread } from "../agents/store/coordination.js";
+import { acceptedWorkForThread, recordMemoryRevision } from "../agents/store/coordination.js";
 import { guardMemoryTool } from "../agents/conflict.js";
 // Per-turn tool provisioning: the org's enabled integrations, the chat
 // owner's MCP servers, the agent's conversation tools, and the machine and
@@ -179,6 +179,7 @@ export class TurnTools {
       { name: names[1], tools: machineTools },
     ].filter((extension) => extension.tools.length > 0);
     for (const extension of scoped) deps.registry.install(extension);
+    let memoryRevision: string | undefined;
     await conversation.configure(
       {
         extensions: [...base.extensions, ...scoped, ...prepared.extensions, ...userPrepared.extensions],
@@ -194,11 +195,15 @@ export class TurnTools {
                   await this.machineContext(chatId),
                   chatId,
                   work?.accepted_scope,
+                  (hash) => { memoryRevision = hash; },
                 )),
             }),
       },
       BACKGROUND_CONTEXT,
     );
+    if (agentRef !== null && memoryRevision !== undefined) {
+      await recordMemoryRevision(deps.pool, [agentRef.thread_id, "MEMORY.md", memoryRevision]);
+    }
   }
 
   /** The machine the user's message came from, as the prompt names it: the
@@ -228,7 +233,8 @@ export class TurnTools {
     projectInstructions: string | undefined,
     machine: MachineContext | null,
     chatId: string,
-    acceptedScope?: string,
+    acceptedScope: string | undefined,
+    onMemoryRevision: (hash: string) => void,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
@@ -243,7 +249,9 @@ export class TurnTools {
     const thread = (await this.deps.binding.threadContext(chatId)) ?? undefined;
     const canDelegate =
       spawnedBy === undefined ? agent.tools_mode === "all" || agent.tools.includes("subagents") : spawnedBy.can_spawn;
-    const instructions = composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
+    const instructions = composeAgentInstructions(
+      agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread, onMemoryRevision,
+    );
     if (acceptedScope === undefined) return instructions;
     return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
       "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +

@@ -49,6 +49,7 @@ export function composeAgentInstructions(
   spawnedBy?: { parent_name: string; depth: number; can_spawn: boolean },
   canDelegate = false,
   thread?: ThreadInstructionContext,
+  onMemoryRevision?: (hash: string) => void,
 ): string {
   const sharing = agent.is_personal
     ? "Only its owner can use this agent, so the workspace is private."
@@ -88,6 +89,9 @@ export function composeAgentInstructions(
       continue;
     }
     if (budget <= 0) break;
+    if (entry.name === "MEMORY.md" && config.memoryRevision !== undefined && text.trim().length <= budget) {
+      onMemoryRevision?.(config.memoryRevision);
+    }
     const block = renderFileBlock(entry.name, text, budget);
     budget -= block.length;
     workspace.push(block);
