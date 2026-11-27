@@ -528,11 +528,6 @@
       ],
       "translations": [
         {
-          "from": "db",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/releases.ts"
-        },
-        {
           "from": "executor",
           "to": "domain",
           "at": "scripts/release.mjs"

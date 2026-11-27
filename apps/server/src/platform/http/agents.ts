@@ -1014,7 +1014,15 @@ export function registerAgentRoutes(
       agent,
       routine,
     );
-    return sendJson(reply, result);
+    // The execution thread belongs to the task's creator. Manage access
+    // to the task does not grant read access to that person's chat.
+    const chatId = await chats.chats.getChat(user.org_id, result.chat_id, user)
+      .then((chat) => chat.id)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      });
+    return sendJson(reply, { run: result.run, chat_id: chatId });
   });
 
   app.get("/api/v1/agents/:id/routines/:rid/delivery-chat", async (req, reply) => {

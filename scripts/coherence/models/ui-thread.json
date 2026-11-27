@@ -211,12 +211,12 @@
       "role": "ui"
     },
     {
-      "where": "apps/control-center/src/settings/GatewaySection.tsx",
+      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
       "concept": "api-key",
       "role": "ui"
     },
     {
-      "where": "apps/control-center/src/settings/GatewaySection.tsx",
+      "where": "apps/desktop/src/views/settings/sections/GatewaySection.tsx",
       "concept": "gateway-route",
       "role": "ui"
     },

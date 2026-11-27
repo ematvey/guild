@@ -162,6 +162,9 @@ jobs:
           rustup target add '${{ matrix.target }}'
           if [[ "$VERSION" == *-dev.* ]]; then bash scripts/bump-version.sh --build "$VERSION"; fi
           node protocol/check.mjs
+      - name: Check socket surface contracts
+        if: runner.os == 'Linux'
+        run: npm --workspace apps/server test -- src/test/client-contract.test.ts
       - name: Build signed client
         working-directory: apps/desktop
         shell: bash

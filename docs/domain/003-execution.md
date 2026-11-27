@@ -145,7 +145,7 @@ The scheduler ticks every 15 seconds. For each due instant it creates an Occurre
 
 Ten failed Occurrences in a row disable the Routine and write a `routine_disabled` Notice.
 
-Each Routine Run gets a new, hidden `routine` Thread, owned by the creator. It sees the Routine prompt, the Workspace and the conversation tools, not any other Thread's transcript. Its final text goes nowhere: the Agent speaks only through `send_message`. A Run that sends nothing ends `silent` and shows only in Activity. Each message lands by the Routine's delivery:
+Each Routine Run gets a new, hidden `routine` Thread, owned by the creator. A manual run returns the execution Thread’s chat ID only if the caller can read it. It sees the Routine prompt, the Workspace and the conversation tools, not any other Thread's transcript. Its final text goes nowhere: the Agent speaks only through `send_message`. A Run that sends nothing ends `silent` and shows only in Activity. Each message lands by the Routine's delivery:
 
 - `thread` (default): appended to the Routine's one feed Thread for that Member. If the feed is archived, deleted or closed, a new feed opens. If the feed is mid-Turn, the message goes to a separate marked Thread.
 - `new_chat`: one new Thread per message.
