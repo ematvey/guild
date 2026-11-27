@@ -131,6 +131,7 @@ export function ThreadHeader({
                   <FadeTitle text={machineLabel} />
                 </button>
               )}
+              {machineLabel && <span aria-hidden="true" className="shrink-0 text-muted-foreground">/</span>}
               <a
                 href={`/project/${encodeURIComponent(project.id)}`}
                 title={project.name}
