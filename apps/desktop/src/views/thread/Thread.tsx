@@ -750,6 +750,13 @@ function ThreadView(props: ThreadProps) {
       </RoutePage>
     ) : null;
 
+  const composerVisible = routePage === null && route.tab === "chats" && !route.previewFull;
+  useEffect(() => {
+    if (isMobile || !composerVisible || access === "readonly" || navigating || overlay || route.searchOpen) return;
+    const frame = requestAnimationFrame(() => ta.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [isMobile, composerVisible, chatId, route.projectId, route.newChat, access, navigating, overlay, route.searchOpen, ta]);
+
   const openRoutines = agent.personalAgent ? () => {
     if (!agent.personalAgent) return;
     if (isMobile) setOpen(false);
