@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronRight, Plus, Search } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@guild/ui/components/select";
 import { PageHeader } from "../../components/page-header";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
@@ -423,18 +423,19 @@ export const ChatsPanel = memo(function ChatsPanel({
           ))}
         </ChatSection>
         <ChatSection
-          label="Chats and tasks"
+          label={historyFilter === "chats" ? "Chats" : historyFilter === "tasks" ? "Tasks" : "Chats and tasks"}
           open={sections.recent}
           onToggle={() => toggleSection("recent")}
           action={onHistoryFilter && (
             <Select value={historyFilter ?? "all"} onValueChange={(value) => {
               onHistoryFilter(value === "chats" || value === "tasks" ? value : null);
             }}>
-              <SelectTrigger aria-label="Filter history" className="h-8 shrink-0 gap-1 border-0 bg-transparent px-1.5 text-base shadow-none">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger
+                aria-label="Filter history"
+                className="size-8 shrink-0 justify-center border-0 bg-transparent p-0 shadow-none hover:bg-sidebar-accent"
+              />
               <SelectContent>
-                <SelectItem value="all" className="text-base">All</SelectItem>
+                <SelectItem value="all" className="text-base">Chats and tasks</SelectItem>
                 <SelectItem value="chats" className="text-base">Chats</SelectItem>
                 <SelectItem value="tasks" className="text-base">Tasks</SelectItem>
               </SelectContent>
