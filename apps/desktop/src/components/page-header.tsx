@@ -16,6 +16,7 @@ export function PageHeader({
   title,
   description,
   actions,
+  inlineActions = false,
   back,
   tabs,
   variant = "section",
@@ -23,6 +24,7 @@ export function PageHeader({
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  inlineActions?: boolean;
   /** Renders a back link labelled `back` above the title (detail pages). */
   back?: { label: string; onClick: () => void };
   /** A row under the title: tabs, filters. */
@@ -66,7 +68,7 @@ export function PageHeader({
               <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
             )}
           </div>
-          {actions !== undefined && <div className={`flex shrink-0 flex-wrap items-center gap-2 ${work && back ? "ml-auto" : ""}`}>{actions}</div>}
+          {actions !== undefined && <div className={`flex shrink-0 flex-wrap items-center gap-2 ${work && back && !inlineActions ? "ml-auto" : ""}`}>{actions}</div>}
         </div>
       ) : (
         <>

@@ -148,7 +148,10 @@ it("opens a project destination from its list row", () => {
     onOpenProject,
   };
   const { rerender } = render(<ChatsPanel {...props} />);
-  fireEvent.click(screen.getByRole("button", { name: /Work folder/ }));
+  const row = screen.getByRole("button", { name: /Work folder/ });
+  expect(row.textContent).toBe("dev-1Work folder");
+  expect(row.querySelector(".lucide-folder")).toBeNull();
+  fireEvent.click(row);
   expect(onOpenProject).toHaveBeenCalledWith(folder.id);
 
   rerender(<ChatsPanel {...props} projectId={folder.id} />);

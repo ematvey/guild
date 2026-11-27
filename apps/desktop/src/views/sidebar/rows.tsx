@@ -324,6 +324,21 @@ export function ProjectHeader({
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const standalone = open === undefined;
+  const machineLabel = machine?.name && (
+    <span
+      title={machine.name}
+      className={`flex min-w-0 items-center gap-1.5 overflow-hidden text-base text-muted-foreground ${standalone ? "w-32 max-w-[42%] shrink-0" : ""}`}
+    >
+      <span className={standalone ? "truncate" : "hidden max-w-20 truncate @min-[16rem]:inline"}>{machine.name}</span>
+      {machine.online !== undefined &&
+        (machine.online ? (
+          <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
+        ) : (
+          <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
+        ))}
+    </span>
+  );
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -353,7 +368,7 @@ export function ProjectHeader({
         title={folder}
         className="flex h-9 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
       >
-        {open ? (
+        {standalone ? machineLabel : open ? (
           <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
         ) : (
           <Folder aria-hidden="true" className="size-4 shrink-0" />
@@ -361,20 +376,7 @@ export function ProjectHeader({
         <span className="flex min-w-10 flex-1">
           <FadeTitle text={name} fadeWidth={10} />
         </span>
-        {machine?.name && (
-          <span
-            title={machine.name}
-            className="flex min-w-0 items-center gap-1.5 overflow-hidden text-base text-muted-foreground"
-          >
-            <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
-            {machine.online !== undefined &&
-              (machine.online ? (
-                <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
-              ) : (
-                <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
-              ))}
-          </span>
-        )}
+        {!standalone && machineLabel}
         {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
         <RowStatus status={status} />
       </button>

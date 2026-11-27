@@ -319,6 +319,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     .sort(byRecentActivity);
   if (mode === "projects") {
     const project = activeProject ?? archivedProject;
+    const machineName = machines?.find((machine) => machine.machine_id === project?.machine_id)?.name ?? project?.machine_label;
     const projectChats = project
       ? [...(grouping.chatsByProject[project.id] ?? []), ...(archivedChats ?? []).filter((chat) => chat.project_id === project.id)].sort(byRecentActivity)
       : [];
@@ -326,6 +327,7 @@ export const ChatsPanel = memo(function ChatsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <PageHeader
           variant="work"
+          inlineActions
           title={project?.name ?? "Projects"}
           back={projectId ? { label: "Projects", onClick: () => onBackToProjects?.() } : undefined}
           actions={project
@@ -335,7 +337,12 @@ export const ChatsPanel = memo(function ChatsPanel({
         <div className="work-page-content pb-8 pt-3">
           {projectId ? (
             <>
-              {project && <p className="mb-4 break-all text-muted-foreground">{project.folder}</p>}
+              {project && (
+                <p className="mb-4 flex flex-wrap items-baseline gap-x-2 text-muted-foreground">
+                  {machineName && <span className="font-semibold text-foreground">{machineName}</span>}
+                  <span className="break-all">{project.folder}</span>
+                </p>
+              )}
               {projects === null || loadingChats ? <SkeletonRows rows={3} /> : !project ? (
                 <p className="text-muted-foreground">This project is unavailable.</p>
               ) : projectChats.length === 0 ? (
