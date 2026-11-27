@@ -233,6 +233,7 @@ export const ChatsPanel = memo(function ChatsPanel({
           <ProjectHeader
             name={project.name}
             folder={project.folder}
+            createdAt={project.created_at}
             machine={{ name: machine?.name ?? project.machine_label, online: machine?.connected }}
             status={{
               generating: chats.some((chat) => !!chat.generating),
