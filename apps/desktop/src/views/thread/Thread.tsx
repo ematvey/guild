@@ -241,10 +241,6 @@ function ThreadView(props: ThreadProps) {
   // survives navigation, so returning to a chat renders its tree at once.
   const subagentNodes = viewChatId ? (subagentTrees[viewChatId] ?? []) : [];
   const currentProject = pickedProject ?? chatProjectOf(openRow);
-  // Ref mirror for effects that must read the pick without re-running on
-  // every pick change.
-  const currentProjectRef = useRef(currentProject);
-  currentProjectRef.current = currentProject;
   // This client's own engine: its machine runs its own tools, so it is never
   // a remote machine with presence to show.
   const localMachineId = HAS_ENGINE ? machineId() : undefined;
@@ -680,7 +676,7 @@ function ThreadView(props: ThreadProps) {
     <SidebarSurface
       tab={route.tab}
       role={role}
-      chatId={viewChatId}
+      chatId={chatId}
       projectId={route.projectId}
       settingsSection={settingsSection}
       onNewChat={newChat}
@@ -698,8 +694,7 @@ function ThreadView(props: ThreadProps) {
   // /project/<id>/thread/<cid>, so the project context survives reload and
   // back/forward. A bare /thread/<id> for a project chat is rewritten in
   // place (replace: the bare address is not a step back) once the chat list
-  // names its project; a chat not yet listed (just sent) counts as bound
-  // while the composer still carries a project pick.
+  // identifies its project.
   const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!route.chatId || route.projectId !== null) {
@@ -709,10 +704,11 @@ function ThreadView(props: ThreadProps) {
     if (routeTabDecidedRef.current === route.chatId) return;
     if (chats === null || archivedChats === null) return;
     const row = chats.find((c) => c.id === route.chatId) ?? archivedChats.find((c) => c.id === route.chatId);
-    const projectId = row?.project_id ?? currentProjectRef.current?.id ?? null;
-    if (row || projectId) routeTabDecidedRef.current = route.chatId;
+    if (!row) return;
+    routeTabDecidedRef.current = route.chatId;
+    const projectId = row.project_id;
     if (projectId) pushRoute({ projectId }, { replace: true });
-  }, [route.chatId, route.projectId, chats, archivedChats, currentProject?.id, pushRoute]);
+  }, [route.chatId, route.projectId, chats, archivedChats, pushRoute]);
 
   // The main column: a route page (agents, skills, settings) owns the whole
   // column right of the rail; the chat comes back on any chat route.
