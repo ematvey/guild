@@ -828,7 +828,7 @@ function ThreadView(props: ThreadProps) {
             hideClose
           >
             <SheetTitle className="sr-only">Work sidebar</SheetTitle>
-            <WorkSidebarHeader workspaceName={workspace?.name} onClose={sidebarClose} />
+            <WorkSidebarHeader onClose={sidebarClose} />
             {workNavigation}
             {renderSidebar("history")}
             {menu()}
@@ -838,7 +838,7 @@ function ThreadView(props: ThreadProps) {
         menu(true)
       ) : (
         <Sidebar collapsed={false}>
-          <WorkSidebarHeader workspaceName={workspace?.name} onCollapse={sidebarCollapse} />
+          <WorkSidebarHeader onCollapse={sidebarCollapse} />
           {workNavigation}
           {renderSidebar("history")}
           {menu()}

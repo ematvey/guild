@@ -27,24 +27,14 @@ import type { ChatRoute } from "./thread/route";
 export type RailTab = ChatRoute["tab"] | "skills" | "apps";
 
 export function WorkSidebarHeader({
-  workspaceName,
   onCollapse,
   onClose,
 }: {
-  workspaceName?: string;
   onCollapse?: () => void;
   onClose?: () => void;
 }) {
   return (
-    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-2 px-3 ${TOP_ROW}`}>
-      <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-card">
-        <img src="/brand/guild-icon-light.svg" alt="" className="size-5 dark:hidden" />
-        <img src="/brand/guild-icon-dark.svg" alt="" className="hidden size-5 dark:block" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">Guild Work</span>
-        {workspaceName && <span className="block truncate text-xs text-muted-foreground">{workspaceName}</span>}
-      </div>
+    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 px-2 ${TOP_ROW}`}>
       <CollapseButton onCollapse={onCollapse} />
       {onCollapse && (
         <div className="flex shrink-0 items-center">
