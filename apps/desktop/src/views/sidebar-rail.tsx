@@ -75,7 +75,7 @@ export function WorkNavigation({
     { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
   ];
   return (
-    <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 px-2 pb-2 pt-1">
+    <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 pl-2 pr-1 pb-2 pt-1">
       {items.map(({ id, label, icon: Icon, open }) => (
         <Button
           key={label}
@@ -119,7 +119,7 @@ export function SidebarMenu({
   workspaceName?: string;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-2 py-2">
+    <div className="flex shrink-0 items-center gap-1 border-t border-border/60 pl-2 pr-1 py-2">
       <div className="min-w-0 flex-1">
         <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
           {onAddWorkspace ? (
