@@ -276,7 +276,7 @@ export function SkillsPanel({
           the catalog's filter and sort. */}
       <PageHeader
         variant={route.management ? "bar" : "work"}
-        title="Skills"
+        title={route.management ? "Skills" : "Customize"}
         actions={
           <>
             <div className="relative w-full sm:w-[280px]">
@@ -303,7 +303,10 @@ export function SkillsPanel({
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
-              {panelTabs(HAS_ENGINE && !route.management).filter(([value]) => value !== "activity" || route.management).map(([value, label]) => (
+              {panelTabs(HAS_ENGINE && !route.management)
+                .filter(([value]) => value !== "activity" || route.management)
+                .map(([value, label]) => [value, !route.management && value === "catalog" ? "Skills" : label] as const)
+                .map(([value, label]) => (
                 <button
                   key={value}
                   role="tab"
