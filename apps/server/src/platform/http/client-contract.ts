@@ -11,11 +11,22 @@ const control = /^\/(?:admin|activity|usage|api-keys|mcp|registry|events|org|run
 const workAgents = /^\/agents(?:$|\/[^/]+\/(?:routines|threads|turns)(?:\/|$))/;
 
 export function isWorkRequest(req: FastifyRequest): boolean {
-  return req.routeOptions.url?.startsWith(WORK_API + "/") === true;
+  const url = req.routeOptions.url;
+  return url?.startsWith(WORK_API + "/") === true || (
+    url?.startsWith("/api/v1/") === true && !url.startsWith(CONTROL_API + "/") &&
+    req.headers["x-guild-client-surface"] === "guild"
+  );
 }
 
 export function registerClientContracts(scope: FastifyInstance): void {
   const routes: RouteOptions[] = [];
+  const guildRoutes = new Set<string>();
+  scope.addHook("onRequest", async (req, reply) => {
+    const url = req.routeOptions.url;
+    if (isWorkRequest(req) && !url?.startsWith(WORK_API + "/") && !guildRoutes.has(`${req.method} ${url}`)) {
+      return reply.callNotFound();
+    }
+  });
   scope.addHook("onRoute", (route) => {
     if (!route.url.startsWith("/api/v1/") || /^\/api\/v1\/(?:work|control)\//.test(route.url)) return;
     const suffix = route.url.slice("/api/v1".length);
@@ -32,6 +43,11 @@ export function registerClientContracts(scope: FastifyInstance): void {
       ...(shared || work.test(suffix) || workSkill || workAgent || workAuth ? [WORK_API] : []),
       ...(shared || control.test(suffix) || controlAgent || skill || controlChatRead ? [CONTROL_API] : []),
     ];
+    if (prefixes.includes(WORK_API)) {
+      for (const method of Array.isArray(route.method) ? route.method : [route.method]) {
+        guildRoutes.add(`${method} ${route.url}`);
+      }
+    }
     for (const prefix of prefixes) {
       const url = prefix + suffix;
       routes.push({ ...route, url, exposeHeadRoute: false });

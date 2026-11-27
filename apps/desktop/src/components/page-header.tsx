@@ -36,7 +36,8 @@ export function PageHeader({
       onClick={back.onClick}
       className={`${work ? "shrink-0" : "mb-3"} flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground`}
     >
-      <ArrowLeft className="size-4" /> {back.label}
+      {!work && <ArrowLeft className="size-4" aria-hidden="true" />}
+      {back.label}
     </button>
   );
   return (
@@ -53,14 +54,19 @@ export function PageHeader({
       {!work && backLink}
       {bar ? (
         <div className={work ? `flex items-center gap-1.5 ${TOP_ROW}` : "flex flex-wrap items-center gap-3 pb-3"}>
-          {work && backLink}
+          {work && backLink && (
+            <nav aria-label="Breadcrumb" className="flex shrink-0 items-center gap-1.5">
+              {backLink}
+              <span aria-hidden="true" className="text-muted-foreground">/</span>
+            </nav>
+          )}
           <div className={work ? "min-w-0" : "min-w-0 w-full sm:w-auto sm:flex-1"}>
-            <h1 className={work ? "truncate text-base font-semibold" : "truncate text-lg font-semibold tracking-tight"}>{title}</h1>
+            <h1 className={work ? "truncate text-base font-bold" : "truncate text-lg font-semibold tracking-tight"}>{title}</h1>
             {description !== undefined && description !== "" && (
               <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
             )}
           </div>
-          {actions !== undefined && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+          {actions !== undefined && <div className={`flex shrink-0 flex-wrap items-center gap-2 ${work && back ? "ml-auto" : ""}`}>{actions}</div>}
         </div>
       ) : (
         <>

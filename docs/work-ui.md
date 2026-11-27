@@ -1,9 +1,9 @@
-# Work UI principles
+# Guild UI principles
 
-## Work and Control Center
+## Guild and Guild Control Center
 
-- Work is the daily-use app for chats, projects, apps, scheduled tasks, skills, personal settings, and device setup. Chat actions and conversations stay available in Work.
-- Control Center is the separate web app for workspace management, including analytics, configuration, integrations, and agent setup. Put its entry in the account menu for members who have access. Use the system browser for the handoff from an installed client where the platform supports it.
+- Guild is the daily-use app for chats, projects, apps, scheduled tasks, skills, personal settings, and device setup. Chat actions and conversations stay available in Work.
+- Guild Control Center is the separate web app for workspace management, including analytics, configuration, integrations, and agent setup. Put its entry in the account menu for members who have access. Use the system browser for the handoff from an installed client where the platform supports it.
 - Use the existing Guild theme, icons, and shadcn components. Borrow interaction patterns from other products and express them in Guild’s own visual language.
 
 ## Sidebar and window toolbar
@@ -17,9 +17,9 @@
 
 ## Pages and detail views
 
-- Use one page heading and the full available content pane. Use consistent 16 px side gutters. Align the header with the sidebar toolbar when the sidebar is open. Keep the space above the header limited to the platform’s window chrome.
+- Use one bold page heading and the full available content pane. Detail headers use `Section / Item name` on the shared toolbar row, with the section clickable and the item name bold. Use consistent 16 px side gutters. Align the header with the sidebar toolbar when the sidebar is open. Keep the space above the header limited to the platform’s window chrome.
 - Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available.
-- Use the `text-base` size throughout Work, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
+- Use the `text-base` size throughout Guild, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.
 - Scheduled task details lead with the task name followed by the prompt disclosure. Keep the prompt collapsed until the member opens it. Put the schedule, next run, delivery destination, and run history below it. Put Run now in the body, with editing and pause or resume in the task actions menu.
 

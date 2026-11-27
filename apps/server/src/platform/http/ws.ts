@@ -23,7 +23,7 @@ import { uuidv7, isUuid } from "../time.js";
 import type { LiveHub, LiveMember } from "../../hub/live.js";
 import { SocketSink } from "../../hub/sink.js";
 import { DEFERRED_UNTIL_SYNC, acceptsSurfaceFrame, parseClientMsg, serializeServerMsg, type WsServerMsg } from "../../hub/protocol.js";
-import { CONTROL_API, WORK_API } from "./client-contract.js";
+import { CONTROL_API, WORK_API, isWorkRequest } from "./client-contract.js";
 import type { TicketIdentity } from "../../hub/tickets.js";
 
 // A socket that cannot flush its terminal notice within this deadline is
@@ -101,7 +101,7 @@ export function registerWsRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: Ide
     const user = await requireUser(ctx, req);
     const [sessionHash, expiresAt] = await ctx.identity.sessionGrant(token);
     const url = req.routeOptions.url;
-    const surface = url?.startsWith(CONTROL_API + "/") ? "control" : url?.startsWith(WORK_API + "/") ? "work" : undefined;
+    const surface = url?.startsWith(CONTROL_API + "/") ? "control" : isWorkRequest(req) ? "work" : undefined;
     const ticket = chats.wsTickets.mint({ user, session_hash: sessionHash, expires_at: expiresAt, surface });
     return reply.status(200).send({ ticket });
   });
@@ -125,7 +125,7 @@ export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityC
     }
     const identity = chats.wsTickets.consume(query.ticket);
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-    const surface = pathname === CONTROL_API + "/ws" ? "control" : pathname === WORK_API + "/ws" ? "work" : undefined;
+    const surface = pathname === CONTROL_API + "/ws" ? "control" : pathname === WORK_API + "/ws" ? "work" : pathname === "/api/v1/ws" && identity?.surface === "work" ? "work" : undefined;
     if (identity === null || identity.surface !== surface || (!surface && pathname !== "/api/v1/ws")) {
       rejectUpgrade(socket, 401, "invalid or expired ticket");
       return;

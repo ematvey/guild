@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Avatar } from "@guild/ui/components/avatar";
-import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
@@ -214,9 +214,11 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
  *  breadcrumb (the Skills segment navigates back), and the action row at
  *  the right edge. */
 function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => void; actions?: ReactNode }) {
-  const work = import.meta.env.MODE !== "control";
+  if (import.meta.env.MODE !== "control") {
+    return <PageHeader variant="work" title={slug} back={{ label: "Customize", onClick: onBack }} actions={actions} />;
+  }
   return (
-    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-2.5 border-b border-border bg-background ${work ? `px-4 ${TOP_ROW} ${CAPTION_BUTTONS_INSET}` : "flex-wrap px-5 py-2.5"}`}>
+    <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border bg-background px-5 py-2.5">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
         <button
           className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground"
@@ -555,7 +557,7 @@ export function SkillDetail({
         <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pt-4 pb-12"}>
           <section className={management ? undefined : "rounded-xl border border-border bg-card p-4 sm:p-6"}>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>
+            {management && <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>}
             {detail.maintainer_gated && (
               <Badge variant="secondary" className="gap-1">
                 <Lock className="size-3" /> {editAccessLabel(editAccess(detail), detail.owner?.label)}

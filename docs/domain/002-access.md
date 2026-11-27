@@ -121,7 +121,7 @@ The Approval gate then decides, in this order:
 
 The work app links to the web Control Center for Agent setup, Integration
 configuration, and workspace management. Members can open the configuration
-they have permission to manage. Both surfaces use the same access checks. Work uses `/api/v1/work`. Control Center uses `/api/v1/control`.
+they have permission to manage. Both surfaces use the same access checks. Guild uses `/api/v1` with the member surface header. Guild Control Center uses `/api/v1/control`.
 
 Only Machine actions and Integration calls can enter approval policy. Internal Guild tools, including `send_message`, run under their own access checks without approval review. Server sandbox commands still pass static exec policy and the server shell setting. An Integration tool marked `always_ask` asks in independently Member-started Threads. A Tool marked `always_allow` or classified as `read` runs directly unless curation requires approval. Other Integration Tools follow the Thread’s approval mode. Current and legacy names share the same Tool policy.
 

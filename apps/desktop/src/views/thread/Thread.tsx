@@ -698,7 +698,7 @@ function ThreadView(props: ThreadProps) {
     controlRoute ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
         <div className="m-auto flex flex-col items-center gap-4 p-4">
-          <Button onClick={() => openExternal(serverUrl() + routePath(route), { link: true })}>Open Control Center</Button>
+          <Button onClick={() => openExternal(serverUrl() + routePath(route), { link: true })}>Open Guild Control Center</Button>
           <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
         </div>
       </RoutePage>
@@ -838,7 +838,7 @@ function ThreadView(props: ThreadProps) {
               className="guild-sidebar-theme w-72 gap-0 bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
               hideClose
             >
-              <SheetTitle className="sr-only">Work sidebar</SheetTitle>
+              <SheetTitle className="sr-only">Guild sidebar</SheetTitle>
               <WorkSidebarHeader onClose={sidebarClose} />
               {sidebarBody}
               {menu}

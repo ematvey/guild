@@ -26,6 +26,15 @@ describe("application API contracts", () => {
       const status = async (method: "GET" | "POST" | "HEAD" | "PATCH", url: string) =>
         (await app.inject({ method, url: "/api/v1/" + url })).statusCode;
 
+      const guildStatus = async (method: "GET" | "POST" | "HEAD" | "PATCH", path: string) =>
+        (await app.inject({ method, url: "/api/v1/" + path, headers: { "x-guild-client-surface": "guild" } })).statusCode;
+      expect(await guildStatus("HEAD", "auth/me")).toBe(200);
+      expect(await guildStatus("POST", "chats/chat/turns")).toBe(200);
+      expect(await guildStatus("PATCH", "agents/agent/routines/task")).toBe(200);
+      expect(await guildStatus("GET", "admin/users")).toBe(404);
+      expect(await guildStatus("POST", "agents")).toBe(404);
+      expect(await status("GET", "admin/users")).toBe(200);
+
       expect(await status("GET", "work/auth/me")).toBe(200);
       expect(await status("HEAD", "control/auth/me")).toBe(200);
       expect(await status("GET", "control/admin/users")).toBe(200);

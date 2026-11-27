@@ -228,11 +228,11 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
           <img src="/brand/guild-icon-dark.svg" alt="" className="hidden size-5 dark:block" />
         </span>
         <div className="min-w-0">
-          <span className="block truncate text-sm font-semibold">Control Center</span>
+          <span className="block truncate text-sm font-semibold">Guild Control Center</span>
           {workspace?.name && <span className="block truncate text-xs text-muted-foreground">{workspace.name}</span>}
         </div>
       </div>
-      <nav aria-label="Control Center navigation" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      <nav aria-label="Guild Control Center navigation" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-3">
         {groups
           .filter(({ items }) => items.length > 0)
           .map(({ label, items }) => (
@@ -301,12 +301,12 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
               aria-describedby={undefined}
               className="guild-sidebar-theme max-w-[calc(100vw-2rem)] gap-0 bg-sidebar text-sidebar-foreground"
             >
-              <SheetTitle className="sr-only">Control Center navigation</SheetTitle>
+              <SheetTitle className="sr-only">Guild Control Center navigation</SheetTitle>
               {sidebar}
             </SheetContent>
           </Sheet>
           <div className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="truncate text-muted-foreground">{activeGroup?.label ?? "Control Center"}</span>
+            <span className="truncate text-muted-foreground">{activeGroup?.label ?? "Guild Control Center"}</span>
             {activePage && (
               <>
                 <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />

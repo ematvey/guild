@@ -221,96 +221,99 @@ function AppHeader({
   const asks = (detail?.functions ?? []).some(
     (fn) => fn.available && fn.confirm,
   );
-  return (
-    <header className={`shrink-0 border-b border-border bg-background px-4 ${import.meta.env.MODE === "control" ? "py-3" : ""} ${CAPTION_BUTTONS_INSET}`}>
-      <div className={`flex items-center gap-2 ${import.meta.env.MODE === "control" ? "" : "min-h-11"}`}>
-        {showBack && (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="All apps"
-            onClick={onBack}
+  const actions = (canShare ||
+    canDelete ||
+    asks ||
+    (onOpenChat !== null && app.chat_id !== null)) && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" disabled={busy}>
+          Manage
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        {onOpenChat !== null && app.chat_id !== null && (
+          <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
+            <MessageSquare className="size-4" /> Open the chat that built
+            it
+          </DropdownMenuItem>
+        )}
+        {asks && (
+          <DropdownMenuItem
+            onSelect={() =>
+              void act(async () => {
+                await clearAppGrants(app.id);
+                onGrantsCleared();
+              })
+            }
           >
-            <ArrowLeft />
-          </Button>
+            <ShieldCheck className="size-4" /> Ask again before data
+            access
+          </DropdownMenuItem>
         )}
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold">{app.name}</h2>
-          <p className="truncate text-xs text-muted-foreground">
-            {app.visibility === "org" ? "Shared with the org" : "Private"} · by{" "}
-            {app.owner_label}
-            {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v
-            {app.version} · updated {relativeTime(app.updated_at)}
-          </p>
+        {canShare && (
+          <DropdownMenuItem onSelect={() => onEditAccess()}>
+            <Users className="size-4" /> Sharing
+          </DropdownMenuItem>
+        )}
+        {canDelete && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={() => {
+                if (
+                  !window.confirm(
+                    `Delete ${app.name}? Everyone it is shared with loses it.`,
+                  )
+                )
+                  return;
+                void act(async () => {
+                  await deleteApp(app.id);
+                  onDeleted();
+                });
+              }}
+            >
+              <Trash2 className="size-4" /> Delete
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  const work = import.meta.env.MODE !== "control";
+  const metadata = (
+    <p className="truncate text-xs text-muted-foreground">
+      {app.visibility === "org" ? "Shared with the org" : "Private"} · by {app.owner_label}
+      {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v{app.version} · updated {relativeTime(app.updated_at)}
+    </p>
+  );
+  return (
+    <div className={`shrink-0 border-b border-border bg-background ${work ? "" : `px-4 py-3 ${CAPTION_BUTTONS_INSET}`}`}>
+      {work ? (
+        <>
+          <PageHeader variant="work" title={app.name} back={{ label: "Apps", onClick: onBack }} actions={actions || undefined} />
+          <div className="work-page-content pb-2">{metadata}</div>
+        </>
+      ) : (
+        <div className="flex items-center gap-2">
+          {showBack && (
+            <Button variant="ghost" size="icon" aria-label="All apps" onClick={onBack}><ArrowLeft /></Button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-bold">{app.name}</h2>
+            {metadata}
+          </div>
+          {actions}
         </div>
-        {(canShare ||
-          canDelete ||
-          asks ||
-          (onOpenChat !== null && app.chat_id !== null)) && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" disabled={busy}>
-                Manage
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {onOpenChat !== null && app.chat_id !== null && (
-                <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
-                  <MessageSquare className="size-4" /> Open the chat that built
-                  it
-                </DropdownMenuItem>
-              )}
-              {asks && (
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void act(async () => {
-                      await clearAppGrants(app.id);
-                      onGrantsCleared();
-                    })
-                  }
-                >
-                  <ShieldCheck className="size-4" /> Ask again before data
-                  access
-                </DropdownMenuItem>
-              )}
-              {canShare && (
-                <DropdownMenuItem onSelect={() => onEditAccess()}>
-                  <Users className="size-4" /> Sharing
-                </DropdownMenuItem>
-              )}
-              {canDelete && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => {
-                      if (
-                        !window.confirm(
-                          `Delete ${app.name}? Everyone it is shared with loses it.`,
-                        )
-                      )
-                        return;
-                      void act(async () => {
-                        await deleteApp(app.id);
-                        onDeleted();
-                      });
-                    }}
-                  >
-                    <Trash2 className="size-4" /> Delete
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+      )}
       {error !== null && (
-        <p role="alert" className="mt-2 text-xs text-destructive">
+        <p role="alert" className={`mt-2 text-xs text-destructive ${work ? "work-page-content" : ""}`}>
           {error}
         </p>
       )}
       {unavailable.length > 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className={`mt-2 text-xs text-muted-foreground ${work ? "work-page-content" : ""}`}>
           Some data is not available to you:{" "}
           {unavailable
             .map((fn) => `${fn.name} (${fn.reason ?? "no access"})`)
@@ -318,7 +321,7 @@ function AppHeader({
           .
         </p>
       )}
-    </header>
+    </div>
   );
 }
 
