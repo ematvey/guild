@@ -172,7 +172,7 @@ export const ChatsPanel = memo(function ChatsPanel({
     ...grouping.visible,
     ...Object.entries(grouping.chatsByProject).flatMap(([id, chats]) => (activeProjectIds.has(id) ? chats : [])),
   ].sort(byRecentActivity);
-  const renderChat = (chat: ChatSummary, { restricted = false, showChatIcon = false } = {}) => {
+  const renderChat = (chat: ChatSummary, { restricted = false, showChatIcon = false, showActivity = false } = {}) => {
     const sharedInbox = chat.shared_agent_inbox === true;
     return (
       <ChatListItem
@@ -180,6 +180,9 @@ export const ChatsPanel = memo(function ChatsPanel({
         title={chat.title ?? ""}
         showChatIcon={showChatIcon}
         routine={chat.routine?.name}
+        scheduledTask={chat.type === "routine"}
+        project={mode !== "projects" && Boolean(chat.project_id)}
+        lastActivity={showActivity ? chat.last_activity_at ?? chat.created_at : undefined}
         active={chat.id === chatId}
         status={{
           generating: !!chat.generating,
@@ -319,7 +322,8 @@ export const ChatsPanel = memo(function ChatsPanel({
     .sort(byRecentActivity);
   if (mode === "projects") {
     const project = activeProject ?? archivedProject;
-    const machineName = machines?.find((machine) => machine.machine_id === project?.machine_id)?.name ?? project?.machine_label;
+    const machine = machines?.find((item) => item.machine_id === project?.machine_id);
+    const machineName = machine?.name ?? project?.machine_label;
     const projectChats = project
       ? [...(grouping.chatsByProject[project.id] ?? []), ...(archivedChats ?? []).filter((chat) => chat.project_id === project.id)].sort(byRecentActivity)
       : [];
@@ -339,7 +343,16 @@ export const ChatsPanel = memo(function ChatsPanel({
             <>
               {project && (
                 <p className="mb-4 flex flex-wrap items-baseline gap-x-2 text-muted-foreground">
-                  {machineName && <span className="font-semibold text-foreground">{machineName}</span>}
+                  {machineName && (
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-foreground">
+                      {machines && (
+                        <span role="img" aria-label={machine?.connected ? "Online" : "Offline"}
+                          title={machine?.connected ? "Online" : "Offline"}
+                          className={`size-2 shrink-0 rounded-full ${machine?.connected ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                      )}
+                      {machineName}
+                    </span>
+                  )}
                   <span className="break-all">{project.folder}</span>
                 </p>
               )}
@@ -349,7 +362,7 @@ export const ChatsPanel = memo(function ChatsPanel({
                 <p className="text-muted-foreground">No chats yet.</p>
               ) : (
                 <section aria-label="Project chats" className="divide-y divide-border border-y border-border">
-                  {projectChats.map((chat) => renderChat(chat, { restricted: chat.archived, showChatIcon: true }))}
+                  {projectChats.map((chat) => renderChat(chat, { restricted: chat.archived, showActivity: true }))}
                 </section>
               )}
             </>
@@ -385,7 +398,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const history = recent.filter((chat) => !historyFilter || (chat.type === "routine" || Boolean(chat.routine)) === (historyFilter === "tasks"));
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div className="pl-2 pr-1">
+      <div className="pl-2">
         <ChatSection
           label="Pinned"
           open={sections.pinned}

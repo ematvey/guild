@@ -3,6 +3,7 @@ import { FadeTitle } from "./chrome";
 import {
   Archive,
   ArchiveRestore,
+  CalendarClock,
   Folder,
   FolderOpen,
   EllipsisVertical,
@@ -187,13 +188,19 @@ export function ChatListItem({
   archiveLabel,
   showChatIcon,
   routine,
+  scheduledTask,
+  project,
+  lastActivity,
 }: {
   title: string;
   active: boolean;
   status: RowState;
   showChatIcon?: boolean;
-  /** The routine whose output this chat is: the row leads with its mark. */
+  /** The scheduled task that produced this chat, when known. */
   routine?: string;
+  scheduledTask?: boolean;
+  project?: boolean;
+  lastActivity?: string;
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
@@ -243,28 +250,31 @@ export function ChatListItem({
         title={title}
         aria-current={active ? "page" : undefined}
         type="button"
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
+        className="flex h-8 min-w-0 flex-1 items-center gap-1.5 pl-2 pr-0.5 text-left outline-none"
       >
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="flex min-w-0">
+            {title === "" ? (
+              <span data-title-placeholder className="truncate text-muted-foreground">New thread</span>
+            ) : <FadeTitle text={title} fadeWidth={10} />}
+          </span>
+          {lastActivity && (
+            <time dateTime={lastActivity} className="shrink-0 whitespace-nowrap text-muted-foreground">
+              {new Date(lastActivity).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+            </time>
+          )}
+        </span>
+        <RowStatus status={status} />
+        {showChatIcon && <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+        {project && <Folder aria-label="Project chat" className="size-3.5 shrink-0 text-muted-foreground" />}
         {routine !== undefined ? (
-          <Repeat
-            data-routine-mark
-            aria-label={`Scheduled task: ${routine}`}
-            className={`${showChatIcon ? "size-4" : "size-3.5"} shrink-0 text-muted-foreground`}
-          >
+          <Repeat data-routine-mark aria-label={`Scheduled task: ${routine}`} className="size-3.5 shrink-0 text-muted-foreground">
             <title>{`Scheduled task: ${routine}`}</title>
           </Repeat>
-        ) : showChatIcon ? (
-          <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        ) : null}
-        {title === "" ? (
-          <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
-            New thread
-          </span>
-        ) : (
-          <FadeTitle text={title} fadeWidth={10} />
+        ) : scheduledTask && (
+          <CalendarClock aria-label="Scheduled task run" className="size-3.5 shrink-0 text-muted-foreground" />
         )}
         {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
-        <RowStatus status={status} />
       </button>
       {hasActions && (
         <div className={ROW_ACTIONS}>

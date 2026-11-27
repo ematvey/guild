@@ -76,9 +76,16 @@ html:hover .work-sidebar-scroll,
   --work-scroll-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
 }
 
-.work-sidebar-scroll::-webkit-scrollbar {
-  display: block;
-  width: 8px;
+@supports selector(::-webkit-scrollbar) {
+  .work-sidebar-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  .work-sidebar-scroll::-webkit-scrollbar {
+    display: block;
+    width: 4px;
+  }
 }
 
 .work-sidebar-scroll::-webkit-scrollbar-thumb {
