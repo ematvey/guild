@@ -43,7 +43,7 @@ import { chatsStore, projectsStore } from "./chat-stores";
 import type { ComposerHandle } from "./hooks/use-composer";
 import type { AgentPick } from "./hooks/use-agent-pick";
 
-const COMPOSER_SURFACE = `${CHAT_COLUMN_CLASS} pointer-events-auto rounded-3xl bg-secondary`;
+const COMPOSER_SURFACE = `${CHAT_COLUMN_CLASS} pointer-events-auto rounded-3xl bg-[var(--chat-composer-background,var(--secondary))]`;
 
 /** Why the composer is read-only for this thread. */
 function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Agent | null): string {

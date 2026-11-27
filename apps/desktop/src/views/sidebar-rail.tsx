@@ -140,7 +140,7 @@ export function SidebarMenu({
           )}
           <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
           <DropdownMenuItem className="text-base" onSelect={() => onOpenSettings("machine")}><MonitorSmartphone />Devices</DropdownMenuItem>
-          {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Guild Control Center</DropdownMenuItem>}
+          {onOpenControl && <DropdownMenuItem className="text-base" onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
           <DropdownMenuItem className="text-base" onClick={onOpenHelp}>Help</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="text-base text-destructive focus:text-destructive" onClick={onSignOut}>

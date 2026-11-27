@@ -345,7 +345,7 @@ export function SkillsPanel({
                   onClick={() => onNavigate({ view: value, slug: null, editor: null })}
                   className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-sm outline-none transition-colors ${
                     tab === value
-                      ? "border-foreground text-foreground"
+                      ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >

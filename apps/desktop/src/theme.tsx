@@ -3,7 +3,7 @@ export { ThemeProvider, useTheme, applyTheme, resolvedDark, type Theme } from "@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-export const workPalettes = ["Slate", "Jade", "Ember"] as const;
+export const workPalettes = ["Slate", "Jade", "Ember", "Ocean", "Iris", "Rose"] as const;
 export const workFonts = ["Inter", "System", "Serif", "Mono"] as const;
 type WorkAppearance = {
   palette: (typeof workPalettes)[number];

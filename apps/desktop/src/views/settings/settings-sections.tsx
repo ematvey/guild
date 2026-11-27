@@ -94,11 +94,12 @@ function AppearanceSection() {
         <CardHeader>
           <CardTitle>Color palette</CardTitle>
         </CardHeader>
-        <CardContent role="group" aria-label="Color palette" className="grid grid-cols-3 gap-2">
+        <CardContent role="group" aria-label="Color palette" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {workPalettes.map((palette) => (
             <Button
               key={palette}
-              variant={appearance.palette === palette ? "secondary" : "outline"}
+              variant="outline"
+              className={appearance.palette === palette ? "border-primary bg-accent text-primary" : undefined}
               aria-pressed={appearance.palette === palette}
               onClick={() => setAppearance({ palette })}
             >

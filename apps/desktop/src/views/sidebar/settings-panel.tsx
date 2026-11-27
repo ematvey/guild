@@ -42,7 +42,7 @@ export function SettingsPanel({
                     }`}
                   >
                     {activeSection === s.id && (
-                      <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
+                      <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-primary/60" />
                     )}
                     {s.icon}
                     {s.label}

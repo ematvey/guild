@@ -204,7 +204,7 @@ export function ThreadPane({
           </WorkedForBlock>
         ) : e.b.kind === "user" ? (
           <div key={e.b.key} className="group ml-auto w-fit max-w-[80%]">
-            <div className={`rounded-2xl bg-secondary px-4 py-2.5 text-base leading-[1.75] ${WRAP_ANYWHERE}`}>
+            <div className={`rounded-2xl bg-[var(--chat-user-message,var(--secondary))] px-4 py-2.5 text-base leading-[1.75] ${WRAP_ANYWHERE}`}>
               {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
               {e.b.attachments && e.b.attachments.length > 0 && (
                 <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">

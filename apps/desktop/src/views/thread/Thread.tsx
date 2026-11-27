@@ -924,7 +924,7 @@ function ThreadView(props: ThreadProps) {
                   of its own; the preview pane carries the minimum width. It is
                   the positioning box for the composer, so the card stays under
                   the chat and not under the pane. */}
-              <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:64rem]" : ""}`}>
+              <div className={`guild-chat-surface relative flex min-h-0 min-w-0 flex-1 flex-col bg-background ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:64rem]" : ""}`}>
                 <ThreadHeader
                   isMobile={isMobile}
                   onOpenDrawer={openDrawer}
@@ -1071,7 +1071,7 @@ function ThreadView(props: ThreadProps) {
       <Dialog open={route.tab === "settings" && !controlRoute && settingsSection !== null} onOpenChange={(open) => {
         if (!open && route.overlay === null) switchTab("chats");
       }}>
-        <DialogContent className="flex h-[min(42rem,90dvh)] w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0" aria-describedby={undefined}>
+        <DialogContent className="guild-sidebar-theme flex h-[min(42rem,90dvh)] w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0" aria-describedby={undefined}>
           <DialogTitle className="border-b border-border px-5 py-3 text-base">{settingsSection === "machine" ? "Devices" : "Settings"}</DialogTitle>
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
             <div className="max-h-[30dvh] shrink-0 overflow-y-auto border-b border-border sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
