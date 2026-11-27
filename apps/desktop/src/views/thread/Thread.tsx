@@ -709,7 +709,7 @@ function ThreadView(props: ThreadProps) {
       <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!route.agents.routineId && <PageHeader variant="work" title="Scheduled" />}
-          <div className="work-page-content pb-8 pt-3">
+          <div className={`work-page-content pb-8 ${route.agents.routineId ? "" : "pt-3"}`}>
           {agent.agentsList === null ? <p>Loading routines…</p> :
             agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}

@@ -36,7 +36,7 @@ export function PageHeader({
       {...titleBarDragDeep}
       className={
         work
-          ? "work-page-content shrink-0 bg-background pt-6"
+          ? "work-page-content shrink-0 bg-background"
           : bar
           ? `shrink-0 border-b border-border bg-background px-4 pt-3 sm:px-6 ${CAPTION_BUTTONS_INSET}`
           : `sticky top-0 z-10 mb-6 flex min-h-11 flex-col justify-center border-b border-border bg-background py-1.5 ${CAPTION_BUTTONS_INSET}`

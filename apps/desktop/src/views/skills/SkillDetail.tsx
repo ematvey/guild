@@ -369,7 +369,7 @@ export function SkillDetail({
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <DetailHeader slug={slug} onBack={onBack} />
-        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3" : "work-page-content pt-4 pb-3"}>
+        <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3" : "work-page-content pb-3"}>
           <Skeleton className="mb-2 h-6 w-2/3 rounded-lg" />
           <Skeleton className="mb-2 h-4 w-full rounded-md" />
           <SkeletonText lines={5} className="pt-3" />
