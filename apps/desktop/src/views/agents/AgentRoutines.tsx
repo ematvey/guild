@@ -215,9 +215,7 @@ function RoutineList({
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="truncate text-sm font-medium">{routine.name}</span>
-                    <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                      {routine.enabled ? "Enabled" : "Paused"}
-                    </ToneBadge>
+                    {!routine.enabled && <ToneBadge tone="neutral">Paused</ToneBadge>}
                     {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
                   </span>
                   <span
@@ -228,7 +226,7 @@ function RoutineList({
                     {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
                   </span>
                 </span>
-                {routine.last_run && <RunStatusBadge status={routine.last_run.status} />}
+                {routine.last_run && routine.last_run.status !== "succeeded" && <RunStatusBadge status={routine.last_run.status} />}
               </button>
             ))}
           </div>
@@ -382,7 +380,7 @@ function RoutineDetail({
         <div className="work-page-content space-y-3 pb-8 pt-3">
           {runs === null ? <LoadingRows rows={2} /> : run ? (
             <>
-              <RunStatusBadge status={run.status} />
+              {run.status !== "succeeded" && <RunStatusBadge status={run.status} />}
               {(run.error_message || run.summary) && (
                 <div className={`${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
                   <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{run.error_message || run.summary || ""}</Markdown>
@@ -405,9 +403,7 @@ function RoutineDetail({
               <dt className="text-muted-foreground">Schedule</dt>
               <dd className="mt-1 flex flex-wrap items-center gap-2" title={routine.schedule ?? undefined}>
                 {scheduleLabel(routine)}
-                <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                  {routine.enabled ? "Enabled" : "Paused"}
-                </ToneBadge>
+                {!routine.enabled && <ToneBadge tone="neutral">Paused</ToneBadge>}
               </dd>
             </div>
             <div>
@@ -488,7 +484,7 @@ function RoutineDetail({
                         ? { view: "agent", agentId, tab: "routines", routineId, routineRunId: run.id }
                         : { view: "run", runId: run.id })}>
                       <time dateTime={date}>{formatDate(date)}</time>
-                      <RunStatusBadge status={run.status} />
+                      {run.status !== "succeeded" && <RunStatusBadge status={run.status} />}
                     </button>
                   </li>
                 );
