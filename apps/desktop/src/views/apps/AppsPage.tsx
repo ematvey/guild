@@ -222,7 +222,7 @@ function AppHeader({
     (fn) => fn.available && fn.confirm,
   );
   return (
-    <header className={`shrink-0 border-b border-border bg-background px-4 pb-3 ${import.meta.env.MODE === "control" ? `pt-3 ${CAPTION_BUTTONS_INSET}` : ""}`}>
+    <header className={`shrink-0 border-b border-border bg-background px-4 pb-3 ${import.meta.env.MODE === "control" ? "pt-3" : ""} ${CAPTION_BUTTONS_INSET}`}>
       <div className="flex items-center gap-2">
         {showBack && (
           <Button

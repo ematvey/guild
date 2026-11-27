@@ -825,7 +825,7 @@ function ThreadView(props: ThreadProps) {
         {/* main column */}
         <div
           {...titleBarDrag}
-          className="relative flex min-w-0 flex-1 flex-col"
+          className={`relative flex min-w-0 flex-1 flex-col ${!isMobile && !sidebarState.collapsed ? "-mt-11" : ""}`}
           onDragOver={(e) => {
             if (![...e.dataTransfer.types].includes("Files")) return;
             e.preventDefault();
