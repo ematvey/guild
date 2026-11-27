@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
-import { CAPTION_BUTTONS_INSET } from "../../lib/titlebar";
+import { ChevronRight, Clock, Ellipsis, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
@@ -8,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { createAgentThread, sendAgentTurn, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
-import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, Section, ToneBadge } from "./agent-ui";
+import { ErrorState, InlineLoading, LoadingRows, Mono, RunStatusBadge, ToneBadge } from "./agent-ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -321,138 +321,124 @@ function RoutineDetail({
     }
   };
 
-  if (error !== null) {
+  const work = import.meta.env.MODE !== "control";
+  const destinations = { label: work ? "Scheduled" : "Routines", onClick: () => onNavigate({ view: "agent", agentId, tab: "routines" }) } as const;
+  const header = (
+    <PageHeader variant={work ? "work" : "bar"} title={routine?.name ?? destinations.label} back={destinations} />
+  );
+
+  if (error !== null || routine === null) {
     return (
-      <div className="space-y-4">
-        <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
-      </div>
+      <>
+        {header}
+        <div className={work ? "work-page-content pt-3" : "pt-3"}>
+          {error !== null
+            ? <ErrorState message={error} onRetry={loadError !== null ? retry : undefined} />
+            : <InlineLoading label="Loading routine" />}
+        </div>
+      </>
     );
   }
-  if (routine === null) return <InlineLoading label="Loading routine" />;
 
   return (
-    <div className="space-y-4">
-      <div className={`flex flex-wrap items-center gap-2 ${import.meta.env.MODE === "control" ? "" : `min-h-11 ${CAPTION_BUTTONS_INSET}`}`}>
-        <BackButton onNavigate={onNavigate} agentId={agentId} />
-        <div className="flex-1" />
-        {canManage && (
-          <>
-            <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running}>
-              {running ? <Loader2 className="animate-spin" /> : <Play />}
-              Run now
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => void edit()} disabled={editing}>
-              {editing ? <Loader2 className="animate-spin" /> : <Pencil />}
-              Edit via agent
-            </Button>
-          </>
-        )}
-        {canManage && routine.kind === "cron" && (
-          <Button variant="outline" size="sm" onClick={() => void toggleSchedule()} disabled={changingSchedule}>
-            {routine.enabled ? "Pause" : "Resume"}
-          </Button>
-        )}
-      </div>
-
-      <Section title="Routine" description="Schedules and prompts are managed in chat.">
-        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Name</dt>
-            <dd className="mt-0.5">{routine.name}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Status</dt>
-            <dd className="mt-0.5">
-              <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                {routine.enabled ? "Enabled" : "Paused"}
-              </ToneBadge>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Schedule</dt>
-            <dd className="mt-0.5" title={routine.schedule ?? undefined}>
-              {scheduleLabel(routine)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Next run</dt>
-            <dd className="mt-0.5 text-muted-foreground">
-              {routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}
-            </dd>
-          </div>
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-medium text-muted-foreground">Messages go to</dt>
-            <dd className="mt-1">
-              <Select
-                value={routine.delivery}
-                disabled={!canManage}
-                onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}
-              >
-                <SelectTrigger className="max-w-72" aria-label="Messages go to">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="thread">One chat for this routine</SelectItem>
-                  <SelectItem value="new_chat">A new chat for each message</SelectItem>
-                </SelectContent>
-              </Select>
-            </dd>
-          </div>
-        </dl>
-        <div className="mt-4">
-          <p className="text-xs font-medium text-muted-foreground">Prompt</p>
-          <p className="mt-1 whitespace-pre-wrap rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm leading-relaxed">
-            {routine.prompt}
-          </p>
+    <>
+      {header}
+      <div className={work ? "work-page-content space-y-6 pb-8 pt-3" : "space-y-6 py-3"}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <dl className="flex flex-wrap gap-x-8 gap-y-3">
+            <div>
+              <dt className="text-muted-foreground">Schedule</dt>
+              <dd className="mt-1 flex flex-wrap items-center gap-2" title={routine.schedule ?? undefined}>
+                {scheduleLabel(routine)}
+                <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
+                  {routine.enabled ? "Enabled" : "Paused"}
+                </ToneBadge>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Next run</dt>
+              <dd className="mt-1">{routine.next_run_at ? nextRunLabel(routine.next_run_at) : "Not scheduled"}</dd>
+            </div>
+          </dl>
+          {canManage && (
+            <div className="flex items-center gap-1">
+              <Button variant="outline" onClick={() => void runNow()} disabled={running}>
+                {running ? <Loader2 className="animate-spin" /> : <Play />}
+                Run now
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Routine actions" title="Routine actions">
+                    <Ellipsis />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => void edit()} disabled={editing}>
+                    <Pencil /> Edit in chat
+                  </DropdownMenuItem>
+                  {routine.kind === "cron" && (
+                    <DropdownMenuItem onSelect={() => void toggleSchedule()} disabled={changingSchedule}>
+                      {routine.enabled ? "Pause schedule" : "Resume schedule"}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </div>
-        <p className="mt-3 text-2xs text-muted-foreground">
-          The run gets these instructions, this prompt and the workspace. It does not see the other threads.
-        </p>
-      </Section>
 
-      {actionError !== null && (
-        <p role="alert" className="text-sm text-destructive">
-          {actionError}
-        </p>
-      )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label htmlFor="routine-delivery" className="text-muted-foreground">Messages go to</label>
+          <Select value={routine.delivery} disabled={!canManage}
+            onValueChange={(value) => void changeDelivery(value as AgentRoutine["delivery"])}>
+            <SelectTrigger id="routine-delivery" className="w-fit max-w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="thread">One chat for this routine</SelectItem>
+              <SelectItem value="new_chat">A new chat for each message</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-      <Section title="Run history" description="Occurrences of this routine, newest first.">
-        {runs === null ? (
-          <InlineLoading label="Loading runs" />
-        ) : runs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">This routine has not run yet.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {runs.map((run) => (
-              <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-xs">
-                <RunStatusBadge status={run.status} />
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {run.summary?.trim() || "No summary"}
-                </span>
-                <Mono>{run.id.slice(0, 8)}</Mono>
-                <span className="text-muted-foreground">{relativeTime(run.started_at ?? run.created_at)}</span>
-                <button
-                  type="button"
-                  className="text-primary underline-offset-4 hover:underline"
-                  onClick={() => onNavigate({ view: "run", runId: run.id })}
-                >
-                  Open
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-    </div>
-  );
-}
+        {actionError !== null && <p role="alert" className="text-destructive">{actionError}</p>}
 
-function BackButton({ agentId, onNavigate }: { agentId: string; onNavigate: (routes: AgentsRoute) => void }) {
-  return (
-    <Button variant="ghost" size="sm" onClick={() => onNavigate({ view: "agent", agentId, tab: "routines" })}>
-      <ArrowLeft />
-      Routines
-    </Button>
+        <section aria-label="Run history" className="space-y-2 border-t border-border pt-4">
+          <h2 className="font-semibold">Run history</h2>
+          {runs === null ? (
+            <InlineLoading label="Loading runs" />
+          ) : runs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This routine has not run yet.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {runs.map((run) => (
+                <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-xs">
+                  <RunStatusBadge status={run.status} />
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {run.summary?.trim() || "No summary"}
+                  </span>
+                  {!work && <Mono>{run.id.slice(0, 8)}</Mono>}
+                  <span className="text-muted-foreground">{relativeTime(run.started_at ?? run.created_at)}</span>
+                  {!work && (
+                    <button type="button" className="text-primary underline-offset-4 hover:underline"
+                      onClick={() => onNavigate({ view: "run", runId: run.id })}>
+                      Open
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <details className="group border-y border-border">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-3 font-semibold [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden="true" className="size-4 transition-transform group-open:rotate-90" />
+            Prompt
+          </summary>
+          <p className="whitespace-pre-wrap break-words pb-4 leading-relaxed text-muted-foreground">{routine.prompt}</p>
+        </details>
+      </div>
+    </>
   );
 }

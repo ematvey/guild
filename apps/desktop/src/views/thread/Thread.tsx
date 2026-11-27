@@ -709,7 +709,7 @@ function ThreadView(props: ThreadProps) {
       <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {agent.personalAgent?.id === route.agents.agentId ? (
-            <div className={route.agents.routineId ? "work-page-content pb-8" : undefined}>
+            <div>
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
                 canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
                 onNavigate={(next) => {
