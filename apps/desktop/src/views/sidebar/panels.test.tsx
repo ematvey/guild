@@ -91,23 +91,30 @@ describe("ProjectHeader", () => {
   };
 
   it("carries the machine name and its online dot", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} machine={{ name: "dev-1", online: true }} />);
+    const html = renderToStaticMarkup(<ProjectHeader {...base} open={undefined} machine={{ name: "dev-1", online: true }} />);
     expect(html).toContain("dev-1");
     expect(html).toContain("bg-emerald-500");
     expect(html).toContain('title="/home/u/guild"');
   });
 
   it("hides the dot while the machine state is unknown", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} machine={{ name: "dev-1", online: undefined }} />);
+    const html = renderToStaticMarkup(<ProjectHeader {...base} open={undefined} machine={{ name: "dev-1", online: undefined }} />);
     expect(html).toContain("dev-1");
     expect(html).not.toContain("bg-emerald-500");
     expect(html).not.toContain("bg-muted-foreground/40");
   });
 
-  it("shows an open folder when expanded and offers the project's new chat", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} open onNewChat={() => {}} />);
+  it("shows the folder and a persistent new-chat action without machine details in the sidebar", () => {
+    const html = renderToStaticMarkup(
+      <ProjectHeader {...base} open machine={{ name: "dev-1", online: true }} onNewChat={() => {}} onPin={() => {}} />,
+    );
     expect(html).toContain("lucide-folder-open");
-    expect(html).toContain("New chat in this project");
+    expect(html).not.toContain("dev-1");
+    expect(html).not.toContain("bg-emerald-500");
+    expect(html.indexOf("New chat in this project")).toBeLessThan(html.indexOf("max-w-0 shrink-0"));
+    expect(html).not.toContain('aria-label="Pin"');
+    const pinned = renderToStaticMarkup(<ProjectHeader {...base} pinned onPin={() => {}} />);
+    expect(pinned).toContain('aria-label="Unpin"');
   });
 });
 

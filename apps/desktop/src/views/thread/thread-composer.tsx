@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   CornerDownRight,
-  FolderOpen,
   Loader2,
   Plus,
   ShieldCheck,
@@ -87,7 +86,6 @@ function ProjectChip({
           className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/60"}`}
         />
       )}
-      <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
       <FadeTitle text={label} />
     </span>
   );
