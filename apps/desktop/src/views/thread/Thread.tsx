@@ -762,7 +762,7 @@ function ThreadView(props: ThreadProps) {
     />
   );
   const sidebarBody = (
-    <div className="work-sidebar-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
       {workNavigation}
       {renderSidebar("history")}
     </div>
