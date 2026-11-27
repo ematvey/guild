@@ -2,7 +2,7 @@
 // thread's back link), and the chat menu with its rename
 // and delete dialogs.
 import { useState } from "react";
-import { Archive, ArchiveRestore, EllipsisVertical, Link2, Menu, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Link2, Menu, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
@@ -102,7 +102,7 @@ export function ThreadHeader({
       {isSubagent && childTree?.parent ? (
         <ChildThreadHeader tree={childTree} onBack={onOpenChat} />
       ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {project && (
             <>
               <a
@@ -139,14 +139,14 @@ export function ThreadHeader({
             <Button
               variant="ghost"
               size="icon"
-              className="-mr-1.5 size-9 shrink-0 pointer-coarse:size-10 text-muted-foreground"
+              className="-ml-1 size-8 shrink-0 text-muted-foreground pointer-coarse:size-10"
               title="Chat options"
               aria-label="Chat options"
             >
-              <EllipsisVertical />
+              <ChevronDown aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-44">
+          <DropdownMenuContent align="start" className="min-w-44">
             {showMenu && !foreign && (
               <>
                 <DropdownMenuItem

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Brain, Check, Copy } from "lucide-react";
 import Markdown from "react-markdown";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
+import { FadeTitle } from "../sidebar/chrome";
 import { Frame } from "../frame";
 import { PayloadPre } from "../payload-pre";
 import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
@@ -54,9 +55,9 @@ export function ThreadTitle({ chatId, title, loading }: { chatId: string | null;
   // stays that way until its first message, so it says so instead of
   // holding a skeleton open forever.
   if (title === "") {
-    return <span className="min-w-0 flex-1 truncate font-bold text-muted-foreground">New thread</span>;
+    return <span className="flex min-w-0 font-bold text-muted-foreground"><FadeTitle text="New thread" /></span>;
   }
-  return <span className="min-w-0 flex-1 truncate font-bold">{title}</span>;
+  return <span className="flex min-w-0 font-bold"><FadeTitle text={title} /></span>;
 }
 
 /// Collapsible "Thinking" frame for a reasoning block; default collapsed,

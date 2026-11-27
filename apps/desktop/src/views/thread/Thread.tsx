@@ -765,7 +765,13 @@ function ThreadView(props: ThreadProps) {
   const composerVisible = routePage === null && route.tab === "chats" && !route.previewFull;
   useEffect(() => {
     if (isMobile || !composerVisible || !composerEnabled || access === "readonly" || navigating || overlay || route.searchOpen) return;
-    const frame = requestAnimationFrame(() => ta.current?.focus({ preventScroll: true }));
+    const frame = requestAnimationFrame(() => {
+      const textarea = ta.current;
+      if (!textarea) return;
+      textarea.focus({ preventScroll: true });
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
     return () => cancelAnimationFrame(frame);
   }, [isMobile, composerVisible, composerEnabled, chatId, route.projectId, route.newChat, access, navigating, overlay, route.searchOpen, ta]);
 
