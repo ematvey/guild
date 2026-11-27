@@ -856,7 +856,7 @@ function ThreadView(props: ThreadProps) {
                   of its own; the preview pane carries the minimum width. It is
                   the positioning box for the composer, so the card stays under
                   the chat and not under the pane. */}
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:64rem]" : ""}`}>
                 <ThreadHeader
                   isMobile={isMobile}
                   onOpenDrawer={openDrawer}

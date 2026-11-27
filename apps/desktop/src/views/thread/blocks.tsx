@@ -12,7 +12,7 @@ import type { CompactionBlock } from "../../lib/thread-reducer";
 /// The conversation column: the transcript, the composer card, the loading
 /// skeleton and the jump-to-bottom row share one cap at every breakpoint and
 /// narrow with the pane below it.
-export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[48rem]";
+export const CHAT_COLUMN_CLASS = "mx-auto w-full max-w-[var(--chat-column-width,48rem)]";
 
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
