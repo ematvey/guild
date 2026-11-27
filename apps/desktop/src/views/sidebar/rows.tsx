@@ -68,7 +68,7 @@ function PinButton({ pinned, onPin }: { pinned?: boolean; onPin?: () => void }) 
   if (!onPin) return null;
   const label = pinned ? "Unpin" : "Pin";
   return (
-    <button type="button" className={ROW_BUTTON} aria-label={label} title={label} onClick={onPin}>
+    <button type="button" className={`${ROW_BUTTON}${pinned ? "" : " max-md:hidden pointer-coarse:hidden"}`} aria-label={label} title={label} onClick={onPin}>
       <Pin aria-hidden="true" className="size-3.5 fill-current" />
     </button>
   );
