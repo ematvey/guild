@@ -141,12 +141,6 @@ export function coordinationPreamble(input: CoordinationInput): string {
   })}\n</coordination_input>\n${input.content}${delivery}`;
 }
 
-/** The inbox thread's title: the member's own assistant is "Your
- *  assistant"; a shared agent's inbox carries the agent's name. */
-function inboxTitle(agent: Agent): string {
-  return agent.is_personal ? "Your assistant" : agent.name;
-}
-
 /** Serializes first creation across processes. Coordinator history is an
  *  internal chat; member-facing inboxes are separate ordinary Threads. */
 export async function ensureCoordinationThread(
@@ -155,10 +149,11 @@ export async function ensureCoordinationThread(
   userId: string,
   role: "coordinator" | "inbox",
 ): Promise<AgentThread> {
+  if (role === "inbox" && agent.is_personal) throw ApiError.badRequest("The personal Assistant inbox is disabled");
   return store.threads.createThread(
     agent.id,
     role === "coordinator" ? agent.owner_user_id : userId,
-    role === "coordinator" ? "Coordinator" : inboxTitle(agent),
+    role === "coordinator" ? "Coordinator" : agent.name,
     "user",
     { executionRole: role, internal: role === "coordinator" },
   );

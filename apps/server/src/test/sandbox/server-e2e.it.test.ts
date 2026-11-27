@@ -173,7 +173,16 @@ describe.skipIf(URL_ === undefined)("server-side tools in sandboxes (e2e)", () =
 
   it("materializes inbox attachments for the internal coordinator's file tools", async () => {
     const { app, db } = stack.env;
-    const inbox = await app.inject({ method: "POST", url: "/api/v1/assistant", headers: auth(), payload: {} });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents",
+      headers: auth(),
+      payload: { name: "Attachment coordinator", model: "GLM-Test-Model", resources: { assistant: { enabled: true } } },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const inbox = await app.inject({
+      method: "POST", url: "/api/v1/assistant", headers: auth(), payload: { agent_id: created.json().agent.id },
+    });
     expect(inbox.statusCode, inbox.body).toBe(200);
     const { agent_id, chat_id, thread_id } = inbox.json() as { agent_id: string; chat_id: string; thread_id: string };
     const upload = await app.inject({

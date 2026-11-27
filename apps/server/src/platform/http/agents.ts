@@ -437,11 +437,8 @@ export function registerAgentRoutes(
   app.post("/api/v1/assistant", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = jsonBody(req);
-    const agent =
-      typeof body["agent_id"] === "string"
-        ? (await store.requireAccess(user, body["agent_id"], "use")).agent
-        : await store.ensurePersonalAgentFor(user.org_id, user.id);
-    if (agent === null) throw ApiError.badRequest("Configure a model before opening Assistant");
+    if (typeof body["agent_id"] !== "string") throw ApiError.badRequest("The personal Assistant inbox is disabled");
+    const { agent } = await store.requireAccess(user, body["agent_id"], "use");
     if (!coordinationSettings(agent).enabled) throw ApiError.badRequest("Coordination is not enabled for this Agent");
     refuseDeletingAgent(agent);
     const thread = await ensureCoordinationThread(store, agent, user.id, "inbox");
