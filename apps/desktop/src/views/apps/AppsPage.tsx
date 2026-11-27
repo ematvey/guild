@@ -244,7 +244,7 @@ function AppHeader({
           {work ? <ChevronDown aria-hidden="true" /> : "Manage"}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={work ? "start" : "end"} className="w-56">
+      <DropdownMenuContent align={work ? "start" : "end"} className={work ? "w-80 max-w-[calc(100vw-2rem)]" : "w-56"}>
         {work && (
           <>
             <div className="px-2 py-1.5">{metadata}</div>
