@@ -84,6 +84,9 @@ export interface ChatRoute {
   /** Project context (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
+  projectsPage?: boolean;
+  searchOpen?: boolean;
+  historyFilter?: "chats" | "tasks";
   /** The skills page route, or null when the URL is not a skills one. */
   skills: SkillsRoute | null;
   /** The agents surface route, or null when the URL is not an agents one. */
@@ -150,7 +153,7 @@ export function withoutControlPrefix(pathname: string): string {
   return pathname.startsWith(CONTROL_PREFIX + "/") ? pathname.slice(CONTROL_PREFIX.length) : pathname;
 }
 
-export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+const parseBaseChatRoute = (pathname: string, search = ""): ChatRoute => {
   const control = pathname.startsWith(CONTROL_PREFIX + "/");
   pathname = withoutControlPrefix(pathname);
   const usage = parseUsageQuery(search);
@@ -402,6 +405,19 @@ export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   };
 };
 
+export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
+  const projectsPage = /^\/projects\/?$/.test(pathname);
+  const route = parseBaseChatRoute(projectsPage ? "/chats" : pathname, search);
+  const query = new URLSearchParams(search);
+  const filter = query.get("history");
+  return {
+    ...route,
+    ...(projectsPage ? { projectsPage: true } : {}),
+    ...(query.get("search") === "1" ? { searchOpen: true } : {}),
+    ...(filter === "chats" || filter === "tasks" ? { historyFilter: filter } : {}),
+  };
+};
+
 const PREVIEW_KINDS = new Set(["attachment", "artifact"]);
 
 /** `?preview=<kind>:<id>`: the file the preview pane shows. A malformed value
@@ -432,6 +448,9 @@ export function previewQuery(route: ChatRoute): string {
 }
 
 export interface RoutePatch {
+  projectsPage?: boolean;
+  searchOpen?: boolean;
+  historyFilter?: ChatRoute["historyFilter"] | null;
   chatId?: string | null;
   projectId?: string | null;
   overlay?: ChatOverlay;
@@ -557,9 +576,19 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
           ? null
           : (route.preview ?? null);
   const previewFull = preview !== null && ("previewFull" in next ? !!next.previewFull : route.previewFull === true);
+  const projectsPage = next.projectsPage ?? (
+    route.projectsPage && !("chatId" in next || "tab" in next || opensOther || onSurface || ov !== null)
+  );
+  const searchOpen = next.searchOpen ?? (
+    route.searchOpen && Object.keys(next).every((key) => key === "historyFilter")
+  );
+  const historyFilter = "historyFilter" in next ? next.historyFilter : route.historyFilter;
   return {
     chatId,
     projectId,
+    ...(projectsPage ? { projectsPage: true } : {}),
+    ...(searchOpen ? { searchOpen: true } : {}),
+    ...(historyFilter ? { historyFilter } : {}),
     overlay: ov,
     skills: sk,
     agents: ag,

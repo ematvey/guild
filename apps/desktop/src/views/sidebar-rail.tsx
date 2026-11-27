@@ -1,7 +1,12 @@
 import {
   ArrowUpRight,
   CalendarClock,
+  ArrowLeft,
+  ArrowRight,
   Cpu,
+  Folder,
+  Search,
+  SquarePen,
   Settings,
   LayoutGrid,
   MessageSquare,
@@ -41,6 +46,16 @@ export function WorkSidebarHeader({
         {workspaceName && <span className="block truncate text-xs text-muted-foreground">{workspaceName}</span>}
       </div>
       <CollapseButton onCollapse={onCollapse} />
+      {onCollapse && (
+        <div className="flex shrink-0 items-center">
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Go back" title="Go back" onClick={() => window.history.back()}>
+            <ArrowLeft />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Go forward" title="Go forward" onClick={() => window.history.forward()}>
+            <ArrowRight />
+          </Button>
+        </div>
+      )}
       {onClose && <CloseSidebarButton onClose={onClose} />}
     </div>
   );
@@ -48,48 +63,49 @@ export function WorkSidebarHeader({
 
 const workPages = [
   { id: "chats", label: "Chats", icon: MessageSquare },
-  { id: "skills", label: "Skills", icon: Package },
+  { id: "skills", label: "Customize", icon: Package },
   { id: "apps", label: "Apps", icon: LayoutGrid },
-  { id: "routines", label: "Routines", icon: CalendarClock },
+  { id: "routines", label: "Scheduled", icon: CalendarClock },
 ] as const;
 
-export function WorkPageShortcuts({
+export function WorkNavigation({
   active,
+  onNewChat,
+  onSearch,
+  onProjects,
   onTabChange,
   onOpenRoutines,
-  onOpenSettings,
 }: {
-  active: RailTab | "routines" | "device";
+  active: RailTab | "routines" | "projects";
+  onNewChat: () => void;
+  onSearch: () => void;
+  onProjects: () => void;
   onTabChange: (tab: RailTab) => void;
   onOpenRoutines?: () => void;
-  onOpenSettings: (section: string) => void;
 }) {
-  const shortcuts = [
-    ...workPages
-      .filter(({ id }) => id !== "routines" || onOpenRoutines)
-      .map(({ id, label, icon }) => ({
-        id,
-        label,
-        icon,
-        open: () => (id === "routines" ? onOpenRoutines?.() : onTabChange(id)),
-      })),
-    { id: "device", label: "Devices", icon: Cpu, open: () => onOpenSettings("machine") },
-    { id: "settings", label: "Settings", icon: Settings, open: () => onOpenSettings("appearance") },
+  const items = [
+    { label: "New", icon: SquarePen, open: onNewChat },
+    { label: "Search", icon: Search, open: onSearch },
+    { id: "projects", label: "Projects", icon: Folder, open: onProjects },
+    { id: "apps", label: "Apps", icon: LayoutGrid, open: () => onTabChange("apps") },
+    { id: "routines", label: "Scheduled", icon: CalendarClock, open: onOpenRoutines },
+    { id: "skills", label: "Customize", icon: Package, open: () => onTabChange("skills") },
   ];
   return (
-    <nav aria-label="Work navigation" className="flex shrink-0 gap-0.5 border-t border-border px-2 py-1.5">
-      {shortcuts.map(({ id, label, icon: Icon, open }) => (
+    <nav aria-label="Work navigation" className="shrink-0 space-y-0.5 border-b border-border/60 px-2 pb-2 pt-1">
+      {items.map(({ id, label, icon: Icon, open }) => (
         <Button
-          key={id}
+          key={label}
           variant="ghost"
-          size="icon"
-          className="guild-sidebar-current h-9 min-w-0 flex-1 text-muted-foreground pointer-coarse:h-11"
-          aria-label={label}
-          title={label}
-          aria-current={active === id ? "page" : undefined}
+          size="sm"
+          className="guild-sidebar-current h-8 w-full justify-start px-2 font-normal pointer-coarse:h-10"
+          aria-current={id === active ? "page" : undefined}
+          aria-haspopup={label === "Search" ? "dialog" : undefined}
           onClick={open}
+          disabled={!open}
         >
-          <Icon />
+          <Icon aria-hidden="true" />
+          {label}
         </Button>
       ))}
     </nav>
@@ -113,7 +129,7 @@ export function SidebarMenu({
 }: {
   onTabChange: (tab: RailTab) => void;
   onOpenSettings: (section: string) => void;
-  onOpenControl: () => void;
+  onOpenControl?: () => void;
   onOpenHelp: () => void;
   onOpenRoutines?: () => void;
   email: string;
@@ -130,22 +146,12 @@ export function SidebarMenu({
       className={
         collapsed
           ? `guild-sidebar-theme flex shrink-0 flex-col items-center gap-1 border-r border-border bg-sidebar px-1 py-2 ${TITLE_BAR_INSET}`
-          : "shrink-0 px-2 pb-2"
+          : "shrink-0 border-t border-border/60 px-2 py-2"
       }
     >
       {collapsed && (
         <Button variant="ghost" size="icon" onClick={onExpand} aria-label="Expand sidebar">
           <PanelLeftOpen />
-        </Button>
-      )}
-      {!collapsed && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onOpenControl}
-          className="w-full justify-between px-3 text-muted-foreground"
-        >
-          Control Center <ArrowUpRight />
         </Button>
       )}
       <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact={collapsed}>
@@ -164,13 +170,13 @@ export function SidebarMenu({
                   {label}
                 </DropdownMenuItem>
               ))}
-            <DropdownMenuItem onSelect={() => onOpenSettings("machine")}>Devices</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onOpenSettings("appearance")}>Settings</DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenControl}>Control Center</DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
         )}
+        <DropdownMenuItem onSelect={() => onOpenSettings("account")}><Settings />Settings</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onOpenSettings("machine")}><Cpu />Devices</DropdownMenuItem>
         {collapsed && <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>}
+        {onOpenControl && <DropdownMenuItem onSelect={onOpenControl}><ArrowUpRight />Control Center</DropdownMenuItem>}
         <DropdownMenuItem onClick={onOpenHelp}>Help</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">

@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ChevronRight, Plus, Search, SquarePen } from "lucide-react";
-import { DesktopTooltip } from "../../components/desktop-tooltip";
+import { ChevronRight, Plus, Search } from "lucide-react";
 import { Input } from "@guild/ui/components/input";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary } from "../../lib/api/chats";
@@ -65,6 +64,9 @@ function ChatSection({
 
 export const ChatsPanel = memo(function ChatsPanel({
   grouping,
+  mode = "history",
+  historyFilter,
+  onHistoryFilter,
   projects = null,
   archivedProjects,
   machines,
@@ -80,7 +82,6 @@ export const ChatsPanel = memo(function ChatsPanel({
   loadingChats,
   chatId,
   archivedChats,
-  onNewChat,
   onOpenChat,
   onRenameChat,
   onArchiveChat,
@@ -88,6 +89,9 @@ export const ChatsPanel = memo(function ChatsPanel({
   onDeleteChat,
 }: {
   grouping: SidebarGrouping;
+  mode?: "history" | "projects" | "search";
+  historyFilter?: "chats" | "tasks";
+  onHistoryFilter?: (filter: "chats" | "tasks" | null) => void;
   projects?: Project[] | null;
   archivedProjects?: Project[] | null;
   machines?: MachineInfo[] | null;
@@ -105,7 +109,6 @@ export const ChatsPanel = memo(function ChatsPanel({
   chatId: string | null;
   /** Archived section: the rows and their restore action. */
   archivedChats?: ChatSummary[] | null;
-  onNewChat: () => void;
   onOpenChat: (id: string) => void;
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
@@ -114,7 +117,7 @@ export const ChatsPanel = memo(function ChatsPanel({
 }) {
   const [scrolled, setScrolled] = useState(false);
   const [search, setSearch] = useState("");
-  const [sections, setSections] = useState({ pinned: true, projects: false, recent: true, archived: false });
+  const [sections, setSections] = useState({ pinned: true, recent: true, archived: false });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -144,16 +147,16 @@ export const ChatsPanel = memo(function ChatsPanel({
 
   const activeProject = projects?.find((project) => project.id === projectId);
   const archivedProject = archivedProjects?.find((project) => project.id === projectId);
-  const activeSection = archivedProject ? "archived" : activeProject?.pinned_at ? "pinned" : "projects";
+  const activeSection = archivedProject ? "archived" : "pinned";
   const hasProject = Boolean(activeProject || archivedProject);
   const activeProjectHeader = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!projectId || !hasProject) return;
+    if (!projectId || !hasProject || (!archivedProject && !activeProject?.pinned_at)) return;
     setExpanded((current) => ({ ...current, [projectId]: true }));
     setSections((current) => ({ ...current, [activeSection]: true }));
     const frame = requestAnimationFrame(() => activeProjectHeader.current?.scrollIntoView?.({ block: "nearest" }));
     return () => cancelAnimationFrame(frame);
-  }, [projectId, chatId, activeSection, hasProject]);
+  }, [projectId, chatId, activeSection, hasProject, archivedProject, activeProject?.pinned_at]);
 
   const toggleSection = (section: keyof typeof sections) =>
     setSections((current) => ({ ...current, [section]: !current[section] }));
@@ -298,7 +301,6 @@ export const ChatsPanel = memo(function ChatsPanel({
     setSections((current) => ({ ...current, pinned: true }));
     finishDrag();
   };
-  const unpinnedProjects = projects?.filter((project) => !project.pinned_at);
   const archivedThreads = archivedChats?.filter((chat) => !chat.project_id || !archivedProjectIds.has(chat.project_id));
   const query = search.trim().toLocaleLowerCase();
   const matches = query === "" ? [] : [
@@ -308,148 +310,139 @@ export const ChatsPanel = memo(function ChatsPanel({
   ]
     .filter((chat) => (chat.title ?? "").toLocaleLowerCase().includes(query))
     .sort(byRecentActivity);
+  if (mode === "projects") {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+        <div className="mx-auto max-w-3xl">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <h1 className="text-xl font-semibold">Projects</h1>
+            <button type="button" onClick={onNewProject} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent">
+              <Plus aria-hidden="true" className="size-4" /> New project
+            </button>
+          </div>
+          <div aria-label="Projects" className="divide-y divide-border rounded-lg border border-border bg-card px-2">
+            {projects === null && <SkeletonRows rows={3} />}
+            {projects?.map((project) => renderProject(project))}
+            {projects?.length === 0 && <p className="p-4 text-sm text-muted-foreground">No projects yet.</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (mode === "search") {
+    return (
+      <>
+        <div className="relative">
+          <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input type="search" aria-label="Search chats by title" placeholder="Search chats by title"
+            value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" />
+        </div>
+        <section aria-label="Chat search results" className="max-h-[55dvh] space-y-0.5 overflow-y-auto">
+          {loadingChats && <SkeletonRows rows={3} />}
+          {!loadingChats && query !== "" && matches.length === 0 && (
+            <p className="px-2 py-2 text-sm text-muted-foreground">No matching chats.</p>
+          )}
+          {matches.map((chat) => renderChat(chat, { restricted: true, showChatIcon: true }))}
+        </section>
+      </>
+    );
+  }
+  const history = recent.filter((chat) => !historyFilter || (chat.type === "routine" || Boolean(chat.routine)) === (historyFilter === "tasks"));
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-
-      <div className="flex shrink-0 items-center gap-1 px-2 pb-2 pt-1">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input
-            type="search"
-            aria-label="Search chats by title"
-            placeholder="Search chats"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="h-8 pl-8"
-          />
-        </div>
-        <DesktopTooltip label="New chat" hotkey="mod+N" browserHotkey="Ctrl+Alt+N">
-          <button
-            type="button"
-            aria-label="New chat"
-            onClick={onNewChat}
-            className="grid size-8 shrink-0 place-items-center rounded-md text-sidebar-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <SquarePen aria-hidden="true" className="size-4" />
-          </button>
-        </DesktopTooltip>
-      </div>
-      {query === "" && assistants.length > 0 && (
+      {assistants.length > 0 && (
         <div
           role="group"
           aria-label="Assistant conversations"
-          className={`relative z-10 shrink-0 space-y-0.5 px-2 pb-3 pt-1 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
+          className={`relative z-10 shrink-0 space-y-0.5 px-2 pt-1 ${scrolled ? "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-border/60" : ""}`}
         >
           {assistants.map((chat) => renderChat(chat))}
         </div>
       )}
-      <div
-        className="min-h-0 flex-1 overflow-y-auto px-2"
-        onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
-      >
-        {query !== "" ? (
-          <section aria-label="Chat search results" className="space-y-0.5">
-            {loadingChats && <SkeletonRows rows={3} />}
-            {!loadingChats && matches.length === 0 && (
-              <p className="px-2 py-1 text-sm text-muted-foreground">No matching chats.</p>
-            )}
-            {matches.map((chat) => renderChat(chat, { restricted: true, showChatIcon: true }))}
-          </section>
-        ) : (
-          <>
-            <ChatSection
-              label="Pinned"
-              open={sections.pinned}
-              dropTarget={!!dragged && !dropHint}
-              onToggle={() => toggleSection("pinned")}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2" onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}>
+        <ChatSection
+          label="Pinned"
+          open={sections.pinned}
+          dropTarget={!!dragged && !dropHint}
+          onToggle={() => toggleSection("pinned")}
+          onDragOver={(event) => {
+            allowDrop(event);
+            if (dropHint) setDropHint(null);
+          }}
+          onDrop={dropOnPinned}
+        >
+          {pins.map((pin) => (
+            <div
+              key={pin.id}
+              className="relative"
               onDragOver={(event) => {
+                if (!dragged?.pinned || dragged.id === pin.id || !onReorderPin) return;
+                event.stopPropagation();
                 allowDrop(event);
-                if (dropHint) setDropHint(null);
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const after = event.clientY >= bounds.top + bounds.height / 2;
+                if (dropHint?.id !== pin.id || dropHint.after !== after) setDropHint({ id: pin.id, after });
               }}
-              onDrop={dropOnPinned}
+              onDragLeave={(event) => {
+                if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                  setDropHint(null);
+                }
+              }}
+              onDrop={(event) => {
+                if (!dragged?.pinned) return;
+                event.stopPropagation();
+                dropOnPinned(event, pin.id, dropHint?.id === pin.id && dropHint.after);
+              }}
             >
-              {pins.map((pin) => (
+              {dropHint?.id === pin.id && (
                 <div
-                  key={pin.id}
-                  className="relative"
-                  onDragOver={(event) => {
-                    if (!dragged?.pinned || dragged.id === pin.id || !onReorderPin) return;
-                    event.stopPropagation();
-                    allowDrop(event);
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    const after = event.clientY >= bounds.top + bounds.height / 2;
-                    if (dropHint?.id !== pin.id || dropHint.after !== after) setDropHint({ id: pin.id, after });
-                  }}
-                  onDragLeave={(event) => {
-                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-                      setDropHint(null);
-                    }
-                  }}
-                  onDrop={(event) => {
-                    if (!dragged?.pinned) return;
-                    event.stopPropagation();
-                    dropOnPinned(event, pin.id, dropHint?.id === pin.id && dropHint.after);
-                  }}
-                >
-                  {dropHint?.id === pin.id && (
-                    <div
-                      className={`pointer-events-none absolute inset-x-1 z-20 h-0.5 rounded bg-ring ${dropHint.after ? "bottom-0" : "top-0"}`}
-                    />
-                  )}
-                  {pin.render()}
-                </div>
-              ))}
-            </ChatSection>
-            <ChatSection
-              label="Projects"
-              open={sections.projects}
-              onToggle={() => toggleSection("projects")}
-              action={
-                onNewProject && (
-                  <button
-                    type="button"
-                    title="New project"
-                    aria-label="New project"
-                    onClick={() => {
-                      setSections((current) => ({ ...current, projects: true }));
-                      onNewProject();
-                    }}
-                    className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <Plus aria-hidden="true" className="size-4" />
-                  </button>
-                )
-              }
-            >
-              {projects === null && onNewProject && <SkeletonRows rows={1} />}
-              {unpinnedProjects?.map((project) => renderProject(project))}
-              {projects?.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>}
-            </ChatSection>
-            <ChatSection label="Recent" open={sections.recent} onToggle={() => toggleSection("recent")}>
-              {loadingChats && <SkeletonRows rows={5} className="[&>div]:h-8 [&>div]:px-2" />}
-              {!loadingChats && recent.map((chat) => renderChat(chat))}
-              {!loadingChats && recent.length === 0 && (
-                <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
+                  className={`pointer-events-none absolute inset-x-1 z-20 h-0.5 rounded bg-ring ${dropHint.after ? "bottom-0" : "top-0"}`}
+                />
               )}
-            </ChatSection>
-            {!!(archivedProjects?.length || archivedThreads?.length) && (
-              <ChatSection label="Archived" open={sections.archived} onToggle={() => toggleSection("archived")}>
-                {!!archivedProjects?.length && (
-                  <div role="group" aria-label="Archived projects" className="space-y-0.5">
-                    <p className="px-2 py-1 text-xs text-muted-foreground">Projects</p>
-                    {archivedProjects.map((project) => renderProject(project, true))}
-                  </div>
-                )}
-                {!!archivedThreads?.length && (
-                  <div role="group" aria-label="Archived chats" className="space-y-0.5">
-                    <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
-                    {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
-                  </div>
-                )}
-              </ChatSection>
-            )}
-          </>
-        )}
+              {pin.render()}
+            </div>
+          ))}
+        </ChatSection>
+        <ChatSection
+          label="Chats and tasks"
+          open={sections.recent}
+          onToggle={() => toggleSection("recent")}
+          action={onHistoryFilter && (
+            <select aria-label="Filter history" value={historyFilter ?? ""}
+              className="max-w-20 rounded-md bg-sidebar px-1 text-xs text-muted-foreground hover:text-sidebar-foreground"
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                onHistoryFilter(value === "chats" || value === "tasks" ? value : null);
+              }}>
+              <option value="">All</option>
+              <option value="chats">Chats</option>
+              <option value="tasks">Tasks</option>
+            </select>
+          )}
+        >
+          {loadingChats && <SkeletonRows rows={5} className="[&>div]:h-8 [&>div]:px-2" />}
+          {!loadingChats && history.map((chat) => renderChat(chat))}
+          {!loadingChats && history.length === 0 && (
+            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
+          )}
+        </ChatSection>
+        <ChatSection label="Archived" open={sections.archived} onToggle={() => toggleSection("archived")}>
+          {!archivedProjects?.length && !archivedThreads?.length && (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">Nothing archived yet.</p>
+          )}
+          {!!archivedProjects?.length && (
+            <div role="group" aria-label="Archived projects" className="space-y-0.5">
+              <p className="px-2 py-1 text-xs text-muted-foreground">Projects</p>
+              {archivedProjects.map((project) => renderProject(project, true))}
+            </div>
+          )}
+          {!!archivedThreads?.length && (
+            <div role="group" aria-label="Archived chats" className="space-y-0.5">
+              <p className="px-2 py-1 text-xs text-muted-foreground">Chats</p>
+              {archivedThreads.map((chat) => renderChat(chat, { restricted: true }))}
+            </div>
+          )}
+        </ChatSection>
       </div>
       <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>

@@ -37,7 +37,6 @@ describe("ChatsPanel archived section", () => {
         grouping={sidebarGrouping([chat("c-live", "Live chat", null)])}
         archivedChats={[chat("c-arch", "Archived chat", archived.id)]}
         loadingChats={false}
-        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -59,7 +58,6 @@ describe("ChatsPanel archived section", () => {
         grouping={sidebarGrouping([])}
         archivedChats={[]}
         loadingChats={false}
-        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -95,13 +93,12 @@ it("shows synced pins, keeps project threads in Recent, and hides archived proje
       loadingChats={false}
       chatId={liveChat.id}
       projectId={liveProject.id}
-      onNewChat={() => {}}
       onOpenChat={() => {}}
       onPinChat={onPinChat}
     />,
   );
   const pinned = within(screen.getByRole("region", { name: "Pinned" }));
-  const recent = within(screen.getByRole("region", { name: "Recent" }));
+  const recent = within(screen.getByRole("region", { name: "Chats and tasks" }));
   expect(pinned.getAllByText("Active conversation")).toHaveLength(2);
   expect(recent.getByText("Active conversation")).toBeDefined();
   expect(screen.queryByText("Hidden conversation")).toBeNull();

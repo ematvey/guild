@@ -28,7 +28,7 @@ export type PushRoute = (next: RoutePatch, options?: RouteNavOptions) => void;
 
 /** The address a resolved route lives at. */
 export function routePath(resolved: ChatRoute): string {
-  const path = chatRoutePath(
+  const path = resolved.projectsPage ? "/projects" : chatRoutePath(
     resolved.chatId,
     resolved.projectId,
     resolved.overlay,
@@ -42,9 +42,13 @@ export function routePath(resolved: ChatRoute): string {
     resolved.integrations,
     resolved.apps ?? null,
   );
-  const query = previewQuery(resolved);
-  const surfacePath = isControlRoute(resolved) ? CONTROL_PREFIX + path : path;
-  return query === "" ? surfacePath : `${surfacePath}?${query}`;
+  const [pathname, existingQuery] = path.split("?");
+  const query = new URLSearchParams(existingQuery);
+  new URLSearchParams(previewQuery(resolved)).forEach((value, key) => query.set(key, value));
+  if (resolved.searchOpen) query.set("search", "1");
+  if (resolved.historyFilter && !isControlRoute(resolved)) query.set("history", resolved.historyFilter);
+  const surfacePath = isControlRoute(resolved) ? CONTROL_PREFIX + pathname : pathname;
+  return query.size === 0 ? surfacePath : `${surfacePath}?${query}`;
 }
 
 /** Applies one navigation to the history stack: a new entry, or a rewrite of

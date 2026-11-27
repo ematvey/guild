@@ -239,3 +239,11 @@ describe("work and Control Center addresses", () => {
     expect(routePath(parseChatRoute("/thread/c1"))).toBe("/thread/c1");
   });
 });
+
+
+it("round-trips Work Projects, search and the chat history filter", () => {
+  const projects = parseChatRoute("/projects", "?search=1&history=tasks");
+  expect(routePath(projects)).toBe("/projects?search=1&history=tasks");
+  expect(routePath(applyRoutePatch(projects, { searchOpen: false }))).toBe("/projects?history=tasks");
+  expect(routePath(applyRoutePatch(projects, { chatId: "c1" }))).toBe("/thread/c1?history=tasks");
+});

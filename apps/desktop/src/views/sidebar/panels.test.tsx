@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ChatListItem, ProjectHeader } from "./rows";
 import { ChatsPanel } from "./chats-panel";
+import { WorkNavigation } from "../sidebar-rail";
 import { SettingsPanel } from "./settings-panel";
 
 const idle = { generating: false, unread: false };
@@ -142,7 +143,6 @@ describe("panels", () => {
           grouping={sidebarGrouping(chats)}
           loadingChats={false}
           chatId={null}
-          onNewChat={() => {}}
           onOpenChat={() => {}}
           onRenameChat={() => {}}
           onArchiveChat={() => {}}
@@ -159,26 +159,30 @@ describe("panels", () => {
     expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
   });
 
-  it("names each tab and offers the new-chat control", () => {
-    const chats = renderToStaticMarkup(
-      <ChatsPanel
-        grouping={sidebarGrouping([])}
-        projects={[]}
-        onNewProject={() => {}}
-        loadingChats={false}
-        chatId={null}
-        onNewChat={() => {}}
-        onOpenChat={() => {}}
-      />,
+  it("keeps New and Search above history and Projects on its own page", () => {
+    const props = {
+      grouping: sidebarGrouping([]),
+      projects: [],
+      onNewProject: () => {},
+      loadingChats: false,
+      chatId: null,
+      onOpenChat: () => {},
+    };
+    const history = renderToStaticMarkup(<ChatsPanel {...props} />);
+    const projects = renderToStaticMarkup(<ChatsPanel {...props} mode="projects" />);
+    const search = renderToStaticMarkup(<ChatsPanel {...props} mode="search" />);
+    const navigation = renderToStaticMarkup(
+      <WorkNavigation active="projects" onNewChat={() => {}} onSearch={() => {}}
+        onProjects={() => {}} onTabChange={() => {}} />,
     );
-    expect(chats).toContain('aria-label="New chat"');
-    expect(chats).toContain('aria-label="Search chats by title"');
-    expect(chats).toContain("lucide-square-pen");
-    expect(chats).toContain("No conversations yet.");
-
-    expect(chats).toContain(">Projects<");
-    expect(chats).toContain("New project");
-    expect(chats).toContain('aria-label="Projects"');
+    expect(navigation).toContain(">New<");
+    expect(navigation).toContain('aria-haspopup="dialog"');
+    expect(navigation).toContain(">Search<");
+    expect(history).toContain("No conversations yet.");
+    expect(history).not.toContain('aria-label="Projects"');
+    expect(projects).toContain("New project");
+    expect(projects).toContain('aria-label="Projects"');
+    expect(search).toContain('aria-label="Search chats by title"');
   });
 
   it("hides admin-only settings sections from a member", () => {

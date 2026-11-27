@@ -6,6 +6,8 @@ import { openAssistant } from "../agents/agents-api";
 // this file assembles the component tree.
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 
+import { Dialog, DialogContent, DialogTitle } from "@guild/ui/components/dialog";
+import { SettingsPanel } from "../sidebar/settings-panel";
 import { Button } from "@guild/ui/components/button";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
@@ -20,7 +22,7 @@ import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
-import { SidebarMenu, WorkPageShortcuts, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
+import { SidebarMenu, WorkNavigation, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
@@ -174,7 +176,7 @@ function ThreadView(props: ThreadProps) {
   // the tab root.
   useEffect(() => {
     if (route.chatId !== null || route.tab !== "chats" || route.newChat) return;
-    if (route.projectId !== null || route.overlay !== null) return;
+    if (route.projectId !== null || route.projectsPage || route.searchOpen || route.overlay !== null) return;
     if (route.skills !== null || route.agents !== null || route.integrations !== null) return;
     if ((route.apps ?? null) !== null) return;
     let live = true;
@@ -190,6 +192,8 @@ function ThreadView(props: ThreadProps) {
     route.chatId,
     route.tab,
     route.newChat,
+    route.projectsPage,
+    route.searchOpen,
     route.projectId,
     route.overlay,
     route.skills,
@@ -437,7 +441,7 @@ function ThreadView(props: ThreadProps) {
       // step with the URL.
       const row = chatsStore.get()?.find((c) => c.id === id) ?? archivedChatsStore.get()?.find((c) => c.id === id);
       setOpen(false);
-      pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
+      pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null, tab: "chats" });
     },
     [pushRoute],
   );
@@ -603,13 +607,13 @@ function ThreadView(props: ThreadProps) {
   const settingsSection = route.settingsSection;
   const lastChat = useRef<{ chatId: string | null; projectId: string | null }>({ chatId: null, projectId: null });
   useEffect(() => {
-    if (paneLayout.mainPane === "chat" && route.overlay === null) {
+    if (paneLayout.mainPane === "chat" && !route.projectsPage && route.overlay === null) {
       lastChat.current = { chatId: route.chatId, projectId: route.projectId };
     }
-  }, [paneLayout.mainPane, route.chatId, route.projectId, route.overlay]);
+  }, [paneLayout.mainPane, route.projectsPage, route.chatId, route.projectId, route.overlay]);
   const switchTab = (tab: RailTab) => {
     if (tab === "chats") {
-      if (paneLayout.mainPane !== "chat") {
+      if (paneLayout.mainPane !== "chat" || route.projectsPage) {
         pushRoute({ ...CHAT_ROOT, ...lastChat.current, tab: "chats", agents: null, settingsSection: null, settingsDetail: null });
         sidebarState.setCollapsed(false);
       }
@@ -675,7 +679,7 @@ function ThreadView(props: ThreadProps) {
       // Navigation: the section pick owns its /settings/<section> address, so
       // back/forward walks the sections and a reload restores the pick.
       pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: id, settingsDetail: null });
-      // The section renders in the main column, behind the drawer.
+      // Close the mobile drawer before showing the Settings dialog.
       if (isMobile) setOpen(false);
     },
     [pushRoute, isMobile],
@@ -686,18 +690,16 @@ function ThreadView(props: ThreadProps) {
   // The mobile drawer carries the rail too, so every panel tab renders there;
   // its header X closes the sheet (the built-in corner close is suppressed:
   // it would sit on top of the header's new-thread plus).
-  const sidebar = (
+  const renderSidebar = (mode: "history" | "projects" | "search") => (
     <SidebarSurface
-      tab={route.tab}
-      role={role}
+      mode={mode}
+      historyFilter={route.historyFilter}
+      onHistoryFilter={(historyFilter) => pushRoute({ historyFilter })}
       chatId={viewChatId}
       projectId={route.projectId}
-      settingsSection={settingsSection}
-      onNewChat={newChat}
       onOpenChat={openChat}
       onNewChatInProject={newChatInProject}
       onNewProject={openCreateProject}
-      onSelectSection={openSettingsSection}
       onOpenChatDeleted={leaveDeletedChat}
     />
   );
@@ -732,11 +734,15 @@ function ThreadView(props: ThreadProps) {
           <Button variant="ghost" onClick={() => switchTab("chats")}>Back to chats</Button>
         </div>
       </RoutePage>
+    ) : route.projectsPage ? (
+      <RoutePage isMobile={isMobile} title="Projects" onOpenDrawer={openDrawer}>
+        {renderSidebar("projects")}
+      </RoutePage>
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
-      <RoutePage isMobile={isMobile} title="Routines" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto bg-muted/25 p-4 sm:p-6">
           <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card p-4 sm:p-6">
-          <h1 className="mb-4 text-lg font-semibold">Routines</h1>
+          <h1 className="mb-4 text-lg font-semibold">Scheduled</h1>
           {agent.agentsList === null ? <p>Loading routines…</p> :
             agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
@@ -754,20 +760,11 @@ function ThreadView(props: ThreadProps) {
         <AppsSurface route={route.apps} isMobile={isMobile} pushRoute={pushRoute} onOpenChat={openChat} />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
-      <RoutePage isMobile={isMobile} title="Skills" onOpenDrawer={openDrawer}>
+      <RoutePage isMobile={isMobile} title="Customize" onOpenDrawer={openDrawer}>
         <SkillsPage
           route={route.skills}
           me={{ email, displayName: displayName ?? undefined, role }}
           pushRoute={pushRoute}
-        />
-      </RoutePage>
-    ) : route.tab === "settings" && settingsSection !== null ? (
-      <RoutePage isMobile={isMobile} title={settingsSection === "machine" ? "Devices" : "Settings"} onOpenDrawer={openDrawer}>
-        <SettingsPage
-          section={settingsSection}
-          email={email}
-          role={role}
-          onSetupDevice={() => pushRoute({ overlay: { kind: "device" } })}
         />
       </RoutePage>
     ) : null;
@@ -779,12 +776,22 @@ function ThreadView(props: ThreadProps) {
       view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
     } });
   } : undefined;
-  const workShortcuts = (
-    <WorkPageShortcuts
-      active={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : route.settingsSection === "machine" ? "device" : railTab}
+  const openSearch = () => {
+    if (isMobile) setOpen(false);
+    pushRoute({ searchOpen: true });
+  };
+  const openProjects = () => {
+    if (isMobile) setOpen(false);
+    pushRoute({ ...CHAT_ROOT, tab: "chats", agents: null, projectsPage: true });
+  };
+  const workNavigation = (
+    <WorkNavigation
+      active={route.projectsPage ? "projects" : route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
+      onNewChat={newChat}
+      onSearch={openSearch}
+      onProjects={openProjects}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenRoutines={openRoutines}
-      onOpenSettings={openSettingsSection}
     />
   );
   const menu = (collapsed = false) => (
@@ -822,8 +829,8 @@ function ThreadView(props: ThreadProps) {
           >
             <SheetTitle className="sr-only">Work sidebar</SheetTitle>
             <WorkSidebarHeader workspaceName={workspace?.name} onClose={sidebarClose} />
-            {sidebar}
-            {workShortcuts}
+            {workNavigation}
+            {renderSidebar("history")}
             {menu()}
           </SheetContent>
         </Sheet>
@@ -832,8 +839,8 @@ function ThreadView(props: ThreadProps) {
       ) : (
         <Sidebar collapsed={false}>
           <WorkSidebarHeader workspaceName={workspace?.name} onCollapse={sidebarCollapse} />
-          {sidebar}
-          {workShortcuts}
+          {workNavigation}
+          {renderSidebar("history")}
           {menu()}
         </Sidebar>
       )}
@@ -1003,6 +1010,28 @@ function ThreadView(props: ThreadProps) {
         )}
       </div>
 
+      <Dialog open={route.searchOpen === true} onOpenChange={(open) => {
+        if (!open) pushRoute({ searchOpen: false });
+      }}>
+        <DialogContent className="max-w-xl" aria-describedby={undefined}>
+          <DialogTitle>Search</DialogTitle>
+          {renderSidebar("search")}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={route.tab === "settings" && !controlRoute && settingsSection !== null} onOpenChange={(open) => {
+        if (!open && route.overlay === null) switchTab("chats");
+      }}>
+        <DialogContent className="flex h-[min(42rem,90dvh)] w-[calc(100%-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0" aria-describedby={undefined}>
+          <DialogTitle className="border-b border-border px-5 py-3">{settingsSection === "machine" ? "Devices" : "Settings"}</DialogTitle>
+          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+            <div className="max-h-[30dvh] shrink-0 overflow-y-auto border-b border-border sm:max-h-none sm:w-44 sm:border-b-0 sm:border-r">
+              <SettingsPanel role={role} activeSection={settingsSection} onSelectSection={openSettingsSection} />
+            </div>
+            {settingsSection !== null && <SettingsPage section={settingsSection} email={email} role={role}
+              onSetupDevice={() => pushRoute({ overlay: { kind: "device" } })} />}
+          </div>
+        </DialogContent>
+      </Dialog>
       <ThreadOverlays
         deviceOpen={overlay?.kind === "device"}
         onboardOpen={route.overlay?.kind === "onboard"}
