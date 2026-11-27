@@ -283,6 +283,10 @@ function ThreadView(props: ThreadProps) {
   thread.resyncRef.current = () => socketRef.current?.resync();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
+  const [sidebarScrolled, setSidebarScrolled] = useState(false);
+  const syncSidebarScroll = useCallback((element: HTMLDivElement | null) => {
+    if (element) setSidebarScrolled(element.scrollTop > 0);
+  }, []);
   // Desktop sidebar: one shared width and collapse flag, persisted, so the
   // chat, project, settings, apps and integrations lists behave alike.
   const sidebarState = useSidebar();
@@ -788,7 +792,11 @@ function ThreadView(props: ThreadProps) {
     />
   );
   const sidebarBody = (
-    <div className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+    <div
+      ref={syncSidebarScroll}
+      onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
+      className="work-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+    >
       {workNavigation}
       {renderSidebar("history")}
     </div>
@@ -823,7 +831,7 @@ function ThreadView(props: ThreadProps) {
         <header {...titleBarDragDeep} className={`relative shrink-0 ${TITLE_BAR_INSET}`}>
           <div
             aria-hidden="true"
-            className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar shadow-[inset_-1px_0_var(--border)] ${sidebarState.resizing ? "" : "transition-[width] duration-150 motion-reduce:transition-none"}`}
+            className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar shadow-[inset_-1px_0_var(--border)] ${sidebarScrolled && !sidebarState.collapsed ? "border-b border-border/60" : ""} ${sidebarState.resizing ? "" : "transition-[width] duration-150 motion-reduce:transition-none"}`}
             style={{ width: sidebarState.collapsed ? 0 : sidebarState.width }}
           />
           <div className="relative">
@@ -840,7 +848,7 @@ function ThreadView(props: ThreadProps) {
               hideClose
             >
               <SheetTitle className="sr-only">Guild sidebar</SheetTitle>
-              <WorkSidebarHeader onClose={sidebarClose} />
+              <WorkSidebarHeader onClose={sidebarClose} showDivider={sidebarScrolled} />
               {sidebarBody}
               {menu}
             </SheetContent>

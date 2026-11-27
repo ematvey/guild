@@ -28,13 +28,15 @@ export function WorkSidebarHeader({
   onToggle,
   expanded,
   onClose,
+  showDivider,
 }: {
   onToggle?: () => void;
   expanded?: boolean;
   onClose?: () => void;
+  showDivider?: boolean;
 }) {
   return (
-    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 pl-3 pr-2 ${TOP_ROW}`}>
+    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-1 pl-3 pr-2 ${TOP_ROW} ${showDivider ? "border-b border-border/60" : "border-b border-transparent"}`}>
       <CollapseButton onCollapse={onToggle} expanded={expanded} />
       {onToggle && (
         <div className="flex shrink-0 items-center">
