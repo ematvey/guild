@@ -25,7 +25,6 @@ describe("loadConfig", () => {
       s3SecretAccessKey: "minioadmin",
       apiUrl: "http://localhost:8080",
       releaseRepository: null,
-      releaseChannel: "stable",
       clickhouseUrl: "http://localhost:8123",
       clickhouseDatabase: "guild",
       clickhouseUser: "",

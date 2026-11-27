@@ -207,19 +207,13 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 ## Desktop releases
 
 A Release names signed desktop artifacts for one product version. GitHub hosts
-six artifacts for four platforms; a server imports their checked metadata and
-approves one complete version per channel for its paired clients. A stable stack accepts
-stable versions; a develop stack also accepts `-dev.<build-number>` versions.
-Every installer, listing and updater candidate is capped at the running server
-version. An installation persists its own stable/develop preference across
-sign-out and pairing changes. Native offers bind to the paired server, channel
-and observed server version and are revalidated before installation.
-Deployment release pairing imports the published tag for the exact version
-reported by the running server when the image and release record the same
-source commit. The approved version and all artifact rows
-become visible together. The updater
-manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
-only on GitHub.
+six artifacts for four platforms. The running server's embedded version and
+source commit identify the only release it can offer. The server resolves the
+exact tag in its configured repository and checks its commit, artifact names,
+sizes, digests and signature metadata before serving any of it. The updater
+manifest is absent until a complete matching release is available.
+The client persists its stable/develop preference and revalidates each offer
+against its paired server, channel and observed server version.
 
 Only a stable release on master changes the committed product version. Branch
 and local builds stamp a temporary preview version in their build checkout.

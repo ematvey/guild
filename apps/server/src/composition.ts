@@ -70,7 +70,6 @@ export class PlatformContext implements PlatformStores {
   readonly skills: PlatformStores["skills"];
   readonly apps: PlatformStores["apps"];
   readonly access: PlatformStores["access"];
-  readonly releases: PlatformStores["releases"];
   readonly projects: PlatformStores["projects"];
   readonly teams: PlatformStores["teams"];
   readonly orgKv: PlatformStores["orgKv"];
@@ -155,7 +154,6 @@ export class PlatformContext implements PlatformStores {
     this.skills = stores.skills;
     this.apps = stores.apps;
     this.access = stores.access;
-    this.releases = stores.releases;
     this.projects = stores.projects;
     this.teams = stores.teams;
     this.orgKv = stores.orgKv;

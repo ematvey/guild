@@ -196,18 +196,12 @@ before deploying the image.
   configured list at runtime, so one client build follows whichever stack it
   paired with. The `endpoints` entry in `tauri.conf.json` is a placeholder
   the runtime replaces. `createUpdaterArtifacts: true`.
-- Two publisher scripts, both **idempotent** (they delete+republish an
-  existing version/platform artifact) and both verify the server's sha256
-  against the local file:
-  - `scripts/release-clients.sh` — local cross-build entry point. It delegates
-    preview stamping and publication to `scripts/release.mjs`; see `docs/clients.md` §4.
-- Desktop artifacts are published once to GitHub Releases. Each stack imports
-  an approved tag using `POST /api/v1/admin/releases/github`. Set
-  `GUILD_RELEASE_REPOSITORY=owner/repository`; set `GUILD_RELEASE_CHANNEL=develop`
-  on dev to allow preview versions. The default stable channel rejects them.
-- The paired server keeps `/api/v1/updates/latest.json` and the release download
-  API, with GitHub URLs for imported releases. Verify the approved version and
-  all four updater targets after importing. Approval requires no client rebuild.
+- `scripts/release-clients.sh` delegates preview stamping and publication
+  to `scripts/release.mjs`. GitHub Releases hosts the signed artifacts.
+- Set `GUILD_RELEASE_REPOSITORY=owner/repository`. The server resolves the
+  exact desktop release for its embedded version and commit. The updater
+  endpoint and release download API serve its verified GitHub URLs.
+- Verify the deployed version and all four signed updater targets after rollout.
 - Release builds need current node dependencies and an explicit full `PATH`
   when run detached. The local builder installs isolated dependencies and shares npm and Cargo caches.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
