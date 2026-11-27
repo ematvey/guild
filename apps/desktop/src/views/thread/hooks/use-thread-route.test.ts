@@ -234,6 +234,7 @@ describe("work and Control Center addresses", () => {
 
   it("keeps personal routines and member settings in the work app", () => {
     expect(routePath(parseChatRoute("/routines/a1/r1"))).toBe("/routines/a1/r1");
+    expect(routePath(parseChatRoute("/routines/a1/r1/runs/run1"))).toBe("/routines/a1/r1/runs/run1");
     expect(routePath(parseChatRoute("/agents/a1/routines/r1"))).toBe("/control/agents/a1/routines/r1");
     expect(routePath(parseChatRoute("/settings/appearance"))).toBe("/settings/appearance");
     expect(routePath(parseChatRoute("/thread/c1"))).toBe("/thread/c1");

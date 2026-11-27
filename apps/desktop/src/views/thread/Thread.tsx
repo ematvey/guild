@@ -712,6 +712,7 @@ function ThreadView(props: ThreadProps) {
           {agent.personalAgent?.id === route.agents.agentId ? (
             <div>
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
+                routineRunId={route.agents.routineRunId}
                 canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
                 onNavigate={(next) => {
                   if (next.view === "agent" && next.tab === "routines") {

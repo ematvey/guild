@@ -1,13 +1,15 @@
+import Markdown from "react-markdown";
+import { CHAT_MD_PLUGINS, MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "../markdown";
 import { useEffect, useState } from "react";
-import { ChevronRight, Clock, Ellipsis, Loader2, Pencil, Play, Plus } from "lucide-react";
+import { Clock, Ellipsis, Loader2, Pencil, Play, Plus } from "lucide-react";
 import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
-import { nextRunLabel, relativeTime } from "../../lib/relative-time";
+import { nextRunLabel } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { createAgentThread, sendAgentTurn, listRoutineRuns, runRoutine, updateRoutine, type AgentRoutine, type AgentRun } from "./agents-api";
 import { upsertRun, useAgentRoutines, useAgentRunUpdates } from "./agents-store";
 import type { AgentsRoute } from "./agents-route";
-import { ErrorState, LoadingRows, Mono, RunStatusBadge, ToneBadge } from "./agent-ui";
+import { ErrorState, LoadingRows, RunStatusBadge, ToneBadge } from "./agent-ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
 import { EmptyState } from "@guild/ui/components/empty-state";
 
@@ -65,9 +67,10 @@ export function scheduleLabel(routine: AgentRoutine): string {
   return `${humanSchedule(routine.schedule ?? "")} · ${routine.timezone}`;
 }
 
-export function AgentRoutinesPage({ agentId, routineId, canManage, onNavigate, onOpenChat }: {
+export function AgentRoutinesPage({ agentId, routineId, routineRunId, canManage, onNavigate, onOpenChat }: {
   agentId: string;
   routineId?: string;
+  routineRunId?: string;
   canManage: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onOpenChat: (chatId: string) => void;
@@ -102,13 +105,14 @@ export function AgentRoutinesPage({ agentId, routineId, canManage, onNavigate, o
     );
   };
 
-  return <AgentRoutines agentId={agentId} routineId={routineId} canManage={canManage}
+  return <AgentRoutines agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage}
     onNavigate={onNavigate} onNewRoutine={newRoutine} onEditRoutine={editRoutine} />;
 }
 
 export function AgentRoutines({
   agentId,
   routineId,
+  routineRunId,
   canManage,
   onNavigate,
   onNewRoutine,
@@ -116,6 +120,7 @@ export function AgentRoutines({
 }: {
   agentId: string;
   routineId?: string;
+  routineRunId?: string;
   canManage: boolean;
   onNavigate: (route: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
@@ -123,7 +128,7 @@ export function AgentRoutines({
 }) {
   if (routineId && routineId !== "new") {
     return (
-      <RoutineDetail agentId={agentId} routineId={routineId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
+      <RoutineDetail agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
     );
   }
   return <RoutineList agentId={agentId} canManage={canManage} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
@@ -234,12 +239,14 @@ function RoutineList({
 function RoutineDetail({
   agentId,
   routineId,
+  routineRunId,
   canManage,
   onNavigate,
   onEditRoutine,
 }: {
   agentId: string;
   routineId: string;
+  routineRunId?: string;
   canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
@@ -340,17 +347,42 @@ function RoutineDetail({
     );
   }
 
+  const formatDate = (date: string) => new Date(date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  if (routineRunId) {
+    const run = runs?.find((item) => item.id === routineRunId);
+    const date = run?.started_at ?? run?.created_at;
+    return (
+      <>
+        <PageHeader variant="work" title={date ? formatDate(date) : "Run"}
+          back={{ label: routine.name, onClick: () => onNavigate({ view: "agent", agentId, tab: "routines", routineId }) }} />
+        <div className="work-page-content space-y-3 pb-8 pt-3">
+          {runs === null ? <LoadingRows rows={2} /> : run ? (
+            <>
+              <RunStatusBadge status={run.status} />
+              {(run.error_message || run.summary) && (
+                <div className={`${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
+                  <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{run.error_message || run.summary || ""}</Markdown>
+                </div>
+              )}
+            </>
+          ) : <ErrorState message="This run is unavailable." />}
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       {header}
       <div className={work ? "work-page-content space-y-6 pb-8 pt-3" : "space-y-6 py-3"}>
-        <details className="group border-y border-border">
-          <summary className="flex cursor-pointer list-none items-center gap-2 py-3 font-semibold [&::-webkit-details-marker]:hidden">
-            <ChevronRight aria-hidden="true" className="size-4 transition-transform group-open:rotate-90" />
-            Prompt
-          </summary>
-          <p className="whitespace-pre-wrap break-words pb-4 leading-relaxed text-muted-foreground">{routine.prompt}</p>
-        </details>
+        <section aria-label="Settings" className="space-y-2">
+          <h2 className="font-bold">Settings</h2>
+          <h3 className="font-semibold">Prompt</h3>
+          <div className={`space-y-3 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
+            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{routine.prompt}</Markdown>
+          </div>
+        </section>
 
         <div className="flex flex-wrap items-start justify-between gap-4">
           <dl className="flex flex-wrap gap-x-8 gap-y-3">
@@ -419,22 +451,21 @@ function RoutineDetail({
             <p className="text-sm text-muted-foreground">This task has not run yet.</p>
           ) : (
             <ul className="divide-y divide-border">
-              {runs.map((run) => (
-                <li key={run.id} className="flex flex-wrap items-center gap-2 py-2 text-xs">
-                  <RunStatusBadge status={run.status} />
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                    {run.summary?.trim() || "No summary"}
-                  </span>
-                  {!work && <Mono>{run.id.slice(0, 8)}</Mono>}
-                  <span className="text-muted-foreground">{relativeTime(run.started_at ?? run.created_at)}</span>
-                  {!work && (
-                    <button type="button" className="text-primary underline-offset-4 hover:underline"
-                      onClick={() => onNavigate({ view: "run", runId: run.id })}>
-                      Open
+              {runs.map((run) => {
+                const date = run.started_at ?? run.created_at;
+                return (
+                  <li key={run.id}>
+                    <button type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-2.5 text-left hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={() => onNavigate(work
+                        ? { view: "agent", agentId, tab: "routines", routineId, routineRunId: run.id }
+                        : { view: "run", runId: run.id })}>
+                      <time dateTime={date}>{formatDate(date)}</time>
+                      <RunStatusBadge status={run.status} />
                     </button>
-                  )}
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
