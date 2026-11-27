@@ -127,15 +127,16 @@ export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpe
           </section>
 
           {os === "mac" && (
-            <div className="mt-2 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-muted-foreground">
-              <p className="text-sm">
-                <span className="font-medium text-amber-300">macOS first install:</span> the app is not notarized yet,
-                so Gatekeeper may report it as "damaged". Run this once in Terminal after copying it to Applications:
+            <div className="space-y-2 rounded-lg border border-border bg-muted/60 p-3 text-base text-foreground">
+              <h2 className="font-semibold">First install on macOS</h2>
+              <p className="text-muted-foreground">
+                Gatekeeper may report Guild as "damaged" because the app is not notarized.
+                After copying Guild to Applications, run this command in Terminal.
               </p>
-              <code className="mt-1.5 block truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+              <code className="block whitespace-pre-wrap break-words rounded-md bg-background px-2 py-1 font-mono text-base">
                 xattr -dr com.apple.quarantine /Applications/Guild.app
               </code>
-              <p className="mt-1 text-xs">Updates delivered inside the app are signed and don't need this.</p>
+              <p className="text-muted-foreground">In-app updates are signed and install without this command.</p>
             </div>
           )}
 
