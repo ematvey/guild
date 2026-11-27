@@ -20,19 +20,6 @@ export function AboutSection() {
   const [channelError, setChannelError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null | undefined>(undefined);
   const serverVersion = identity?.server_version;
-  const [trace, setTrace] = useState<{
-    enabled: boolean;
-    path: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (HAS_SHELL) {
-      void invoke<{ enabled: boolean; path: string }>("daemon_trace_state")
-        .then(setTrace)
-        .catch(() => {});
-    }
-  }, []);
-
   useEffect(() => {
     if (HAS_SHELL) {
       getVersion()
@@ -121,35 +108,6 @@ export function AboutSection() {
           >
             Check for updates
           </Button>
-        </FactCard>
-      )}
-      {HAS_SHELL && (
-        <p className="text-base text-muted-foreground">
-          The desktop app embeds its own UI build — after an update, fully quit (tray → Quit) and relaunch. The web UI
-          is served by the paired server; a browser reload always picks up its current build.
-        </p>
-      )}
-      {HAS_SHELL && trace && (
-        <FactCard label="Daemon trace">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-base text-muted-foreground">
-              {trace.enabled
-                ? `On — machine-link diagnostics append to ${trace.path}.`
-                : `Off. When on, machine-link diagnostics append to ${trace.path} (useful when this machine keeps dropping offline).`}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const on = !trace.enabled;
-                void invoke("set_daemon_trace", { on })
-                  .then(() => invoke<{ enabled: boolean; path: string }>("daemon_trace_state").then(setTrace))
-                  .catch(() => {});
-              }}
-            >
-              {trace.enabled ? "Disable" : "Enable"}
-            </Button>
-          </div>
         </FactCard>
       )}
     </div>

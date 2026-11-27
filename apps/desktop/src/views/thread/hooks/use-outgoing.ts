@@ -28,7 +28,6 @@ import {
 } from "../../../lib/outgoing-command";
 import type { RenderBlock } from "../../../lib/thread-reducer";
 import { outgoingProjectId, type PickedProject } from "../../projects/projects";
-import type { Agent } from "../../agents/agents-api";
 import { projectsStore } from "../chat-stores";
 import type { ComposerHandle } from "./use-composer";
 import type { ThreadStoreHandle } from "./use-thread-store";
@@ -51,7 +50,6 @@ export interface OutgoingDeps {
     openRow: { machine_id?: string | null } | undefined;
     currentProject: PickedProject | null;
     pickedProjectRef: RefObject<PickedProject | null>;
-    pickedAgentRef: RefObject<Agent | null>;
     approvalMode: ChatApprovalMode | "default";
   };
   /** Chats the first send created, whose fresh state the view must not
@@ -95,7 +93,7 @@ export function useOutgoing(deps: OutgoingDeps) {
   } = composer;
   const { store, setSendPending, openChatIdRef, loadSeq, stopping, setStopping } = thread;
   const { compacting } = thread.view;
-  const { openRow, currentProject, pickedProjectRef, pickedAgentRef, approvalMode } = target;
+  const { openRow, currentProject, pickedProjectRef, approvalMode } = target;
   const [pendingSubmitId, setPendingSubmitId] = useState<string | null>(null);
   const [steeringMessage, setSteeringMessage] = useState<string | null>(null);
 
@@ -306,7 +304,6 @@ export function useOutgoing(deps: OutgoingDeps) {
             body.sendMode,
             body.skillsIndex,
             body.instructions,
-            pickedAgentRef.current?.id,
           );
         },
       });
