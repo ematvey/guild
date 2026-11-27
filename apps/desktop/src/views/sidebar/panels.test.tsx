@@ -111,7 +111,7 @@ describe("ProjectHeader", () => {
 });
 
 describe("panels", () => {
-  it("pins a renamed Assistant inbox above a newer ordinary chat named Assistant", () => {
+  it("shows the former personal inbox as a regular thread ordered by activity", () => {
     const ordinary: ChatSummary = {
       id: "regular",
       org_id: "org",
@@ -132,8 +132,6 @@ describe("panels", () => {
       ...ordinary,
       id: "inbox",
       title: "My renamed assistant",
-      assistant_inbox: true,
-      project_id: "project",
       last_activity_at: "2026-11-21T09:00:00Z",
     };
     const render = (chats: ChatSummary[]) =>
@@ -150,13 +148,10 @@ describe("panels", () => {
         />,
       );
     const html = render([ordinary, inbox]);
-    expect(html).toContain('aria-label="Assistant conversations"');
-    expect(html.indexOf(">My renamed assistant<")).toBeLessThan(html.indexOf(">Assistant<"));
+    expect(html).not.toContain('aria-label="Assistant conversations"');
+    expect(html.indexOf(">My renamed assistant<")).toBeGreaterThan(html.indexOf(">Assistant<"));
     expect(html.split(">My renamed assistant<")).toHaveLength(2);
-    expect(html).toContain("lucide-circle");
-    expect(html.match(/title="Row actions"/g)).toHaveLength(1);
-    expect(render([ordinary])).not.toContain("lucide-circle");
-    expect(render([ordinary])).not.toContain('aria-label="Assistant conversations"');
+    expect(html.match(/title="Row actions"/g)).toHaveLength(2);
   });
 
   it("names each tab and offers the new-chat control", () => {

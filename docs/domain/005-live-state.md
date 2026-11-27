@@ -128,7 +128,7 @@ build version. Desktop clients invalidate pending update offers when it changes.
 
 The Member's assistant is an ordinary Thread at its canonical `/thread/<chat-id>` address, and the Chats tab opens on it: the tab root asks the server for the Member's inbox Thread and replaces the address with that Thread. A rail entry, a page and an activity view of their own do not exist. The inbox composer hides the Thread approval control because the coordinator executes its requests. Internal coordinator and reflection Threads are visible only in admin Activity and never send Web Push.
 
-A Member’s personal Assistant inbox stays at the top of the Chats panel above New chat and the scrolling Thread list. Its identity comes from the server’s `assistant_inbox` Chat field, independent of title and activity time. Inboxes for other Agents appear in Recent and carry `shared_agent_inbox`. The `thread_list` and `chat_row` frames carry both fields. Each inbox Thread keeps its Agent. Its composer omits the Agent picker and context usage, and its header and sidebar row omit Thread actions.
+Chats opens the regular chat composer. Shared Agent inboxes appear in Recent and carry `shared_agent_inbox` in `thread_list` and `chat_row` frames. Each inbox keeps its Agent. Its composer omits the Agent picker and context usage, and its header and sidebar row omit Thread actions.
 
 The Chats panel holds Pinned, Projects, Recent, and Archived. Recent includes standalone Threads and Threads in active Projects, ordered by latest activity. Project rows expand to their Threads and offer a project-scoped composer. Project URLs open the corresponding folder in Chats. A project Thread’s header links to its Project.
 
