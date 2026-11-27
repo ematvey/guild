@@ -23,7 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
+import { TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
 import { shareableUrl } from "../../lib/session";
@@ -86,7 +86,7 @@ export function ThreadHeader({
   return (
     <header
       {...titleBarDragDeep}
-      className={`flex items-center gap-2 border-b border-border px-3 ${TOP_ROW} pt-[env(safe-area-inset-top)] text-base ${CAPTION_BUTTONS_INSET}`}
+      className={`flex items-center gap-2 border-b border-border px-3 ${TOP_ROW} pt-[env(safe-area-inset-top)] text-base`}
     >
       {isMobile && (
         <Button

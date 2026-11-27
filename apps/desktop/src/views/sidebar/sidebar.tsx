@@ -3,7 +3,6 @@
 // the width, the drag handle and the collapsed state are the same everywhere.
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { trackDrag } from "../../lib/drag";
-import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import {
   clampSidebarWidth,
   saveSidebarCollapsed,
@@ -68,26 +67,30 @@ export function useSidebar() {
   return { width, collapsed, resizing, setCollapsed, toggleCollapsed, startDrag };
 }
 
-/** The sidebar column itself: a persisted width with a drag handle on its
- *  right edge, and nothing at all while collapsed. */
+/** Keep the sidebar mounted so collapsing preserves scroll and expanded rows. */
 export function Sidebar({ collapsed, children }: { collapsed: boolean; children: ReactNode }) {
   const { width, resizing, startDrag } = useSidebar();
-  if (collapsed) return null;
   return (
     <aside
+      id="work-sidebar"
       aria-label="Sidebar"
-      {...titleBarDrag}
-      className={`relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground ${TITLE_BAR_INSET} ${
-        resizing ? "" : "transition-[width] duration-150"
-      }`}
-      style={{ width }}
+      aria-hidden={collapsed || undefined}
+      inert={collapsed}
+      className={`relative flex shrink-0 ${resizing ? "" : "transition-[width] duration-150 motion-reduce:transition-none"}`}
+      style={{ width: collapsed ? 0 : width }}
     >
-      {children}
-      <div
-        className="absolute inset-y-0 -right-1 z-10 w-1 cursor-col-resize after:absolute after:inset-y-0 after:left-0 after:w-px hover:after:bg-ring"
-        onMouseDown={startDrag}
-        title="Drag to resize"
-      />
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        <div className="flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground" style={{ width }}>
+          {children}
+        </div>
+      </div>
+      {!collapsed && (
+        <div
+          className="absolute inset-y-0 -right-1 z-10 w-1 cursor-col-resize after:absolute after:inset-y-0 after:left-0 after:w-px hover:after:bg-ring"
+          onMouseDown={startDrag}
+          title="Drag to resize"
+        />
+      )}
     </aside>
   );
 }

@@ -23,7 +23,7 @@ import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
 import { SidebarMenu, WorkNavigation, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
-import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
+import { TITLE_BAR_INSET, titleBarDrag, titleBarDragDeep } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
   agentDeleting,
@@ -651,7 +651,6 @@ function ThreadView(props: ThreadProps) {
     [pushRoute, isMobile],
   );
 
-  const sidebarCollapse = useCallback(() => sidebarState.setCollapsed(true), [sidebarState.setCollapsed]);
   const sidebarClose = useCallback(() => setOpen(false), []);
   // The mobile drawer carries the rail too, so every panel tab renders there;
   // its header X closes the sheet (the built-in corner close is suppressed:
@@ -768,15 +767,13 @@ function ThreadView(props: ThreadProps) {
       {renderSidebar("history")}
     </div>
   );
-  const menu = (collapsed = false) => (
+  const menu = (
     <SidebarMenu
-      onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenSettings={openSettingsSection}
       onOpenControl={() => {
         if (isMobile) setOpen(false);
         pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway" });
       }}
-      onOpenRoutines={openRoutines}
       onOpenHelp={() => {
         if (isMobile) setOpen(false);
         pushRoute({ ...CHAT_ROOT, overlay: { kind: "onboard" } });
@@ -784,202 +781,204 @@ function ThreadView(props: ThreadProps) {
       email={email}
       displayName={displayName}
       avatarUrl={avatarUrl}
-      onOpenDevice={() => pushRoute({ ...CHAT_ROOT, overlay: { kind: "device" } })}
       onSignOut={signOut}
       onAddWorkspace={onAddWorkspace}
       workspaceName={workspace?.name}
-      collapsed={collapsed}
-      onExpand={() => sidebarState.setCollapsed(false)}
     />
   );
 
   return (
-    <div ref={shell} data-shell className="guild-sidebar-theme fixed inset-0 flex bg-background text-foreground">
-      {isMobile ? (
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent
-            side="left"
-            className="guild-sidebar-theme w-72 gap-0 bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
-            hideClose
-          >
-            <SheetTitle className="sr-only">Work sidebar</SheetTitle>
-            <WorkSidebarHeader onClose={sidebarClose} />
-            {sidebarBody}
-            {menu()}
-          </SheetContent>
-        </Sheet>
-      ) : sidebarState.collapsed ? (
-        menu(true)
-      ) : (
-        <Sidebar collapsed={false}>
-          <WorkSidebarHeader onCollapse={sidebarCollapse} />
-          {sidebarBody}
-          {menu()}
-        </Sidebar>
+    <div ref={shell} data-shell className="guild-sidebar-theme fixed inset-0 flex flex-col bg-background text-foreground">
+      {!isMobile && (
+        <header {...titleBarDragDeep} className={`shrink-0 ${TITLE_BAR_INSET}`}>
+          <WorkSidebarHeader onToggle={sidebarState.toggleCollapsed} expanded={!sidebarState.collapsed} />
+        </header>
       )}
-
-      {/* main column */}
-      <div
-        {...titleBarDrag}
-        className={`relative flex min-w-0 flex-1 flex-col ${TITLE_BAR_INSET}`}
-        onDragOver={(e) => {
-          if (![...e.dataTransfer.types].includes("Files")) return;
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          // only leaving the pane itself (not entering a child) clears the hint
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
-        }}
-        onDrop={(e) => {
-          const files = Array.from(e.dataTransfer.files ?? []);
-          if (files.length === 0) return;
-          e.preventDefault();
-          setDragOver(false);
-          addFiles(files);
-        }}
-      >
-        {dragOver && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
-              Drop files to attach
-            </div>
-          </div>
+      <div className="flex min-h-0 flex-1">
+        {isMobile ? (
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetContent
+              side="left"
+              className="guild-sidebar-theme w-72 gap-0 bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+              hideClose
+            >
+              <SheetTitle className="sr-only">Work sidebar</SheetTitle>
+              <WorkSidebarHeader onClose={sidebarClose} />
+              {sidebarBody}
+              {menu}
+            </SheetContent>
+          </Sheet>
+        ) : (
+          <Sidebar collapsed={sidebarState.collapsed}>
+            {sidebarBody}
+            {menu}
+          </Sidebar>
         )}
-        {routePage ?? (
-          <div className="flex min-h-0 min-w-0 flex-1">
-            {/* The chat column takes the rest of the row and sets no minimum
-                of its own; the preview pane carries the minimum width. It is
-                the positioning box for the composer, so the card stays under
-                the chat and not under the pane. */}
-            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              <ThreadHeader
-                isMobile={isMobile}
-                onOpenDrawer={openDrawer}
-                chatId={viewChatId}
-                title={activeTitle}
-                project={viewChatId !== null ? currentProject : null}
-                onOpenProject={(projectId) => {
-                  pushRoute({ ...CHAT_ROOT, projectId });
-                  if (!isMobile) sidebarState.setCollapsed(false);
-                }}
-                titleLoading={threadLoading && blocks.length === 0}
-                childTree={childTree}
-                isSubagent={facts.type === "subagent"}
-                showMenu={
-                  !!viewChatId && (listedChat !== undefined || foreignChat) &&
-                  facts.type === "user" && !facts.deleted && !assistantInbox
-                }
-                foreign={foreignChat}
-                archived={chatArchived}
-                renameSeed={activeChat?.title ?? ""}
-                onOpenChat={openChat}
-                onRename={renameOpenChat}
-                onArchiveToggle={headerArchive}
-                onMakeRecurring={
-                  viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
-                    ? () => {
-                      const request = "Help me turn the work in this conversation into a routine. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
-                      const draft = composer.promptRef.current;
-                      composer.setPrompt(draft ? `${draft}\n\n${request}` : request);
-                      ta.current?.focus();
-                    }
-                    : undefined
-                }
-                onDelete={headerDelete}
-              />
 
-              {offlineMachineBanner && (
-                <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
-                  {offlineMachineBanner.label} is offline. Tools can run once it reconnects.
-                  <button type="button" className="ml-2 underline" onClick={() => openSettingsSection("machine")}>
-                    Open Machines
-                  </button>
-                </div>
+        {/* main column */}
+        <div
+          {...titleBarDrag}
+          className="relative flex min-w-0 flex-1 flex-col"
+          onDragOver={(e) => {
+            if (![...e.dataTransfer.types].includes("Files")) return;
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            // only leaving the pane itself (not entering a child) clears the hint
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer.files ?? []);
+            if (files.length === 0) return;
+            e.preventDefault();
+            setDragOver(false);
+            addFiles(files);
+          }}
+        >
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+              <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
+                Drop files to attach
+              </div>
+            </div>
+          )}
+          {routePage ?? (
+            <div className="flex min-h-0 min-w-0 flex-1">
+              {/* The chat column takes the rest of the row and sets no minimum
+                  of its own; the preview pane carries the minimum width. It is
+                  the positioning box for the composer, so the card stays under
+                  the chat and not under the pane. */}
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                <ThreadHeader
+                  isMobile={isMobile}
+                  onOpenDrawer={openDrawer}
+                  chatId={viewChatId}
+                  title={activeTitle}
+                  project={viewChatId !== null ? currentProject : null}
+                  onOpenProject={(projectId) => {
+                    pushRoute({ ...CHAT_ROOT, projectId });
+                    if (!isMobile) sidebarState.setCollapsed(false);
+                  }}
+                  titleLoading={threadLoading && blocks.length === 0}
+                  childTree={childTree}
+                  isSubagent={facts.type === "subagent"}
+                  showMenu={
+                    !!viewChatId && (listedChat !== undefined || foreignChat) &&
+                    facts.type === "user" && !facts.deleted && !assistantInbox
+                  }
+                  foreign={foreignChat}
+                  archived={chatArchived}
+                  renameSeed={activeChat?.title ?? ""}
+                  onOpenChat={openChat}
+                  onRename={renameOpenChat}
+                  onArchiveToggle={headerArchive}
+                  onMakeRecurring={
+                    viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
+                      ? () => {
+                        const request = "Help me turn the work in this conversation into a routine. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
+                        const draft = composer.promptRef.current;
+                        composer.setPrompt(draft ? `${draft}\n\n${request}` : request);
+                        ta.current?.focus();
+                      }
+                      : undefined
+                  }
+                  onDelete={headerDelete}
+                />
+
+                {offlineMachineBanner && (
+                  <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
+                    {offlineMachineBanner.label} is offline. Tools can run once it reconnects.
+                    <button type="button" className="ml-2 underline" onClick={() => openSettingsSection("machine")}>
+                      Open Machines
+                    </button>
+                  </div>
+                )}
+
+                <NotificationsOffer />
+
+                <PreviewProvider value={openPreview}>
+                  <GenuiHostContext.Provider value={genuiHost}>
+                    <ThreadPane
+                      blocks={blocks}
+                      loading={threadLoading}
+                      viewChatId={viewChatId}
+                      noModels={models !== null && models.length === 0}
+                      navigating={navigating}
+                      hasMore={hasMore}
+                      loadingEarlier={loadingEarlier}
+                      onLoadEarlier={loadEarlierNearTop}
+                      compacting={compacting}
+                      busy={busy}
+                      stopping={stopping}
+                      subagentNodes={subagentNodes}
+                      originLink={childTree?.origin ?? null}
+                      onOpenChat={openChat}
+                      onOpenChildChat={openChildChat}
+                      scroll={{
+                        pane,
+                        onScroll: scroll.onScroll,
+                        setContentEl: scroll.setContentEl,
+                        composerH: scroll.composerH,
+                        onFrameToggle: scroll.onFrameToggle,
+                        atBottom,
+                        scrollToBottom: scroll.scrollToBottom,
+                      }}
+                    />
+                  </GenuiHostContext.Provider>
+                </PreviewProvider>
+
+                <ThreadComposer
+                  assistantInbox={assistantInbox}
+                  composer={composer}
+                  sending={outgoing}
+                  agent={agent}
+                  approval={approval}
+                  viewChatId={viewChatId}
+                  blocks={blocks}
+                  busy={busy}
+                  navigating={navigating}
+                  holdingFirstSend={holdingFirstSend}
+                  openGenerating={openGenerating}
+                  stopping={stopping}
+                  models={models}
+                  model={model}
+                  access={{
+                    readOnly: access === "readonly",
+                    unknown: access === "unknown",
+                    facts,
+                    foreign: foreignChat,
+                    deletingAgent,
+                    onUnarchive: () => void headerArchive(),
+                  }}
+                  currentProject={currentProject}
+                  localMachineId={localMachineId}
+                  setComposerEl={scroll.setComposerEl}
+                  agentModelUnavailable={agentModelUnavailable}
+                  onConfigureModels={configureModels}
+                  onManageAgents={() => openControl({
+                    agents: manageAgent
+                      ? agentTabRoute(manageAgent.id, "settings")
+                      : AGENTS_DIRECTORY,
+                  })}
+                />
+              </div>
+              {previewRef !== null && (
+                <PreviewPane
+                  tabs={previewTabs}
+                  active={previewRef}
+                  full={route.previewFull === true}
+                  isMobile={isMobile}
+                  onSelect={selectPreview}
+                  onClose={closePreviewTab}
+                  onCloseAll={closePreview}
+                  onToggleFull={togglePreviewFull}
+                />
               )}
-
-              <NotificationsOffer />
-
-              <PreviewProvider value={openPreview}>
-                <GenuiHostContext.Provider value={genuiHost}>
-                  <ThreadPane
-                    blocks={blocks}
-                    loading={threadLoading}
-                    viewChatId={viewChatId}
-                    noModels={models !== null && models.length === 0}
-                    navigating={navigating}
-                    hasMore={hasMore}
-                    loadingEarlier={loadingEarlier}
-                    onLoadEarlier={loadEarlierNearTop}
-                    compacting={compacting}
-                    busy={busy}
-                    stopping={stopping}
-                    subagentNodes={subagentNodes}
-                    originLink={childTree?.origin ?? null}
-                    onOpenChat={openChat}
-                    onOpenChildChat={openChildChat}
-                    scroll={{
-                      pane,
-                      onScroll: scroll.onScroll,
-                      setContentEl: scroll.setContentEl,
-                      composerH: scroll.composerH,
-                      onFrameToggle: scroll.onFrameToggle,
-                      atBottom,
-                      scrollToBottom: scroll.scrollToBottom,
-                    }}
-                  />
-                </GenuiHostContext.Provider>
-              </PreviewProvider>
-
-              <ThreadComposer
-                assistantInbox={assistantInbox}
-                composer={composer}
-                sending={outgoing}
-                agent={agent}
-                approval={approval}
-                viewChatId={viewChatId}
-                blocks={blocks}
-                busy={busy}
-                navigating={navigating}
-                holdingFirstSend={holdingFirstSend}
-                openGenerating={openGenerating}
-                stopping={stopping}
-                models={models}
-                model={model}
-                access={{
-                  readOnly: access === "readonly",
-                  unknown: access === "unknown",
-                  facts,
-                  foreign: foreignChat,
-                  deletingAgent,
-                  onUnarchive: () => void headerArchive(),
-                }}
-                currentProject={currentProject}
-                localMachineId={localMachineId}
-                setComposerEl={scroll.setComposerEl}
-                agentModelUnavailable={agentModelUnavailable}
-                onConfigureModels={configureModels}
-                onManageAgents={() => openControl({
-                  agents: manageAgent
-                    ? agentTabRoute(manageAgent.id, "settings")
-                    : AGENTS_DIRECTORY,
-                })}
-              />
             </div>
-            {previewRef !== null && (
-              <PreviewPane
-                tabs={previewTabs}
-                active={previewRef}
-                full={route.previewFull === true}
-                isMobile={isMobile}
-                onSelect={selectPreview}
-                onClose={closePreviewTab}
-                onCloseAll={closePreview}
-                onToggleFull={togglePreviewFull}
-              />
-            )}
-          </div>
-        )}
+          )}
+        </div>
+
       </div>
 
       <Dialog open={route.searchOpen === true} onOpenChange={(open) => {
