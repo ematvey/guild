@@ -1,8 +1,6 @@
 import {
   ArrowUpRight,
   CalendarClock,
-  Check,
-  ChevronDown,
   Cpu,
   Settings,
   LayoutGrid,
@@ -11,11 +9,8 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Button } from "@guild/ui/components/button";
 import { UserBadge } from "../components/user-badge";
@@ -58,7 +53,7 @@ const workPages = [
   { id: "routines", label: "Routines", icon: CalendarClock },
 ] as const;
 
-export function WorkPageSwitcher({
+export function WorkPageShortcuts({
   active,
   onTabChange,
   onOpenRoutines,
@@ -69,61 +64,34 @@ export function WorkPageSwitcher({
   onOpenRoutines?: () => void;
   onOpenSettings: (section: string) => void;
 }) {
-  const pages = workPages.filter(({ id }) => id !== "routines" || onOpenRoutines);
-  const current = pages.find(({ id }) => id === active);
-  const Icon = current?.icon ?? (active === "device" ? Cpu : Settings);
-  const label = current?.label ?? (active === "device" ? "Devices" : "Settings");
+  const shortcuts = [
+    ...workPages
+      .filter(({ id }) => id !== "routines" || onOpenRoutines)
+      .map(({ id, label, icon }) => ({
+        id,
+        label,
+        icon,
+        open: () => (id === "routines" ? onOpenRoutines?.() : onTabChange(id)),
+      })),
+    { id: "device", label: "Devices", icon: Cpu, open: () => onOpenSettings("machine") },
+    { id: "settings", label: "Settings", icon: Settings, open: () => onOpenSettings("appearance") },
+  ];
   return (
-    <nav aria-label="Work navigation" className="flex shrink-0 items-center gap-1 px-2 pb-2 pt-1">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className="min-w-0 flex-1 justify-start bg-background/50"
-            aria-label={`Switch Work page, current: ${label}`}
-          >
-            <Icon />
-            <span className="flex-1 truncate text-left">{label}</span>
-            <ChevronDown className="text-muted-foreground" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-40">
-          {pages.map(({ id, icon: ItemIcon, label: itemLabel }) => (
-            <DropdownMenuItem
-              key={id}
-              onSelect={() => (id === "routines" ? onOpenRoutines?.() : onTabChange(id))}
-              aria-current={id === active ? "page" : undefined}
-            >
-              <ItemIcon className="size-4" />
-              {itemLabel}
-              {id === active && <Check className="ml-auto size-4" aria-hidden="true" />}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="guild-sidebar-current size-8 shrink-0"
-        aria-label="Devices"
-        title="Devices"
-        aria-current={active === "device" ? "page" : undefined}
-        onClick={() => onOpenSettings("machine")}
-      >
-        <Cpu />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="guild-sidebar-current size-8 shrink-0"
-        aria-label="Settings"
-        title="Settings"
-        aria-current={active === "settings" ? "page" : undefined}
-        onClick={() => onOpenSettings("appearance")}
-      >
-        <Settings />
-      </Button>
+    <nav aria-label="Work navigation" className="flex shrink-0 gap-0.5 border-t border-border px-2 py-1.5">
+      {shortcuts.map(({ id, label, icon: Icon, open }) => (
+        <Button
+          key={id}
+          variant="ghost"
+          size="icon"
+          className="guild-sidebar-current h-9 min-w-0 flex-1 text-muted-foreground pointer-coarse:h-11"
+          aria-label={label}
+          title={label}
+          aria-current={active === id ? "page" : undefined}
+          onClick={open}
+        >
+          <Icon />
+        </Button>
+      ))}
     </nav>
   );
 }
@@ -162,7 +130,7 @@ export function SidebarMenu({
       className={
         collapsed
           ? `guild-sidebar-theme flex shrink-0 flex-col items-center gap-1 border-r border-border bg-sidebar px-1 py-2 ${TITLE_BAR_INSET}`
-          : "shrink-0 border-t border-border px-2 pb-2 pt-1.5"
+          : "shrink-0 px-2 pb-2"
       }
     >
       {collapsed && (

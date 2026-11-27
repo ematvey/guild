@@ -20,7 +20,7 @@ import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
 import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
-import { SidebarMenu, WorkPageSwitcher, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
+import { SidebarMenu, WorkPageShortcuts, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
 import {
@@ -779,8 +779,8 @@ function ThreadView(props: ThreadProps) {
       view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
     } });
   } : undefined;
-  const workSwitcher = (
-    <WorkPageSwitcher
+  const workShortcuts = (
+    <WorkPageShortcuts
       active={route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : route.settingsSection === "machine" ? "device" : railTab}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
       onOpenRoutines={openRoutines}
@@ -822,8 +822,8 @@ function ThreadView(props: ThreadProps) {
           >
             <SheetTitle className="sr-only">Work sidebar</SheetTitle>
             <WorkSidebarHeader workspaceName={workspace?.name} onClose={sidebarClose} />
-            {workSwitcher}
             {sidebar}
+            {workShortcuts}
             {menu()}
           </SheetContent>
         </Sheet>
@@ -832,8 +832,8 @@ function ThreadView(props: ThreadProps) {
       ) : (
         <Sidebar collapsed={false}>
           <WorkSidebarHeader workspaceName={workspace?.name} onCollapse={sidebarCollapse} />
-          {workSwitcher}
           {sidebar}
+          {workShortcuts}
           {menu()}
         </Sidebar>
       )}
