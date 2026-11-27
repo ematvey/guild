@@ -155,7 +155,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const hasProject = Boolean(activeProject || archivedProject);
   const activeProjectHeader = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!projectId || !hasProject) return;
+    if (chatId !== null || !projectId || !hasProject) return;
     setExpanded((current) => ({ ...current, [projectId]: true }));
     setSections((current) => ({ ...current, [activeSection]: true }));
     const frame = requestAnimationFrame(() => activeProjectHeader.current?.scrollIntoView?.({ block: "nearest" }));

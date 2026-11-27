@@ -24,7 +24,7 @@ export function SidebarSurface({
 }: {
   tab: ChatRoute["tab"];
   role: string;
-  /** The chat the main column shows. */
+  /** The chat selected by the route. */
   chatId: string | null;
   projectId: string | null;
   settingsSection: string | null;
