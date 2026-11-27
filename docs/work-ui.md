@@ -21,7 +21,7 @@
 - Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available.
 - Use the `text-base` size throughout Guild, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.
-- Scheduled task details put the Markdown prompt in Settings directly below the header. Keep it visible. Put the schedule, next run, delivery destination, and run history below it. Each run-history row opens the run and shows only its date and status. Put Run now in the body, with editing and pause or resume in the task actions menu.
+- Scheduled task details show the schedule, next run, delivery destination, and Markdown prompt as peer settings. Keep the prompt visible below the delivery destination. Run now opens the thread for the run it starts. Each run-history row opens the run and shows only its date and status. Put Run now in the body, with editing and pause or resume in the task actions menu.
 
 ## Interaction and checks
 

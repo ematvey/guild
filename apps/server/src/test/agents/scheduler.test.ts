@@ -267,12 +267,14 @@ dbDescribe("agent scheduler", () => {
       run_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       prompt: "Manual run.",
     });
-    const run = await runRoutineNow(
+    const { run, chat_id } = await runRoutineNow(
       { pool: env!.db, store, threads: new ThreadStore(env!.db), runtime },
       agent,
       routine,
     );
     expect(run.trigger).toBe("manual");
+    const thread = await store.threads.getThread(agent.id, owner.id, run.thread_id!);
+    expect(chat_id).toBe(thread.chat_id);
     expect(calls).toHaveLength(1);
     const occurrence = (await listOccurrences(env!.db, routine.id))[0]!;
     expect(occurrence.status).toBe("claimed");

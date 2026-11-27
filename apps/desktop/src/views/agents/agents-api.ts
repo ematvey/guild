@@ -251,16 +251,11 @@ export async function updateRoutine(
   );
 }
 
-export async function runRoutine(
-  id: string,
-  routineId: string,
-): Promise<AgentRun> {
-  return (
-    await request<{ run: AgentRun }>(
-      "POST",
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
-    )
-  ).run;
+export function runRoutine(id: string, routineId: string): Promise<{ run: AgentRun; chat_id: string }> {
+  return request(
+    "POST",
+    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
+  );
 }
 
 export async function listRoutineRuns(

@@ -1004,7 +1004,7 @@ export function registerAgentRoutes(
     const { agent } = await requireRoutineAccess(req, user, agentId, "manage");
     requireActiveAgent(agent);
     const routine = await getRoutine(infra.pool, agentId, parseUuidParam(req, "rid"));
-    const run = await runRoutineNow(
+    const result = await runRoutineNow(
       {
         pool: infra.pool,
         store,
@@ -1014,7 +1014,7 @@ export function registerAgentRoutes(
       agent,
       routine,
     );
-    return sendJson(reply, { run });
+    return sendJson(reply, result);
   });
 
   app.get("/api/v1/agents/:id/routines/:rid/runs", async (req, reply) => {

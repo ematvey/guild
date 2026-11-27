@@ -106,7 +106,7 @@ export function AgentRoutinesPage({ agentId, routineId, routineRunId, canManage,
   };
 
   return <AgentRoutines agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage}
-    onNavigate={onNavigate} onNewRoutine={newRoutine} onEditRoutine={editRoutine} />;
+    onNavigate={onNavigate} onNewRoutine={newRoutine} onEditRoutine={editRoutine} onOpenChat={onOpenChat} />;
 }
 
 export function AgentRoutines({
@@ -117,6 +117,7 @@ export function AgentRoutines({
   onNavigate,
   onNewRoutine,
   onEditRoutine,
+  onOpenChat,
 }: {
   agentId: string;
   routineId?: string;
@@ -125,10 +126,11 @@ export function AgentRoutines({
   onNavigate: (route: AgentsRoute) => void;
   onNewRoutine: () => Promise<void>;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
+  onOpenChat: (chatId: string) => void;
 }) {
   if (routineId && routineId !== "new") {
     return (
-      <RoutineDetail agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} />
+      <RoutineDetail agentId={agentId} routineId={routineId} routineRunId={routineRunId} canManage={canManage} onNavigate={onNavigate} onEditRoutine={onEditRoutine} onOpenChat={onOpenChat} />
     );
   }
   return <RoutineList agentId={agentId} canManage={canManage} onNavigate={onNavigate} onNewRoutine={onNewRoutine} />;
@@ -243,6 +245,7 @@ function RoutineDetail({
   canManage,
   onNavigate,
   onEditRoutine,
+  onOpenChat,
 }: {
   agentId: string;
   routineId: string;
@@ -250,6 +253,7 @@ function RoutineDetail({
   canManage: boolean;
   onNavigate: (routes: AgentsRoute) => void;
   onEditRoutine: (routine: AgentRoutine) => Promise<void>;
+  onOpenChat: (chatId: string) => void;
 }) {
   // The routine comes from the agent's pushed routines; its run history is
   // seeded once and then follows every pushed run of this routine.
@@ -285,7 +289,8 @@ function RoutineDetail({
     setRunning(true);
     setActionError(null);
     try {
-      await runRoutine(agentId, routineId);
+      const { chat_id } = await runRoutine(agentId, routineId);
+      if (chat_id) onOpenChat(chat_id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not run the scheduled task.");
     } finally {
@@ -376,14 +381,6 @@ function RoutineDetail({
     <>
       {header}
       <div className={work ? "work-page-content space-y-6 pb-8 pt-3" : "space-y-6 py-3"}>
-        <section aria-label="Settings" className="space-y-2">
-          <h2 className="font-bold">Settings</h2>
-          <h3 className="font-semibold">Prompt</h3>
-          <div className={`space-y-3 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
-            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{routine.prompt}</Markdown>
-          </div>
-        </section>
-
         <div className="flex flex-wrap items-start justify-between gap-4">
           <dl className="flex flex-wrap gap-x-8 gap-y-3">
             <div>
@@ -439,6 +436,13 @@ function RoutineDetail({
               <SelectItem value="new_chat">A new chat for each message</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-muted-foreground">Prompt</h2>
+          <div className={`space-y-3 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS} ${WRAP_ANYWHERE}`}>
+            <Markdown remarkPlugins={CHAT_MD_PLUGINS} components={mdComponents}>{routine.prompt}</Markdown>
+          </div>
         </div>
 
         {actionError !== null && <p role="alert" className="text-destructive">{actionError}</p>}

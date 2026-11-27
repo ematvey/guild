@@ -320,7 +320,7 @@ export async function runRoutineNow(
   deps: Pick<AgentSchedulerDeps, "pool" | "store" | "threads" | "runtime">,
   agent: Agent,
   routine: AgentRoutine,
-): Promise<AgentRun> {
+): Promise<{ run: AgentRun; chat_id: string }> {
   if (agent.status !== "active") throw new Error("agent is not active");
   const now = new Date();
   const occurrence = await createOccurrence(deps.pool, routine.id, now);
@@ -352,7 +352,7 @@ export async function runRoutineNow(
         await linkOccurrenceRun(deps.pool, occurrence.id, run.id);
       },
     });
-    return run;
+    return { run, chat_id: thread.chat_id };
   } catch (error) {
     if (error instanceof ThreadRunRefused) throw refusalError(error);
     throw error instanceof ThreadRunSubmitFailed ? (error.cause ?? error) : error;
