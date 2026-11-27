@@ -150,7 +150,7 @@ export function isControlRoute(route: ChatRoute): boolean {
 }
 
 export function withoutControlPrefix(pathname: string): string {
-  if (pathname === CONTROL_PREFIX || pathname === CONTROL_PREFIX + "/") return "/settings/gateway";
+  if (pathname === CONTROL_PREFIX || pathname === CONTROL_PREFIX + "/") return "/";
   return pathname.startsWith(CONTROL_PREFIX + "/") ? pathname.slice(CONTROL_PREFIX.length) : pathname;
 }
 

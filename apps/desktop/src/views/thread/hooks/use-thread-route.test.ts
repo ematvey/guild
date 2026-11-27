@@ -1,4 +1,4 @@
-import { withoutControlPrefix } from "../route";
+import { isControlRoute, withoutControlPrefix } from "../route";
 import { describe, expect, it } from "vitest";
 import { applyRoutePatch, canonicalRoute, canonicalSurfacePath, parseChatRoute, SURFACE_BASE } from "../route";
 import { INTEGRATIONS_HOME } from "../../integrations/integrations-route";
@@ -217,7 +217,8 @@ describe("work and Control Center addresses", () => {
   it("keeps legacy management links and persists control subpages", () => {
     expect(routePath(parseChatRoute("/settings/users/new"))).toBe("/control/settings/users/new");
     expect(routePath(parseChatRoute("/control/agents/a1/settings"))).toBe("/control/agents/a1/settings");
-    expect(routePath(parseChatRoute("/control"))).toBe("/control/settings/gateway");
+    expect(isControlRoute(parseChatRoute("/control"))).toBe(false);
+    expect(isControlRoute(parseChatRoute("/control/"))).toBe(false);
     expect(routePath(parseChatRoute("/settings/gateway"))).toBe("/settings/gateway");
     expect(routePath(parseChatRoute("/control/settings/gateway"))).toBe("/control/settings/gateway");
     expect(routePath(parseChatRoute("/skills/new"))).toBe("/control/skills/new");
