@@ -398,7 +398,7 @@ export const ChatsPanel = memo(function ChatsPanel({
   const history = recent.filter((chat) => !historyFilter || (chat.type === "routine" || Boolean(chat.routine)) === (historyFilter === "tasks"));
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">
-      <div className="pl-2">
+      <div className="pl-3">
         <ChatSection
           label="Pinned"
           open={sections.pinned}
