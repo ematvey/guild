@@ -1,4 +1,4 @@
-import { acceptedWorkForThread, recordMemoryRevision } from "../agents/store/coordination.js";
+import { acceptedWorkForThread } from "../agents/store/coordination.js";
 import { guardMemoryTool } from "../agents/conflict.js";
 // Per-turn tool provisioning: the org's enabled integrations, the chat
 // owner's MCP servers, the agent's conversation tools, and the machine and
@@ -47,7 +47,7 @@ import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import type { MachineTargets } from "../machines/targets.js";
 import { createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
-import { composeAgentInstructions, type MachineContext } from "./instructions.js";
+import { attachMemoryRevision, composeAgentInstructions, type MachineContext } from "./instructions.js";
 import { shellOf } from "../machines/targets.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
 
@@ -179,7 +179,6 @@ export class TurnTools {
       { name: names[1], tools: machineTools },
     ].filter((extension) => extension.tools.length > 0);
     for (const extension of scoped) deps.registry.install(extension);
-    let memoryRevision: string | undefined;
     await conversation.configure(
       {
         extensions: [...base.extensions, ...scoped, ...prepared.extensions, ...userPrepared.extensions],
@@ -195,15 +194,11 @@ export class TurnTools {
                   await this.machineContext(chatId),
                   chatId,
                   work?.accepted_scope,
-                  (hash) => { memoryRevision = hash; },
                 )),
             }),
       },
       BACKGROUND_CONTEXT,
     );
-    if (agentRef !== null && memoryRevision !== undefined) {
-      await recordMemoryRevision(deps.pool, [agentRef.thread_id, "MEMORY.md", memoryRevision]);
-    }
   }
 
   /** The machine the user's message came from, as the prompt names it: the
@@ -234,7 +229,6 @@ export class TurnTools {
     machine: MachineContext | null,
     chatId: string,
     acceptedScope: string | undefined,
-    onMemoryRevision: (hash: string) => void,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
@@ -249,17 +243,20 @@ export class TurnTools {
     const thread = (await this.deps.binding.threadContext(chatId)) ?? undefined;
     const canDelegate =
       spawnedBy === undefined ? agent.tools_mode === "all" || agent.tools.includes("subagents") : spawnedBy.can_spawn;
-    const instructions = composeAgentInstructions(
-      agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread, onMemoryRevision,
+    let memoryRevision: string | undefined;
+    let instructions = composeAgentInstructions(
+      agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread,
+      (hash) => { memoryRevision = hash; },
     );
-    if (acceptedScope === undefined) return instructions;
-    return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
-      "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +
-      "For a lookup, discover and try the authorized tools before judging access. Distinguish an unavailable tool, denied access or approval, a provider error, and a successful lookup with no results. " +
-      "Use report_work with ready when you have checked and can deliver the requested result, waiting when an external dependency is pending, or failed with the specific failure after feasible attempts. Include what you checked and any material limitation. Keep routine progress internal. In messages visible to the Member, describe the work, its result, or a decision the Member needs to make. Keep execution and routing details in the internal report. " +
-      "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
-      "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
-
+    if (acceptedScope !== undefined) {
+      instructions += "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
+        "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +
+        "For a lookup, discover and try the authorized tools before judging access. Distinguish an unavailable tool, denied access or approval, a provider error, and a successful lookup with no results. " +
+        "Use report_work with ready when you have checked and can deliver the requested result, waiting when an external dependency is pending, or failed with the specific failure after feasible attempts. Include what you checked and any material limitation. Keep routine progress internal. In messages visible to the Member, describe the work, its result, or a decision the Member needs to make. Keep execution and routing details in the internal report. " +
+        "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
+        "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
+    }
+    return attachMemoryRevision(instructions, memoryRevision);
   }
 
   /** The conversation tools that exist only for agent threads: send_message,
