@@ -97,7 +97,7 @@ export function WorkNavigation({
           <Icon aria-hidden="true" />
           {label}
           {label === "New" && newChatShortcut && (
-            <kbd className="invisible whitespace-nowrap font-sans text-muted-foreground group-[&:hover]:visible group-focus-visible:visible">
+            <kbd className="invisible ml-2 whitespace-nowrap font-sans text-muted-foreground group-[&:hover]:visible group-focus-visible:visible">
               {newChatShortcut}
             </kbd>
           )}
