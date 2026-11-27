@@ -15,7 +15,6 @@ const defaults: WorkAppearance = { palette: "Slate", font: "Inter" };
 const Appearance = createContext({
   appearance: defaults,
   setAppearance: (_next: Partial<WorkAppearance>) => {},
-  resetAppearance: () => {},
 });
 
 function readWorkAppearance(): WorkAppearance {
@@ -49,7 +48,6 @@ export function WorkAppearanceProvider({ children }: { children: ReactNode }) {
       value={{
         appearance,
         setAppearance: (next) => update((current) => ({ ...current, ...next })),
-        resetAppearance: () => update(defaults),
       }}
     >
       {children}

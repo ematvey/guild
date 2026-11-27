@@ -142,7 +142,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
 
   useEffect(() => {
     if (!isControlRoute(route)) {
-      pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: admin ? "general" : "gateway" }, { replace: true });
+      pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: admin ? "general" : "gateway", gatewayInControl: !admin }, { replace: true });
     }
   }, [admin, pushRoute, route]);
 
@@ -166,7 +166,7 @@ function Management({ profile, signOut }: { profile: Profile; signOut: () => voi
         label,
         icon,
         active: route.settingsSection === id,
-        destination: { tab: "settings", settingsSection: id } satisfies RoutePatch,
+        destination: { tab: "settings", settingsSection: id, gatewayInControl: id === "gateway" } satisfies RoutePatch,
       }),
     );
   const groups = [

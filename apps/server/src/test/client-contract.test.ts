@@ -13,6 +13,7 @@ describe("application API contracts", () => {
         registerClientContracts(scope);
         const ok = async () => ({ ok: true });
         scope.get("/api/v1/admin/users", ok);
+        scope.get("/api/v1/api-keys", ok);
         scope.get("/api/v1/auth/me", ok);
         scope.post("/api/v1/chats/:id/turns", ok);
         scope.post("/api/v1/sidebar/pins/:id/order", ok);
@@ -31,6 +32,8 @@ describe("application API contracts", () => {
       expect(await guildStatus("HEAD", "auth/me")).toBe(200);
       expect(await guildStatus("POST", "chats/chat/turns")).toBe(200);
       expect(await guildStatus("PATCH", "agents/agent/routines/task")).toBe(200);
+      expect(await guildStatus("GET", "api-keys")).toBe(200);
+      expect(await status("GET", "control/api-keys")).toBe(200);
       expect(await guildStatus("GET", "admin/users")).toBe(404);
       expect(await guildStatus("POST", "agents")).toBe(404);
       expect(await status("GET", "admin/users")).toBe(200);

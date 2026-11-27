@@ -840,7 +840,7 @@ function ThreadView(props: ThreadProps) {
       }}
       onOpenControl={() => {
         if (isMobile) setOpen(false);
-        pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway" });
+        pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway", gatewayInControl: role !== "admin" });
       }}
       onOpenHelp={() => {
         if (isMobile) setOpen(false);

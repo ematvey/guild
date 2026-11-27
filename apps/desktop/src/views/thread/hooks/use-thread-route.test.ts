@@ -218,6 +218,8 @@ describe("work and Control Center addresses", () => {
     expect(routePath(parseChatRoute("/settings/users/new"))).toBe("/control/settings/users/new");
     expect(routePath(parseChatRoute("/control/agents/a1/settings"))).toBe("/control/agents/a1/settings");
     expect(routePath(parseChatRoute("/control"))).toBe("/control/settings/gateway");
+    expect(routePath(parseChatRoute("/settings/gateway"))).toBe("/settings/gateway");
+    expect(routePath(parseChatRoute("/control/settings/gateway"))).toBe("/control/settings/gateway");
     expect(routePath(parseChatRoute("/skills/new"))).toBe("/control/skills/new");
     expect(routePath(parseChatRoute("/control/skills"))).toBe("/control/skills");
     expect(routePath(parseChatRoute("/skills"))).toBe("/skills");

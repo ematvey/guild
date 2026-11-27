@@ -15,7 +15,7 @@ export function SettingsPanel({
   onSelectSection: (id: string) => void;
 }) {
   const isAdmin = role === "admin";
-  const visible = SETTINGS_SECTIONS.filter((s) => (!s.admin || isAdmin) && !isControlSection(s.id));
+  const visible = SETTINGS_SECTIONS.filter((s) => (!s.admin || isAdmin) && (s.id === "gateway" || !isControlSection(s.id)));
   const groups: { key: "user" | "workspace"; label: string }[] = [{ key: "user", label: "User" }];
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col text-base">

@@ -1,4 +1,4 @@
-import { GatewaySection } from "./settings/GatewaySection";
+import { GatewaySection } from "../../desktop/src/views/settings/sections/GatewaySection";
 import { AssistantSection } from "./settings/AssistantSection";
 import GeneralSection from "./settings/GeneralSection";
 import UsageSection from "./settings/UsageSection";

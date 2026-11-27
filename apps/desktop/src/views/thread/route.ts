@@ -84,6 +84,7 @@ export interface ChatRoute {
   /** Project context (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
+  gatewayInControl?: boolean;
   projectsPage?: boolean;
   searchOpen?: boolean;
   historyFilter?: "chats" | "tasks";
@@ -145,7 +146,7 @@ export function isControlRoute(route: ChatRoute): boolean {
   const agent = route.agents;
   return (agent !== null && !(agent.view === "agent" && agent.personalRoutines)) ||
     route.integrations !== null || route.skills?.management === true || route.apps?.management === true ||
-    (route.tab === "settings" && isControlSection(route.settingsSection));
+    (route.tab === "settings" && (route.settingsSection === "gateway" ? route.gatewayInControl === true : isControlSection(route.settingsSection)));
 }
 
 export function withoutControlPrefix(pathname: string): string {
@@ -408,10 +409,13 @@ const parseBaseChatRoute = (pathname: string, search = ""): ChatRoute => {
 export const parseChatRoute = (pathname: string, search = ""): ChatRoute => {
   const projectsPage = /^\/projects\/?$/.test(pathname);
   const route = parseBaseChatRoute(projectsPage ? "/chats" : pathname, search);
+  const gatewayInControl = route.tab === "settings" && route.settingsSection === "gateway" &&
+    (pathname === CONTROL_PREFIX || pathname.startsWith(CONTROL_PREFIX + "/"));
   const query = new URLSearchParams(search);
   const filter = query.get("history");
   return {
     ...route,
+    ...(gatewayInControl ? { gatewayInControl: true } : {}),
     ...(projectsPage ? { projectsPage: true } : {}),
     ...(query.get("search") === "1" ? { searchOpen: true } : {}),
     ...(filter === "chats" || filter === "tasks" ? { historyFilter: filter } : {}),
@@ -448,6 +452,7 @@ export function previewQuery(route: ChatRoute): string {
 }
 
 export interface RoutePatch {
+  gatewayInControl?: boolean;
   projectsPage?: boolean;
   searchOpen?: boolean;
   historyFilter?: ChatRoute["historyFilter"] | null;
@@ -582,10 +587,13 @@ export const applyRoutePatch = (route: ChatRoute, next: RoutePatch): ChatRoute =
   const searchOpen = next.searchOpen ?? (
     route.searchOpen && Object.keys(next).every((key) => key === "historyFilter")
   );
+  const gatewayInControl = tab === "settings" && settingsSection === "gateway" &&
+    (next.gatewayInControl ?? (!("settingsSection" in next) && route.gatewayInControl));
   const historyFilter = "historyFilter" in next ? next.historyFilter : route.historyFilter;
   return {
     chatId,
     projectId,
+    ...(gatewayInControl ? { gatewayInControl: true } : {}),
     ...(projectsPage ? { projectsPage: true } : {}),
     ...(searchOpen ? { searchOpen: true } : {}),
     ...(historyFilter ? { historyFilter } : {}),

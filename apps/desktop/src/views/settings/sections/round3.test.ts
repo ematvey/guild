@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import gatewaySource from "../../../../../control-center/src/settings/GatewaySection.tsx?raw";
+import gatewaySource from "./GatewaySection.tsx?raw";
 import deviceSetupSource from "../../device-setup.tsx?raw";
 import { describe, expect, it, vi } from "vitest";
 

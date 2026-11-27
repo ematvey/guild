@@ -5,14 +5,13 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { apiOnboarded } from "../../lib/api/servers";
 import { machineId } from "../../lib/machine-rpc";
-import { openExternal } from "../../lib/open-external";
-import { HAS_ENGINE, HAS_SHELL, serverUrl, installState, installSurface, type InstallState } from "../../lib/session";
+import { HAS_ENGINE, installState, installSurface, type InstallState } from "../../lib/session";
 import type { MachineInfo } from "../../lib/api/machines";
 import type { Project } from "../../lib/api/projects";
 import { DeviceSetupDialog } from "../device-setup";
 import { InstallSteps, OnboardingGuide, type OnboardingExit } from "../onboarding";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
-import { CHAT_ROOT, CONTROL_PREFIX, type RoutePatch } from "./route";
+import { type RoutePatch } from "./route";
 
 /** The `/install` dialog: the address a help link or a colleague can share. */
 function InstallGuide({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -84,9 +83,6 @@ export function ThreadOverlays({
             onOnboarded?.();
             if (exit === "device") {
               pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "device" } });
-            } else if (exit === "gateway" && HAS_SHELL) {
-              pushRoute(CHAT_ROOT);
-              openExternal(serverUrl() + CONTROL_PREFIX + "/settings/gateway");
             } else if (exit === "gateway") {
               pushRoute({
                 chatId: null,

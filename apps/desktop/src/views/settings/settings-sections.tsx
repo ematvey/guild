@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/c
 import { useTheme, useWorkAppearance, workFonts, workPalettes, type Theme } from "../../theme";
 import { PageHeader } from "../../components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
+import { GatewaySection } from "./sections/GatewaySection";
 import { MachineSection } from "./sections/MachineSection";
 import { AboutSection } from "./sections/AboutSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
@@ -22,6 +23,7 @@ export function SettingsSectionPane({
     account: <AccountSection email={email} role={role} />,
     appearance: <AppearanceSection />,
     notifications: <NotificationsSection />,
+    gateway: <GatewaySection />,
     machine: <MachineSection onSetupDevice={onSetupDevice} />,
     about: <AboutSection />,
   };
@@ -56,7 +58,7 @@ function AccountSection({ email, role }: { email: string; role: string }) {
 
 function AppearanceSection() {
   const { theme, setTheme } = useTheme();
-  const { appearance, setAppearance, resetAppearance } = useWorkAppearance();
+  const { appearance, setAppearance } = useWorkAppearance();
   const modes: { id: Theme; label: string }[] = [
     { id: "light", label: "Light" },
     { id: "dark", label: "Dark" },
@@ -66,12 +68,7 @@ function AppearanceSection() {
     <div className="space-y-4">
       <PageHeader
         title="Appearance"
-        description="Customize how Work looks on this device."
-        actions={
-          <Button size="sm" variant="outline" onClick={resetAppearance}>
-            Reset palette and font
-          </Button>
-        }
+        description="Customize how Guild looks on this device."
       />
       <Card>
         <CardHeader>

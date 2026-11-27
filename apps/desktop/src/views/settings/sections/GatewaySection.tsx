@@ -28,12 +28,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import { serverUrl } from "../../../desktop/src/lib/session";
-import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../desktop/src/lib/api/models";
-import { cacheEpochChanged, currentCacheEpoch } from "../../../desktop/src/views/settings/use-cached-api";
-import { createStore } from "../../../desktop/src/lib/store";
-import { relativeTime } from "../../../desktop/src/lib/relative-time";
-import { PageHeader } from "../../../desktop/src/components/page-header";
+import { serverUrl } from "../../../lib/session";
+import { createMyApiKey, listMyApiKeys, revokeMyApiKey, type ApiKeyInfo } from "../../../lib/api/models";
+import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
+import { createStore } from "../../../lib/store";
+import { relativeTime } from "../../../lib/relative-time";
+import { PageHeader } from "../../../components/page-header";
 
 /** The member's API keys as last read or written: a revisit renders them at
  *  once while the fresh read lands. Sign-out resets it (createStore), and

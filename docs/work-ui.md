@@ -13,7 +13,7 @@
 - Use one vertical scroll area for New, Search, Projects, Apps, Scheduled tasks, Customize, and the chat history. Keep the account footer outside that scroller. Allow vertical thumb dragging and show the thumb on window hover when the list overflows. Clip horizontal overflow.
 - Keep the right gutter narrow. Place the thin resize indicator at the sidebar’s right edge, outside the scrollbar’s hit area.
 - Keep Pinned and Chats and tasks in the history. Put Archived at the bottom. Keep section labels on one line. A separate arrow opens the shadcn history filter. Clicking the heading toggles its section.
-- Use matching ghost buttons in the footer. The account button shows the avatar and name. Workspace switching belongs in its menu. The adjacent device icon opens a dedicated setup and pairing dialog. Device management lives in personal Settings.
+- Use matching ghost buttons in the footer. The account button shows the avatar and name. Workspace switching belongs in its menu. The adjacent device icon opens a dedicated setup and pairing dialog. Device management and personal Gateway API keys live in Settings.
 
 ## Pages and detail views
 

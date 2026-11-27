@@ -6,7 +6,7 @@ export const CONTROL_API = "/api/v1/control";
 const identity = /^\/(?:auth\/(?:login|logout|refresh|me|oidc\/(?:status|login))|ws\/ticket)$/;
 const common = /^\/(?:models$|orgs\/[^/]+\/logo$|access(?:\/|$)|apps(?:\/|$))/;
 const work =
-  /^\/(?:chats|threads|attachments|tool_artifacts|projects|machines|sidebar|assistant|inbox|releases|push|me|preview_link)(?:\/|$)/;
+  /^\/(?:chats|threads|attachments|tool_artifacts|api-keys|projects|machines|sidebar|assistant|inbox|releases|push|me|preview_link)(?:\/|$)/;
 const control = /^\/(?:admin|activity|usage|api-keys|mcp|registry|events|org|runs)(?:\/|$)/;
 const workAgents = /^\/agents(?:$|\/[^/]+\/(?:routines|threads|turns)(?:\/|$))/;
 
