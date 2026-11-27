@@ -175,6 +175,44 @@ describe("skills stay out of the agent workspace", () => {
   }, 40_000);
 });
 
+describe("manual routine runs", () => {
+  it("returns the execution chat only to callers who can read it", async () => {
+    const adminHeaders = { ...auth(), authorization: `Bearer ${stack.adminToken}` };
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/control/agents",
+      headers: adminHeaders,
+      payload: { name: "Shared schedule", model: "GLM-Test-Model" },
+    });
+    expect(created.statusCode).toBe(200);
+    const agentId = created.json().agent.id as string;
+    await stack.env.db.query("INSERT INTO agent_access (agent_id, user_id, level) VALUES ($1, $2, 'edit')",
+      [agentId, stack.memberId]);
+    const routines = `/api/v1/control/agents/${agentId}/routines`;
+    const scheduled = await stack.env.app.inject({
+      method: "POST",
+      url: routines,
+      headers: adminHeaders,
+      payload: { name: "Shared digest", schedule: "0 8 * * 1-5", prompt: "Write a digest.", enabled: false },
+    });
+    expect(scheduled.statusCode).toBe(200);
+    const url = `${routines}/${scheduled.json().routine.id}/run`;
+
+    const editorRun = await stack.env.app.inject({ method: "POST", url, headers: { authorization: auth().authorization! } });
+    expect(editorRun.statusCode).toBe(200);
+    expect(editorRun.json()).toMatchObject({ run: { user_id: stack.adminId }, chat_id: null });
+    const ownerRun = await stack.env.app.inject({
+      method: "POST", url, headers: { authorization: adminHeaders.authorization },
+    });
+    expect(ownerRun.statusCode).toBe(200);
+    const ownerChatId = ownerRun.json().chat_id;
+    expect(typeof ownerChatId).toBe("string");
+    const chat = `/api/v1/threads/${ownerChatId}`;
+    expect((await stack.env.app.inject({ url: chat, headers: adminHeaders })).statusCode).toBe(200);
+    expect((await stack.env.app.inject({ url: chat, headers: auth() })).statusCode).toBe(404);
+  });
+});
+
 describe("plain chat adoption", () => {
   it("turns a plain chat into a thread of the caller's personal agent", async () => {
     const created = await stack.env.app.inject({

@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
-import { acceptsSurfaceFrame } from "../hub/protocol.js";
+import { createRequire } from "node:module";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { FormatsPlugin } from "ajv-formats";
+import { acceptsSurfaceFrame, parseClientMsg } from "../hub/protocol.js";
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { SocketSink, SURFACE_FRAMES } from "../hub/sink.js";
 import { registerClientContracts } from "../platform/http/client-contract.js";
+
+const addFormats: FormatsPlugin = createRequire(import.meta.url)("ajv-formats");
 
 describe("application API contracts", () => {
   it("publishes only the routes each frontend owns while preserving engine paths", async () => {
@@ -59,18 +64,46 @@ describe("application API contracts", () => {
     }
   });
 
-  it("matches the published socket vocabulary and rejects cross-surface commands", () => {
-    const schemaUrl = new URL("../../../../protocol/socket.schema.json", import.meta.url);
-    const schema = JSON.parse(readFileSync(schemaUrl, "utf8"));
-    const tags = (name: string) => schema.$defs[name].allOf[1].properties.type.enum;
-    expect([...SURFACE_FRAMES.work]).toEqual(tags("WorkServerFrame"));
-    expect([...SURFACE_FRAMES.control]).toEqual(tags("ControlServerFrame"));
+  it("matches the socket schemas to both runtime surface gates", () => {
+    const readProtocol = (name: string) =>
+      JSON.parse(readFileSync(new URL(`../../../../protocol/${name}.json`, import.meta.url), "utf8"));
+    const schema = readProtocol("socket.schema");
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    for (const name of ["rest", "rpc", "socket"]) ajv.addSchema(readProtocol(`${name}.schema`));
+    const clientFrames: Record<string, unknown>[] = readProtocol("fixtures/socket.ClientFrame");
+    const serverFrames: { type: string }[] = readProtocol("fixtures/socket.ServerFrame");
     const id = "00000000-0000-4000-8000-000000000001";
-    expect(acceptsSurfaceFrame("work", { type: "read", chat_id: id })).toBe(true);
-    expect(acceptsSurfaceFrame("control", { type: "read", chat_id: id })).toBe(false);
-    expect(acceptsSurfaceFrame("work", { type: "sync", chat_id: null, run_id: id })).toBe(false);
-    expect(acceptsSurfaceFrame("control", { type: "sync", chat_id: null, run_id: id })).toBe(true);
-    expect(acceptsSurfaceFrame("control", { type: "sync", chat_id: id })).toBe(false);
+    const optionalFields = ["run_id", "activity_chat_id", "coordination_agent_id"];
+    for (const chatId of [undefined, null, id]) {
+      for (let mask = 0; mask < 2 ** optionalFields.length; mask++) {
+        clientFrames.push({
+          type: "sync",
+          ...(chatId === undefined ? {} : { chat_id: chatId }),
+          ...Object.fromEntries(optionalFields.filter((_, bit) => (mask & (1 << bit)) !== 0).map((field) => [field, id])),
+        });
+      }
+    }
+
+    for (const [surface, prefix] of [["work", "Work"], ["control", "Control"]] as const) {
+      const clientRoot = `${prefix}ClientFrame`;
+      const serverRoot = `${prefix}ServerFrame`;
+      expect(schema.$defs[clientRoot].allOf[0]).toEqual({ $ref: "#/$defs/ClientFrame" });
+      expect(schema.$defs[serverRoot].allOf[0]).toEqual({ $ref: "#/$defs/ServerFrame" });
+      const validateClient = ajv.compile({ $ref: `${schema.$id}#/$defs/${clientRoot}` });
+      const validateServer = ajv.compile({ $ref: `${schema.$id}#/$defs/${serverRoot}` });
+      const allowedServerTags = schema.$defs[serverRoot].allOf[1].properties.type.enum;
+      expect([...SURFACE_FRAMES[surface]]).toEqual(allowedServerTags);
+      for (const frame of serverFrames) {
+        expect(validateServer(frame), `${surface} server frame ${frame.type}`).toBe(allowedServerTags.includes(frame.type));
+      }
+      for (const frame of clientFrames) {
+        const text = JSON.stringify(frame);
+        const parsed = parseClientMsg(text);
+        expect(parsed, text).not.toBeNull();
+        expect(validateClient(frame), `${surface} client frame ${text}`).toBe(acceptsSurfaceFrame(surface, parsed!));
+      }
+    }
   });
 
   it("keeps chat state on the Work socket and integration configuration on Control", () => {
