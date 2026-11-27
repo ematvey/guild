@@ -737,6 +737,14 @@ function ThreadView(props: ThreadProps) {
         <SkillsPage
           route={route.skills}
           me={{ email, displayName: displayName ?? undefined, role }}
+          onCreateSkill={() => {
+            const request = "Help me create a reusable skill. Ask what it should do, when to use it, and what examples or files it needs.";
+            const draft = readDraft(draftStorage, null);
+            const prompt = draft ? `${draft}\n\n${request}` : request;
+            writeDraft(draftStorage, null, prompt);
+            composer.setPrompt(prompt);
+            newChat();
+          }}
           pushRoute={pushRoute}
         />
       </RoutePage>

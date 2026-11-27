@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
+import { CAPTION_BUTTONS_INSET } from "../../lib/titlebar";
 import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
@@ -332,7 +333,7 @@ function RoutineDetail({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={`flex flex-wrap items-center gap-2 ${import.meta.env.MODE === "control" ? "" : `min-h-11 ${CAPTION_BUTTONS_INSET}`}`}>
         <BackButton onNavigate={onNavigate} agentId={agentId} />
         <div className="flex-1" />
         {canManage && (

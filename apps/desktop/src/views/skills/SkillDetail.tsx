@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Avatar } from "@guild/ui/components/avatar";
+import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titlebar";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
@@ -213,8 +214,9 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
  *  breadcrumb (the Skills segment navigates back), and the action row at
  *  the right edge. */
 function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => void; actions?: ReactNode }) {
+  const work = import.meta.env.MODE !== "control";
   return (
-    <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-background px-5 py-2.5">
+    <div {...titleBarDragDeep} className={`flex shrink-0 items-center gap-2.5 border-b border-border bg-background ${work ? `px-4 ${TOP_ROW} ${CAPTION_BUTTONS_INSET}` : "flex-wrap px-5 py-2.5"}`}>
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
         <button
           className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground"

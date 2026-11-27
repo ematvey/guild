@@ -201,8 +201,10 @@ export function SkillsPanel({
   me,
   route,
   onNavigate,
+  onCreateSkill,
 }: {
   me: SkillMe;
+  onCreateSkill?: () => void;
   /** The /skills... route this page renders (already clamped to what this
    *  session can show — see clampSkillsRoute). Tab, detail slug and editor
    *  all derive from it; search/filter/sort stay local (not URL state). */
@@ -283,16 +285,14 @@ export function SkillsPanel({
       />
     </div>
   );
-  const publishAction = (
-    <Button
-      size={route.management ? "sm" : "icon"}
-      variant={route.management ? "default" : "ghost"}
-      title={route.management ? undefined : "Publish a skill"}
-      aria-label={import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
-      onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
-    >
+  const publishAction = route.management ? (
+    <Button size="sm" onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}>
       <Plus />
-      {route.management && "New skill"}
+      New skill
+    </Button>
+  ) : onCreateSkill && (
+    <Button size="icon" variant="ghost" aria-label="Create skill in chat" title="Create skill in chat" onClick={onCreateSkill}>
+      <Plus />
     </Button>
   );
   const catalogFilters = (
@@ -329,7 +329,7 @@ export function SkillsPanel({
       <PageHeader
         variant={route.management ? "bar" : "work"}
         title={route.management ? "Skills" : "Customize"}
-        actions={route.management ? <>{searchField}{publishAction}</> : tab === "catalog" ? publishAction : undefined}
+        actions={route.management ? <>{searchField}{publishAction}</> : publishAction}
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
