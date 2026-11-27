@@ -133,12 +133,12 @@ it("keeps sidebar sections and project folders as the member left them when swit
   rerender(panel("c-project", folder.id));
   expect(projects.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(projects);
-  expect(screen.getByRole("button", { name: "Project folder" }).getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByText("Project folder").closest("button")!.getAttribute("aria-expanded")).toBe("false");
   rerender(panel("c-pinned-project", pinned.id));
   expect(pins.getAttribute("aria-expanded")).toBe("false");
   expect(projects.getAttribute("aria-expanded")).toBe("true");
 
   rerender(panel(null, pinned.id));
   expect(pins.getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByRole("button", { name: "Pinned folder" }).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("Pinned folder").closest("button")!.getAttribute("aria-expanded")).toBe("true");
 });
