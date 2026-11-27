@@ -10,7 +10,7 @@
 
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
-import { CAPTION_BUTTONS_INSET, titleBarDragDeep } from "../lib/titlebar";
+import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../lib/titlebar";
 
 export function PageHeader({
   title,
@@ -31,6 +31,14 @@ export function PageHeader({
 }) {
   const work = variant === "work";
   const bar = variant !== "section";
+  const backLink = back && (
+    <button
+      onClick={back.onClick}
+      className={`${work ? "shrink-0" : "mb-3"} flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground`}
+    >
+      <ArrowLeft className="size-4" /> {back.label}
+    </button>
+  );
   return (
     <header
       {...titleBarDragDeep}
@@ -42,16 +50,10 @@ export function PageHeader({
           : `sticky top-0 z-10 mb-6 flex min-h-11 flex-col justify-center border-b border-border bg-background py-1.5 ${CAPTION_BUTTONS_INSET}`
       }
     >
-      {back && (
-        <button
-          onClick={back.onClick}
-          className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" /> {back.label}
-        </button>
-      )}
+      {!work && backLink}
       {bar ? (
-        <div className={work ? "flex items-center gap-1.5 pb-3" : "flex flex-wrap items-center gap-3 pb-3"}>
+        <div className={work ? `flex items-center gap-1.5 ${TOP_ROW}` : "flex flex-wrap items-center gap-3 pb-3"}>
+          {work && backLink}
           <div className={work ? "min-w-0" : "min-w-0 w-full sm:w-auto sm:flex-1"}>
             <h1 className={work ? "truncate text-base font-semibold" : "truncate text-lg font-semibold tracking-tight"}>{title}</h1>
             {description !== undefined && description !== "" && (

@@ -42,7 +42,7 @@ export function CollapseButton({ onCollapse, expanded }: { onCollapse?: () => vo
       <Button
         variant="ghost"
         size="icon"
-        className="size-9 text-muted-foreground pointer-coarse:size-10"
+        className="size-9 text-foreground pointer-coarse:size-10"
         onClick={onCollapse}
         aria-label="Toggle sidebar"
         aria-expanded={expanded}
