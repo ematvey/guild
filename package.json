@@ -9,6 +9,7 @@
     "packages/integration-sdk"
   ],
   "scripts": {
+    "build:control": "npm run build --workspace @guild/control-center",
     "coherence": "python3 scripts/coherence/check.py check",
     "coherence:report": "python3 scripts/coherence/check.py report"
   },

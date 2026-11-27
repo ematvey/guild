@@ -6,7 +6,7 @@
 
 import { Cron } from "croner";
 import { ApiError } from "../platform/errors.js";
-import type { PlatformPool } from "../platform/db.js";
+import { withTransaction, type PlatformPool, type PoolClient } from "../platform/db.js";
 import {
   countPendingReminders,
   deletePendingOccurrences,
@@ -231,42 +231,45 @@ export async function updateRoutine(
   routineId: string,
   patch: UpdateRoutineInput,
 ): Promise<AgentRoutine> {
-  const existing = await getRoutine(pool, agentId, routineId);
-  const kind = patch.kind ?? existing.kind;
-  if (kind !== "cron" && kind !== "once") throw ApiError.badRequest("kind must be cron or once");
-  const timezone = cleanTimezone(patch.timezone ?? existing.timezone);
-  const enabled = patch.enabled ?? existing.enabled;
-  const name = patch.name === undefined ? existing.name : cleanName(patch.name);
-  const prompt = patch.prompt === undefined ? existing.prompt : cleanPrompt(patch.prompt);
-  const schedule =
-    kind === "cron" ? normalizeRoutineSchedule(patch.schedule ?? existing.schedule ?? "", timezone) : null;
-  const runAt = kind === "once" ? parseRunAt(patch.run_at ?? existing.run_at ?? "").toISOString() : null;
-  const timingChanged =
-    patch.kind !== undefined ||
-    patch.schedule !== undefined ||
-    patch.timezone !== undefined ||
-    patch.run_at !== undefined ||
-    patch.enabled !== undefined;
-  const next =
-    timingChanged || existing.next_run_at === null
-      ? nextRunAt({ kind, schedule, timezone, run_at: runAt, enabled })
-      : existing.next_run_at;
-  const updated = await writeRoutine(pool, agentId, routineId, {
-    name,
-    kind,
-    schedule,
-    timezone,
-    run_at: runAt,
-    prompt,
-    delivery: cleanDelivery(patch.delivery, existing.delivery),
-    enabled,
-    next_run_at: next,
+  return withTransaction(pool, async (client) => {
+    const existing = await selectRoutine(client, agentId, routineId, true);
+    if (existing === null) throw ApiError.notFound("no such routine");
+    const kind = patch.kind ?? existing.kind;
+    if (kind !== "cron" && kind !== "once") throw ApiError.badRequest("kind must be cron or once");
+    const timezone = cleanTimezone(patch.timezone ?? existing.timezone);
+    const enabled = patch.enabled ?? existing.enabled;
+    const name = patch.name === undefined ? existing.name : cleanName(patch.name);
+    const prompt = patch.prompt === undefined ? existing.prompt : cleanPrompt(patch.prompt);
+    const schedule =
+      kind === "cron" ? normalizeRoutineSchedule(patch.schedule ?? existing.schedule ?? "", timezone) : null;
+    const runAt = kind === "once" ? parseRunAt(patch.run_at ?? existing.run_at ?? "").toISOString() : null;
+    const timingChanged =
+      patch.kind !== undefined ||
+      patch.schedule !== undefined ||
+      patch.timezone !== undefined ||
+      patch.run_at !== undefined ||
+      patch.enabled !== undefined;
+    const next =
+      timingChanged || existing.next_run_at === null
+        ? nextRunAt({ kind, schedule, timezone, run_at: runAt, enabled })
+        : existing.next_run_at;
+    const updated = await writeRoutine(client, agentId, routineId, {
+      name,
+      kind,
+      schedule,
+      timezone,
+      run_at: runAt,
+      prompt,
+      delivery: cleanDelivery(patch.delivery, existing.delivery),
+      enabled,
+      next_run_at: next,
+    });
+    if (updated === null) throw ApiError.notFound("no such routine");
+    if (!enabled || (kind === "once" && patch.run_at !== undefined)) {
+      await deletePendingOccurrences(client, routineId);
+    }
+    return updated;
   });
-  if (updated === null) throw ApiError.notFound("no such routine");
-  if (!enabled || (kind === "once" && patch.run_at !== undefined)) {
-    await deletePendingOccurrences(pool, routineId);
-  }
-  return updated;
 }
 
 export async function deleteRoutine(pool: PlatformPool, agentId: string, routineId: string): Promise<void> {
@@ -276,7 +279,7 @@ export async function deleteRoutine(pool: PlatformPool, agentId: string, routine
 /** Inserts one occurrence. `(routine_id, scheduled_for)` is the idempotency
  *  key; a repeated insert returns the existing row. */
 export async function createOccurrence(
-  pool: PlatformPool,
+  pool: PlatformPool | PoolClient,
   routineId: string,
   scheduledFor: Date | string,
 ): Promise<AgentRoutineOccurrence> {

@@ -108,22 +108,6 @@ export function remoteMachine(input: {
   };
 }
 
-/** The open chat's remote bound machine when its socket is down — the
- * offline warning banner's subject. Machine binding is project-derived, so
- * only project-bound chats can have one. Null when unbound, bound to this
- * client's engine, online, or presence unknown. */
-export function offlineMachine(
-  chats: ChatSummary[] | null,
-  machines: MachineInfo[] | null,
-  chatId: string | null,
-  localMachineId: string | undefined,
-): { label: string } | null {
-  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  if (!row?.project_id) return null;
-  const remote = remoteMachine({ machineId: row.machine_id, rowLabel: row.machine_label, machines, localMachineId });
-  return remote?.online === false ? { label: remote.label } : null;
-}
-
 /** The independent facts about a thread: what it is, whether the user
  *  archived or deleted it, and whether the user owns it. They are not one
  *  state: an archived user thread stays a user thread, and a deleted thread
@@ -132,24 +116,6 @@ export function offlineMachine(
  *  a chat that is in no list (a subagent node, or a member's chat an admin
  *  reads). `owned` is null until either source speaks: a listed chat is the
  *  user's own, and the tree's `own` says so for every other chat. */
-/** The agent the composer names. The pick (seeded from the chat's binding)
- *  gives the identity; pushed state gives its current face: the agent
- *  list's row for that id, else the chat tree's `agent_name` when the tree
- *  names the same agent. A rename shows as soon as either frame lands. */
-export function composerAgent<A extends { id: string; name: string }>(
-  picked: A | null,
-  agents: ReadonlyArray<A> | null,
-  tree: { agent_id: string | null; agent_name: string | null } | null,
-): A | null {
-  if (picked === null) return null;
-  const live = agents?.find((a) => a.id === picked.id);
-  if (live !== undefined) return live;
-  if (tree?.agent_id === picked.id && tree.agent_name && tree.agent_name !== picked.name) {
-    return { ...picked, name: tree.agent_name };
-  }
-  return picked;
-}
-
 /** The agent a chat is bound to, when the pushed agent list marks it as
  *  being deleted. Its threads keep their sidebar rows through the grace
  *  period — readable, and restored with the agent — but the server refuses

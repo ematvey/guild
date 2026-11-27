@@ -113,7 +113,7 @@ describe("projectChipLabel", () => {
 
   it("a project shows its name, plus the machine when known", () => {
     expect(projectChipLabel({ id: "p", name: "web" })).toBe("web");
-    expect(projectChipLabel({ id: "p", name: "web", machine_label: "devbox" })).toBe("web · devbox");
+    expect(projectChipLabel({ id: "p", name: "web", machine_label: "devbox" })).toBe("devbox / web");
   });
 });
 

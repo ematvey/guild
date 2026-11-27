@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { slugFromTitle } from "./connect-mcp";
+import { slugFromTitle } from "../../../../control-center/src/integrations/connect-mcp";
 
 describe("connect MCP server page", () => {
   it("derives a slug from the display name", () => {

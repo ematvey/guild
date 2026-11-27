@@ -122,8 +122,8 @@ export function CreateProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!flex max-h-[calc(100dvh-3rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add project</DialogTitle>
-          <DialogDescription>Pick a folder — a project is created for it, or an existing one opens.</DialogDescription>
+          <DialogTitle>New project</DialogTitle>
+          <DialogDescription>Choose a project folder on this computer or a connected device.</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
           {view.kind === "machine" ? (
@@ -180,7 +180,7 @@ export function CreateProjectDialog({
                   <button
                     type="button"
                     onClick={() => void pickNativeFolder()}
-                    className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent"
+                    className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Monitor className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
@@ -197,7 +197,7 @@ export function CreateProjectDialog({
                       key={d.name}
                       type="button"
                       onClick={() => setView({ kind: "browse", distro: d.name })}
-                      className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent"
+                      className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <span
                         className={`size-2 shrink-0 rounded-full ${d.running ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
@@ -236,7 +236,7 @@ export function CreateProjectDialog({
                     type="button"
                     disabled={!m.connected}
                     onClick={() => setView({ kind: "machine", machine: m })}
-                    className={`flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent ${
+                    className={`flex w-full items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${
                       m.connected ? "" : "opacity-50"
                     }`}
                     title={m.connected ? "Browse folders on this machine" : "Machine is offline"}

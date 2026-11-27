@@ -14,8 +14,7 @@ forwards to `GUILD_FARO_URL` (an empty value disables forwarding).
 The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
 absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
 The value rides the `workspace_identity` frame, so every client starts or
-stops collecting live. There is no per-device toggle; About shows the state
-read-only.
+stops collecting live.
 
 Tests use isolated databases and buckets on the configured test services.
 Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`, and
@@ -25,6 +24,8 @@ gitignored `test.env` at the repository root.
 ---
 
 ## 1. Build and deploy the server
+
+The image builds and embeds the Work frontend and the Control Center independently. The server serves Work at `/` and Control Center at `/control`. For local builds, run `npm run build --workspace apps/desktop` and `npm run build:control`. The Tauri build embeds the Work output.
 
 Set `version` to the product version for a stable release or to the intended
 preview version for a develop installation. Set `image` to an immutable image
@@ -195,18 +196,12 @@ before deploying the image.
   configured list at runtime, so one client build follows whichever stack it
   paired with. The `endpoints` entry in `tauri.conf.json` is a placeholder
   the runtime replaces. `createUpdaterArtifacts: true`.
-- Two publisher scripts, both **idempotent** (they delete+republish an
-  existing version/platform artifact) and both verify the server's sha256
-  against the local file:
-  - `scripts/release-clients.sh` — local cross-build entry point. It delegates
-    preview stamping and publication to `scripts/release.mjs`; see `docs/clients.md` §4.
-- Desktop artifacts are published once to GitHub Releases. Each stack imports
-  an approved tag using `POST /api/v1/admin/releases/github`. Set
-  `GUILD_RELEASE_REPOSITORY=owner/repository`; set `GUILD_RELEASE_CHANNEL=develop`
-  on dev to allow preview versions. The default stable channel rejects them.
-- The paired server keeps `/api/v1/updates/latest.json` and the release download
-  API, with GitHub URLs for imported releases. Verify the approved version and
-  all four updater targets after importing. Approval requires no client rebuild.
+- `scripts/release-clients.sh` delegates preview stamping and publication
+  to `scripts/release.mjs`. GitHub Releases hosts the signed artifacts.
+- Set `GUILD_RELEASE_REPOSITORY=owner/repository`. The server resolves the
+  exact desktop release for its embedded version and commit. The updater
+  endpoint and release download API serve its verified GitHub URLs.
+- Verify the deployed version and all four signed updater targets after rollout.
 - Release builds need current node dependencies and an explicit full `PATH`
   when run detached. The local builder installs isolated dependencies and shares npm and Cargo caches.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +

@@ -1,19 +1,16 @@
 // The composer that floats over the transcript: a read-only notice, a
 // loading placeholder, or the editable card — queued chips, retryable sends,
 // attachments, the mention picker, the prompt, and the action row (attach,
-// project chip, approval mode, context ring, agent chip, send / stop).
+// project chip, approval mode, context ring, send / stop).
 import {
   ArrowUp,
   Check,
-  ChevronDown,
   CornerDownRight,
-  FolderOpen,
   Loader2,
   Plus,
   ShieldCheck,
   Square,
   Trash2,
-  Users,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
@@ -21,7 +18,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Textarea } from "@guild/ui/components/textarea";
@@ -32,18 +28,15 @@ import { projectChipLabel, type PickedProject } from "../projects/projects";
 import type { ChatApprovalMode } from "../../lib/api/approvals";
 import type { OutgoingCommand } from "../../lib/outgoing-command";
 import type { RenderBlock } from "../../lib/thread-reducer";
-import { useMachines } from "../../lib/machines-store";
 import type { Agent } from "../agents/agents-api";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
-import { remoteMachine, sendButtonState, type ThreadFacts } from "./status";
+import { sendButtonState, type ThreadFacts } from "./status";
 import { CHAT_COLUMN_CLASS } from "./blocks";
 import { isImeEnter } from "./route";
-import { chatsStore, projectsStore } from "./chat-stores";
 import type { ComposerHandle } from "./hooks/use-composer";
-import type { AgentPick } from "./hooks/use-agent-pick";
 
-const COMPOSER_SURFACE = `${CHAT_COLUMN_CLASS} pointer-events-auto rounded-3xl bg-secondary`;
+const COMPOSER_SURFACE = `${CHAT_COLUMN_CLASS} pointer-events-auto rounded-3xl bg-[var(--chat-composer-background,var(--secondary))]`;
 
 /** Why the composer is read-only for this thread. */
 function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Agent | null): string {
@@ -54,7 +47,7 @@ function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Age
   if (facts.type === "user" && deletingAgent !== null) {
     return `Read-only. ${deletingAgent.name} is being deleted; restoring the agent makes this thread writable again.`;
   }
-  if (facts.type === "routine") return "Routine run. Read-only — the agent wrote this transcript on a schedule.";
+  if (facts.type === "routine") return "Scheduled task run. Read-only — the agent wrote this transcript on a schedule.";
   if (facts.type === "subagent") return "Subagent thread. Read-only — the parent agent drives this conversation.";
   return "Archived. Unarchive this thread to send a message.";
 }
@@ -67,111 +60,30 @@ function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Age
  *  for a remote machine (on desktop the local machine executes its own
  *  tools) whose live socket state is known in the machines store. */
 function ProjectChip({
-  chatId,
   project,
-  localMachineId,
+  machineLabel,
+  machineOnline,
 }: {
-  chatId: string | null;
   project: PickedProject | null;
-  localMachineId: string | undefined;
+  machineLabel?: string | null;
+  machineOnline?: boolean;
 }) {
-  const chats = chatsStore.use();
-  const projects = projectsStore.use();
-  const machines = useMachines();
   if (!project) return null;
-  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  const bound = !!(row?.machine_id && row.project_id);
-  // The chat row may be absent right after a create (route pushed before
-  // the list lands) — the chip then renders without a live socket state.
-  const remote = remoteMachine({
-    machineId: bound ? row?.machine_id : projects?.find((p) => p.id === project.id)?.machine_id,
-    rowLabel: bound ? row?.machine_label : undefined,
-    machines,
-    localMachineId,
-  });
-  const machineOnline = remote?.online;
-  const showMachine = remote !== null && machineOnline !== undefined;
+  const label = projectChipLabel({ ...project, machine_label: machineLabel });
   return (
     <span
       className="flex h-8 min-w-0 max-w-44 items-center gap-1.5 rounded-full px-2 text-muted-foreground pointer-coarse:h-10"
-      title={
-        showMachine
-          ? `${project.name} — Machine: ${remote?.label}${machineOnline ? " (online)" : " (offline)"}`
-          : `${project.name} — ${project.machine_label ?? "project"}`
-      }
+      title={machineOnline === undefined ? label : `${label} (${machineOnline ? "online" : "offline"})`}
     >
-      {showMachine && (
+      {machineOnline !== undefined && (
         <span
-          className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+          role="img"
+          aria-label={machineOnline ? "Online" : "Offline"}
+          className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/60"}`}
         />
       )}
-      <span className="flex min-w-0 items-center gap-1">
-        <FolderOpen className="size-4 shrink-0" />
-        <span className="hidden min-w-0 sm:block sm:flex-1">
-          <FadeTitle text={projectChipLabel(project)} />
-        </span>
-      </span>
+      <FadeTitle text={label} />
     </span>
-  );
-}
-
-/** The agent chip: a locked thread names its agent; otherwise a picker. */
-function AgentChip({ agent, onManageAgents }: { agent: AgentPick; onManageAgents: () => void }) {
-  const { agentLocked, shownAgent, personalAgent, agentsList, pickedAgent, pickAgent } = agent;
-  if (agentLocked) {
-    // An agent thread, or a chat whose thread belongs to a shared agent,
-    // names its agent and keeps it.
-    return (
-      <span
-        className="flex h-8 min-w-0 items-center gap-1 rounded-full px-2 text-sm text-secondary-foreground pointer-coarse:h-10"
-        title={
-          shownAgent?.visibility === "private"
-            ? "Your private agent"
-            : "Shared agent: your threads are private, its files are shared"
-        }
-      >
-        <span className="truncate">{shownAgent?.name ?? "Assistant"}</span>
-        {shownAgent !== null && shownAgent.visibility !== "private" && (
-          <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
-        )}
-      </span>
-    );
-  }
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex h-8 min-w-0 items-center gap-1 rounded-full px-2 text-sm text-secondary-foreground hover:bg-foreground/10 focus-visible:ring-1 focus-visible:ring-ring pointer-coarse:h-10"
-          title="Choose the agent for this chat"
-        >
-          <span className="truncate">{shownAgent?.name ?? personalAgent?.name ?? "Assistant"}</span>
-          {shownAgent !== null && shownAgent.visibility !== "private" && (
-            <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
-          )}
-          <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Agent</DropdownMenuLabel>
-        {(agentsList ?? []).map((a) => (
-          <DropdownMenuItem key={a.id} onSelect={() => pickAgent(a)}>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate">{a.name}</span>
-                {a.visibility !== "private" && <Users className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />}
-              </span>
-              {a.description ? (
-                <span className="line-clamp-1 text-3xs text-muted-foreground">{a.description}</span>
-              ) : null}
-            </span>
-            {a.id === pickedAgent?.id && <Check className="size-3.5" />}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onManageAgents}>Manage agents</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 
@@ -244,7 +156,6 @@ export function ThreadComposer({
   assistantInbox,
   composer,
   sending,
-  agent,
   approval,
   viewChatId,
   blocks,
@@ -257,14 +168,15 @@ export function ThreadComposer({
   model,
   access,
   currentProject,
-  localMachineId,
+  machineLabel,
+  machineOnline,
   setComposerEl,
-  onManageAgents,
+  onConfigureModels,
+  agentModelUnavailable,
 }: {
   assistantInbox: boolean;
   composer: ComposerHandle;
   sending: ComposerSend;
-  agent: AgentPick;
   approval: {
     approvalMode: ChatApprovalMode | "default";
     accountDefault: string;
@@ -290,9 +202,11 @@ export function ThreadComposer({
     onUnarchive: () => void;
   };
   currentProject: PickedProject | null;
-  localMachineId: string | undefined;
+  machineLabel?: string | null;
+  machineOnline?: boolean;
   setComposerEl: (el: HTMLDivElement | null) => void;
-  onManageAgents: () => void;
+  onConfigureModels?: () => void;
+  agentModelUnavailable: boolean;
 }) {
   const {
     fileStore,
@@ -591,16 +505,17 @@ export function ThreadComposer({
               >
                 <Plus className="size-4" />
               </Button>
-              <ProjectChip chatId={viewChatId} project={currentProject} localMachineId={localMachineId} />
+              <ProjectChip project={currentProject} machineLabel={machineLabel} machineOnline={machineOnline} />
               {!assistantInbox && <ApprovalModeMenu {...approval} />}
-              {models !== null && models.length === 0 && <span className="text-muted-foreground">no models</span>}
+              {(models?.length === 0 || agentModelUnavailable) && (
+                onConfigureModels
+                  ? <Button type="button" variant="ghost" size="sm" onClick={onConfigureModels}>Configure models</Button>
+                  : <span className="text-muted-foreground">Ask an admin to enable a model</span>
+              )}
             </div>
             <div className="flex min-w-0 max-w-[55%] items-center gap-1">
               {!assistantInbox && (
-                <>
-                  <ContextRing chatId={viewChatId} model={model} />
-                  <AgentChip agent={agent} onManageAgents={onManageAgents} />
-                </>
+                <ContextRing chatId={viewChatId} model={model} />
               )}
               <Button
                 size="icon"

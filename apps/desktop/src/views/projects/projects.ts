@@ -73,7 +73,7 @@ export interface PickedProject {
  * project is set, "Choose project" in the default projectless state. */
 export function projectChipLabel(p: PickedProject | null | undefined): string {
   if (!p?.name) return "Choose project";
-  return p.machine_label ? `${p.name} · ${p.machine_label}` : p.name;
+  return p.machine_label ? `${p.machine_label} / ${p.name}` : p.name;
 }
 
 /** Fallback chip state for an open chat, derived from the sidebar row. */

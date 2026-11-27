@@ -1,7 +1,7 @@
 // Signed-in servers and sign-in (desktop only — the browser is
 // single-server), plus the account-level reads the shell needs.
 
-import { HAS_ENGINE, clearToken, getToken, setToken } from "../session";
+import { clientApiPath, HAS_ENGINE, clearToken, getToken, setToken } from "../session";
 import { rpcCall } from "../machine-rpc";
 import { ApiError, apiErrorFrom, request, requestResponse } from "./request";
 
@@ -58,7 +58,7 @@ export async function apiLogin(
 }> {
   // Sign-in precedes the session: it names its server explicitly and
   // carries no bearer, so it is the one call that bypasses `request`.
-  const res = await fetch(`${url.replace(/\/$/, "")}/api/v1/auth/login`, {
+  const res = await fetch(`${url.replace(/\/$/, "")}${clientApiPath("/api/v1/auth/login")}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email, password }),

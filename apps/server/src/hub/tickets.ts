@@ -10,6 +10,7 @@ export const TICKET_TTL_MS = 30_000;
 
 export interface TicketIdentity {
   user: UserRow;
+  surface?: "work" | "control";
   session_hash: string;
   expires_at: Date;
 }

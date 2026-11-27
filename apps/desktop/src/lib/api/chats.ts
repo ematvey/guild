@@ -112,7 +112,6 @@ export async function sendChatNoStream(
   sendMode?: "queue" | "steer",
   skillsIndex?: string,
   projectInstructions?: string,
-  agentId?: string,
 ): Promise<void> {
   let acknowledgment: { accepted?: boolean } | undefined;
   try {
@@ -129,7 +128,6 @@ export async function sendChatNoStream(
         client_tools: true,
         attachment_ids: attachmentIds,
         project_id: projectId || undefined,
-        agent_id: agentId || undefined,
         send_mode: sendMode,
         skills_index: skillsIndex || undefined,
         agents_md: projectInstructions || undefined,
@@ -211,29 +209,4 @@ export async function compactChat(chatId: string): Promise<{ seq?: number } | nu
     throw new ApiError("invalid_response", "Invalid compaction task response", 200);
   }
   return typeof started.seq === "number" ? { seq: started.seq } : {};
-}
-
-/** The chat's agent and whether the picker may move it. A run transcript and
- *  a coordination thread keep their agent; an ordinary thread moves. */
-export async function chatAgentBinding(chatId: string): Promise<{ agent: unknown | null; switcheable: boolean }> {
-  try {
-    const body = await request<{ agent?: unknown; switcheable?: boolean } | undefined>(
-      "GET",
-      `${thread(chatId)}/agent`,
-    );
-    return { agent: body?.agent ?? null, switcheable: body?.switcheable !== false };
-  } catch {
-    return { agent: null, switcheable: true };
-  }
-}
-
-/** Binds a chat to an agent. A chat with a thread keeps its transcript.
- *  False when the server refuses the binding. */
-export async function bindChatAgent(chatId: string, agentId: string): Promise<boolean> {
-  try {
-    await request<unknown>("POST", `${thread(chatId)}/agent`, { agent_id: agentId });
-    return true;
-  } catch {
-    return false;
-  }
 }

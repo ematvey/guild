@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import GeneralSection from "./GeneralSection";
-import { AssistantSection } from "./AssistantSection";
+import GeneralSection from "../../../../../control-center/src/settings/GeneralSection";
+import { AssistantSection } from "../../../../../control-center/src/settings/AssistantSection";
 import { AboutSection } from "./AboutSection";
 
 vi.mock("../../../lib/session", () => ({

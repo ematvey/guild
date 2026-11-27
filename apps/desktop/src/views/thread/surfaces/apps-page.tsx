@@ -10,11 +10,13 @@ export function AppsSurface({
   isMobile,
   pushRoute,
   onOpenChat,
+  onCreateApp,
 }: {
   route: AppsRoute;
   isMobile: boolean;
   pushRoute: PushRoute;
   onOpenChat: (chatId: string) => void;
+  onCreateApp?: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -22,8 +24,15 @@ export function AppsSurface({
         route={route}
         isMobile={isMobile}
         onOpenChat={onOpenChat}
+        onCreateApp={onCreateApp}
         navigate={(next, options) =>
-          pushRoute({ ...SURFACE_BASE, skills: null, agents: null, integrations: null, apps: next }, options)
+          pushRoute({
+            ...SURFACE_BASE,
+            skills: null,
+            agents: null,
+            integrations: null,
+            apps: route.management ? { ...next, management: true } : next,
+          }, options)
         }
       />
     </div>

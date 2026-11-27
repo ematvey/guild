@@ -56,6 +56,8 @@ export type AgentsRoute =
       agentId: string;
       tab: AgentTab;
       routineId?: string;
+      routineRunId?: string;
+      personalRoutines?: true;
       filePath?: string;
       filters?: ActivityFilters;
     }
@@ -119,7 +121,7 @@ function filtersSearch(filters: ActivityFilters): string {
 export const AGENT_TABS: ReadonlyArray<readonly [AgentTab, string]> = [
   ["overview", "Overview"],
   ["threads", "Threads"],
-  ["routines", "Routines"],
+  ["routines", "Scheduled tasks"],
   ["files", "Files"],
   ["activity", "Activity"],
   ["settings", "Settings"],
@@ -151,6 +153,9 @@ export function parseAgentsRoute(url: string): AgentsRoute | null {
   const parts = decoded as string[];
   if (parts.length === 0) return null;
 
+  if (parts[0] === "routines" && parts[1]) {
+    return { view: "agent", agentId: parts[1], tab: "routines", routineId: parts[2], personalRoutines: true, ...(parts[2] && parts[3] === "runs" && parts[4] ? { routineRunId: parts[4] } : {}) };
+  }
   if (parts[0] === "activity" && parts.length === 1)
     return { view: "activity", filters: filtersFrom(search) };
   if (parts[0] === "runs" && parts[1])
@@ -223,6 +228,12 @@ export function agentsRoutePath(route: AgentsRoute): string {
     case "chat":
       return `/chats/${segment(route.chatId)}`;
     case "agent": {
+      if (route.personalRoutines && route.tab === "routines") {
+        const base = `/routines/${segment(route.agentId)}`;
+        if (!route.routineId) return base;
+        const detail = `${base}/${segment(route.routineId)}`;
+        return route.routineRunId ? `${detail}/runs/${segment(route.routineRunId)}` : detail;
+      }
       const base = `/agents/${segment(route.agentId)}`;
       if (route.tab === "overview") return base;
       if (route.tab === "routines" && route.routineId)
@@ -385,7 +396,7 @@ export type RunTrigger = AgentTrigger;
 
 export const RUN_TRIGGER_LABEL: Record<RunTrigger, string> = {
   message: "Message",
-  routine: "Routine",
+  routine: "Scheduled task",
   manual: "Manual",
   delegation: "Delegation",
 };

@@ -12,10 +12,6 @@ type Db = PlatformPool | PoolClient;
 export interface DueRoutine {
   id: string;
   agent_id: string;
-  kind: AgentRoutineKind;
-  schedule: string | null;
-  timezone: string;
-  next_run_at: string;
 }
 
 /** An occurrence with its routine, agent and linked run. */
@@ -51,8 +47,7 @@ const OCCURRENCE_SELECT = `SELECT o.id, o.routine_id, r.agent_id, a.org_id, a.ow
 /** Enabled routines of active agents whose next_run_at is due. */
 export async function dueRoutines(pool: PlatformPool, now: string): Promise<DueRoutine[]> {
   const res = await pool.query<DueRoutine>(
-    `SELECT r.id, r.agent_id, r.kind, r.schedule, r.timezone,
-            ${utcText("r.next_run_at")} AS next_run_at
+    `SELECT r.id, r.agent_id
      FROM agent_routines r
      JOIN agents a ON a.id = r.agent_id
      WHERE r.enabled AND r.next_run_at IS NOT NULL AND r.next_run_at <= $1::timestamptz
@@ -63,7 +58,7 @@ export async function dueRoutines(pool: PlatformPool, now: string): Promise<DueR
 }
 
 /** Sets the routine's next_run_at (null: nothing scheduled). */
-export async function setNextRunAt(pool: PlatformPool, routineId: string, nextRunAt: string | null): Promise<void> {
+export async function setNextRunAt(pool: PoolClient, routineId: string, nextRunAt: string | null): Promise<void> {
   if (nextRunAt === null) {
     await pool.query("UPDATE agent_routines SET next_run_at = NULL, updated_at = now() WHERE id = $1", [routineId]);
     return;

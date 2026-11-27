@@ -232,6 +232,8 @@ dbDescribe("agent conversation tools", () => {
       { text: "All clear today." },
     );
     const feedChat = sent.url.replace("/thread/", "");
+    expect(await store.threads.scheduledTaskDeliveryChat(agent.id, owner.id, routine.id, "thread")).toBe(feedChat);
+    expect(await store.threads.scheduledTaskDeliveryChat(agent.id, owner.id, routine.id, "new_chat")).toBeNull();
     expect(await store.threads.routineDeliveryChat(delivered.id)).toEqual({
       chat_id: feedChat,
       title: "Standup notes",
@@ -252,6 +254,14 @@ dbDescribe("agent conversation tools", () => {
       chat_id: opened.url.replace("/thread/", ""),
       title: "Disk alert",
     });
+    const next = await routineRun(routine.id, "Standup notes — 4");
+    const latest = await sendAgentMessage(
+      { store, deliverMessage, agent, userId: owner.id, chatId: next.chat_id },
+      { text: "Disk space is available again.", title: "Disk update" },
+    );
+    expect(await store.threads.scheduledTaskDeliveryChat(agent.id, owner.id, routine.id, "new_chat"))
+      .toBe(latest.url.replace("/thread/", ""));
+    expect(await store.threads.scheduledTaskDeliveryChat(agent.id, randomUUID(), routine.id, "new_chat")).toBeNull();
   });
 
   it("registers the routine management tools", () => {

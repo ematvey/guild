@@ -20,6 +20,7 @@ interface OidcStateClaims {
   /** Origin the login was started from; the callback redirects the browser
    *  back here with the session token in the URL fragment. */
   app: string;
+  returnTo?: string;
   exp: number;
   nonce: string;
 }
@@ -275,9 +276,14 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
     const discovery = await fetchDiscovery(row.issuer);
     const appOrigin = serverOrigin(ctx);
     const redirectUri = `${appOrigin}/api/v1/auth/oidc/callback`;
+    const dest = queryParam(req, "return_to");
+    const returnTo = typeof dest === "string" && /^\/control(?:[/?]|$)/.test(dest)
+      ? dest
+      : undefined;
     const state = signStateJwt(ctx, {
       org: orgId,
       app: appOrigin,
+      returnTo,
       exp: Math.floor(Date.now() / 1000) + STATE_TTL_SECONDS,
       nonce,
     });
@@ -391,10 +397,11 @@ export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void
 
     // Back to the web app; the token rides in the URL fragment so it never
     // reaches the server again, and the app picks it up on load.
-    const target = `${oidcState.app.replace(/\/+$/, "")}/#oidc_token=${urlencode(token)}&email=${urlencode(email)}&nonce=${oidcState.nonce}`;
+    const target = new URL(oidcState.returnTo ?? "/", oidcState.app);
+    target.hash = `oidc_token=${urlencode(token)}&email=${urlencode(email)}&nonce=${oidcState.nonce}`;
     return reply
       .status(302)
-      .header("location", target)
+      .header("location", target.toString())
       .header("set-cookie", nonceCookie(ctx, "", 0))
       .send();
   });

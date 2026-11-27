@@ -221,66 +221,23 @@ stacks. Signing and packaging do not publish to a Guild database.
 
 ### Pairing a deployment with a desktop release
 
-Use the same source commit and version for the server image and the published
-client artifacts. Set `BASE` to the installation's deployed origin, `version`
-to the version stamped into the image, and `TOKEN` to an admin session token
-for that installation. Configure the server with `GUILD_RELEASE_REPOSITORY`
-and the appropriate `GUILD_RELEASE_CHANNEL`.
+Publish the signed desktop release, then deploy the server image built from the
+same source commit and stamped with the same version. Configure the server's
+public release source with `GUILD_RELEASE_REPOSITORY`. Guild serves the exact
+matching tag automatically.
 
-For a develop preview, set `installation` to the installation's pin name and
-create a pending pin before rolling the server. Run one rollout at a time per
-installation.
+For a develop preview, put a pending pin on the release before rolling the
+server. Roll out the image through Helm and confirm the running version and
+commit at `/api/v1/health`. Check that `/api/v1/updates/latest.json` reports
+that same version with signed download URLs for all four platforms. A missing
+or incomplete release yields HTTP 204 until the server can verify it.
 
 ```bash
 node scripts/release.mjs pin "$installation" "client-v$version" --pending
-```
-
-[Build and roll the stamped image through Helm](deploy-nuances.md#1-build-and-deploy-the-server).
-After the rollout, import the exact release for the running server.
-
-```bash
-TOKEN="$TOKEN" node scripts/release.mjs publish-running "$BASE" "$version"
-```
-
-The command reads the running version from health, checks that it matches the
-intended deployment, and asks the server to import `client-v<running-version>`
-from its configured GitHub repository. Before approval, the server checks
-that the release metadata records the same source commit as its image. A
-missing release or a version or commit mismatch leaves the existing approval
-in place.
-
-Verify the updater manifest as described below. For a develop preview, update
-the running pin after verification succeeds, then remove the pending pin.
-
-```bash
+# Roll out the matching server image and verify health and the updater manifest.
 node scripts/release.mjs pin "$installation" "client-v$version" &&
   node scripts/release.mjs unpin "$installation" --pending
 ```
-
-### Approving a release on a server
-
-Configure the stack with `GUILD_RELEASE_REPOSITORY=owner/repository` and
-`GUILD_RELEASE_CHANNEL=stable` (the default) or `develop` for dev. Then an admin
-approves a published tag whose version does not exceed the running server:
-
-```bash
-curl -fsS -X POST "$BASE/api/v1/admin/releases/github" \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"tag":"client-v0.6.127"}'
-```
-
-The server reads only its configured public GitHub repository. It checks the
-release channel, all six artifacts, their digests, sizes and signature assets,
-then imports the download metadata and approved version in one transaction.
-The server's existing release endpoints return GitHub URLs. The paired updater
-endpoint serves only the approved complete release; it does not follow GitHub's
-latest release automatically. Develop stacks can approve a preview; stable stacks reject it. Approvals are stored separately for stable and develop. Listing, installer download URLs and the updater manifest all enforce the running server version as a ceiling, including after a server downgrade.
-Approval changes metadata only and requires no rebuild of the client artifacts.
-
-Verify the stack's `/api/v1/updates/latest.json`: its version must be the approved
-version and its `platforms` must contain all four targets with signatures and
-GitHub download URLs. Removing an updater artifact suppresses the incomplete
-manifest.
 
 ### Develop release retention
 
@@ -295,8 +252,8 @@ records the published develop release tag. Installation names use letters,
 numbers and underscores and are case-insensitive. Deployment pins its target
 under `guild-pin-<name>-pending-<id>` before changing the server, preserves the previous
 running pin, then updates the running pin and removes the pending pin after
-the matching release is approved and its updater manifest is verified. A failed deployment leaves its pending pin for retry or removal.
-Other stacks pin their approved release before it ages out. The cleanup cannot
+the matching updater manifest is verified. A failed deployment leaves its pending pin for retry or removal.
+Other stacks pin their deployed release before it ages out. The cleanup cannot
 discover independently hosted servers.
 
 Pin updates append the replacement record before removing previous records; an
@@ -362,9 +319,9 @@ A fresh stable build defaults to stable, and a fresh preview defaults to develop
 
 1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json?channel=stable` or `?channel=develop`
    on the stored server URL. The endpoint is public and serves the Tauri
-   updater static-JSON manifest for the server-approved desktop version,
+   updater static-JSON manifest for the running server build,
    with per-platform minisign signatures and GitHub download URLs. Without a
-   complete eligible approved GitHub release, the endpoint returns 204.
+   complete matching GitHub release, the endpoint returns 204.
 2. The native updater requires `installed < candidate <= server_version` and a matching channel. The server version reaches the UI over `workspace_identity`; a change clears any pending offer. Before applying downloaded bytes, the updater revalidates the current server, channel, version and signature. If the eligible manifest version is newer, the update downloads silently in the
    background (VSCode/Zed-style); a toast "Update to vX ready — Restart to
    update" appears (on any screen, including the pairing screen).

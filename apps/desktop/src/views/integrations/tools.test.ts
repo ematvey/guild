@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toolOn } from "./tools";
+import { toolOn } from "../../../../control-center/src/integrations/tools";
 
 describe("toolOn", () => {
   it("reads an unset tool as on; only an explicit false is off", () => {

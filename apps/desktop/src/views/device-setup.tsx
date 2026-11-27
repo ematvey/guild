@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Copy, Download } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@guild/ui/components/dialog";
 import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { toast } from "sonner";
 import { createPairingToken, pairingCode } from "../lib/api/folders";
@@ -80,22 +80,20 @@ export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpe
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Set up a device</DialogTitle>
+          <DialogDescription>Pair the desktop app to run project tasks and work with files on this computer.</DialogDescription>
         </DialogHeader>
         <div className="min-w-0 space-y-4 text-left">
-          <p className="text-muted-foreground">
-            The desktop app runs a Guild agent on your machine — it can work directly in your projects and with your
-            files, which the browser chat can't. Chat alone stays right here.
-          </p>
-
-          <div>
-            <p className="mb-1.5 font-medium text-muted-foreground">1. Download app</p>
+          <section className="space-y-2 rounded-xl border border-border bg-card p-3 sm:p-4">
+            <h2 className="text-sm font-semibold">Download Guild</h2>
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
               {(Object.keys(OS_KEY) as DesktopOs[]).map((k) => (
                 <button
                   key={k}
+                  type="button"
+                  aria-pressed={os === k}
                   onClick={() => setOs(k)}
                   className={`rounded-md px-2 py-1.5 outline-none transition-colors ${
                     os === k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
@@ -126,23 +124,24 @@ export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpe
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
           {os === "mac" && (
-            <div className="mt-2 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-muted-foreground">
-              <p className="text-sm">
-                <span className="font-medium text-amber-300">macOS first install:</span> the app is not notarized yet,
-                so Gatekeeper may report it as "damaged". Run this once in Terminal after copying it to Applications:
+            <div className="space-y-2 rounded-lg border border-border bg-muted/60 p-3 text-base text-foreground">
+              <h2 className="font-semibold">First install on macOS</h2>
+              <p className="text-muted-foreground">
+                Gatekeeper may report Guild as "damaged" because the app is not notarized.
+                After copying Guild to Applications, run this command in Terminal.
               </p>
-              <code className="mt-1.5 block truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+              <code className="block whitespace-pre-wrap break-words rounded-md bg-background px-2 py-1 font-mono text-base">
                 xattr -dr com.apple.quarantine /Applications/Guild.app
               </code>
-              <p className="mt-1 text-xs">Updates delivered inside the app are signed and don't need this.</p>
+              <p className="text-muted-foreground">In-app updates are signed and install without this command.</p>
             </div>
           )}
 
-          <div className="mt-6">
-            <p className="mb-1.5 font-medium text-muted-foreground">2. Pair with your account</p>
+          <section className="space-y-2 rounded-xl border border-border bg-card p-3 sm:p-4">
+            <h2 className="text-sm font-semibold">Pair with your account</h2>
             {pairCode ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
@@ -169,7 +168,7 @@ export function DeviceSetupDialog({ open, onOpenChange }: { open: boolean; onOpe
                 {pairBusy ? "Generating…" : "Generate pairing code"}
               </Button>
             )}
-          </div>
+          </section>
         </div>
       </DialogContent>
     </Dialog>

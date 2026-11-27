@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogSourceBody } from "./sources";
+import { catalogSourceBody } from "../../../../control-center/src/integrations/sources";
 
 describe("catalog sources", () => {
   it("submit the source the chosen kind needs", () => {

@@ -33,7 +33,6 @@ import type { ApiKeyStore } from "./store/api-keys.js";
 import type { MachineStore } from "./store/machines.js";
 import type { SkillReadSink } from "./skill-reads.js";
 import type { RegistryStore } from "./store/registry.js";
-import type { ReleaseStore } from "./store/releases.js";
 import type { ProjectStore } from "./store/projects.js";
 import type { TeamStore } from "./store/teams.js";
 import type { OrgKvStore, KvStore } from "./store/org-kv.js";
@@ -162,7 +161,6 @@ export interface GatewayCtx extends GatewayContext {
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
   readonly registry: RegistryStore;
-  readonly releases: ReleaseStore;
   readonly projects: ProjectStore;
   /** The ClickHouse skill-read sink: spec §3's detail-page usage stats
    *  (read analytics; writes ride the read_skill tool). */

@@ -1,43 +1,37 @@
-// The rail's first slot: the Guild mark while the sidebar is open, the
-// expand button while it is collapsed, and the account menu's workspace rows.
-
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SidebarRail } from "./sidebar-rail";
+import { SidebarMenu, WorkSidebarHeader } from "./sidebar-rail";
 
-function rail(extra: Partial<Parameters<typeof SidebarRail>[0]> = {}) {
+function menu(extra: Partial<Parameters<typeof SidebarMenu>[0]> = {}) {
   return renderToStaticMarkup(
-    <SidebarRail
-      activeTab="chats"
-      onTabChange={() => {}}
+    <SidebarMenu
+      onOpenSettings={() => {}}
+      onSetupDevice={() => {}}
+      onOpenControl={() => {}}
       onOpenHelp={() => {}}
       email="member@example.com"
-      onOpenDevice={() => {}}
       onSignOut={() => {}}
-      role="admin"
       {...extra}
     />,
   );
 }
 
-describe("SidebarRail", () => {
-  it("shows the Guild mark while the sidebar is open", () => {
-    const html = rail({ onToggleCollapse: () => {} });
-    expect(html).toContain('aria-label="Collapse sidebar"');
+describe("SidebarMenu", () => {
+  it("uses a single account trigger in the open sidebar", () => {
+    const html = menu();
+    expect(html).toContain('title="Account"');
     expect(html).not.toContain('aria-label="Expand sidebar"');
-    expect(html).toContain("/brand/guild-icon-dark.svg");
   });
 
-  it("shows the expand button while the sidebar is collapsed", () => {
-    const html = rail({ collapsed: true, onToggleCollapse: () => {} });
-    expect(html).toContain('aria-label="Expand sidebar"');
-    expect(html).not.toContain('aria-label="Collapse sidebar"');
-  });
-
-  it("keeps the mark inert in the mobile drawer, where nothing collapses", () => {
-    const html = rail({ isMobile: true });
-    expect(html).not.toContain('aria-label="Collapse sidebar"');
-    expect(html).not.toContain('aria-label="Expand sidebar"');
-    expect(html).toContain("/brand/guild-icon-dark.svg");
+  it("keeps the same desktop header controls in both sidebar states", () => {
+    const collapsed = renderToStaticMarkup(<WorkSidebarHeader expanded={false} onToggle={() => {}} />);
+    const expanded = renderToStaticMarkup(<WorkSidebarHeader expanded onToggle={() => {}} />);
+    expect(collapsed).toContain('aria-expanded="false"');
+    expect(expanded).toContain('aria-expanded="true"');
+    for (const html of [collapsed, expanded]) {
+      expect(html).toContain('aria-label="Toggle sidebar"');
+      expect(html).toContain('aria-label="Go back"');
+      expect(html).toContain('aria-label="Go forward"');
+    }
   });
 });

@@ -9,6 +9,7 @@ import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../route-c
 import { ApiError, TextError } from "../errors.js";
 import { JSON_REJECTION_PREFIX } from "../llm-gateway.js";
 import { installErrorHandling, jsonContentParser } from "./error.js";
+import { registerClientContracts } from "./client-contract.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerEventRoutes } from "./events.js";
@@ -62,6 +63,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
       done(null, body);
     });
 
+    registerClientContracts(scope);
     registerAuthRoutes(scope, auth);
     registerOrgRoutes(scope, auth, ctx.objects);
     registerEventRoutes(scope, auth);
@@ -84,7 +86,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
       onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),
       runtime: ctx.runtime.skillsRuntime,
     });
-    registerReleaseRoutes(scope, gateway, auth);
+    registerReleaseRoutes(scope, auth);
     registerProjectRoutes(scope, gateway, auth);
     registerTeamRoutes(scope, auth);
     registerAdminUserRoutes(scope, auth);
@@ -100,14 +102,18 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
           const agent = await ctx.agents.get(user, id);
           return (await ctx.agents.access(user, agent)).can_manage ? "edit" : "read";
         },
-        manage: async (user, id) => {
+        manage: async (user, id, work) => {
+          if (work) throw ApiError.forbidden("manage agent access in the Control Center");
           await ctx.agents.requireAccess(user, id, "manage");
         },
       },
       app: {
         level: async (user, id) => ((await ctx.apps.getVisible(user.org_id, id, user)).can_edit ? "edit" : "read"),
-        manage: async (user, id) => {
+        manage: async (user, id, work) => {
           const row = await ctx.apps.getVisible(user.org_id, id, user);
+          if (work && user.role === "admin" && row.owner_user_id !== user.id) {
+            throw ApiError.forbidden("manage shared app access in the Control Center");
+          }
           if (!row.can_edit) throw ApiError.forbidden("you cannot change who sees this app");
         },
       },

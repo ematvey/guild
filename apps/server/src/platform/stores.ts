@@ -25,7 +25,6 @@ import { PairingStore } from "./store/pairing.js";
 import { ProjectStore } from "./store/projects.js";
 import { PushStore } from "./store/push.js";
 import { RegistryStore } from "./store/registry.js";
-import { ReleaseStore } from "./store/releases.js";
 import { SkillStore } from "./store/skills.js";
 import { TeamStore } from "./store/teams.js";
 import { ThreadStore } from "./store/thread.js";
@@ -43,11 +42,10 @@ export interface PlatformStores {
   readonly apiKeys: ApiKeyStore;
   readonly gatewayStore: GatewayStore;
   readonly machines: MachineStore;
-  /** Registry, releases, projects, teams, admin settings, integration
+  /** Registry, projects, teams, admin settings, integration
    *  config rows. */
   readonly registry: RegistryStore;
   readonly skills: SkillStore;
-  readonly releases: ReleaseStore;
   readonly projects: ProjectStore;
   readonly teams: TeamStore;
   readonly orgKv: OrgKvStore;
@@ -88,7 +86,6 @@ export function createStores(pool: PlatformPool): PlatformStores {
     machines: new MachineStore(pool),
     registry: new RegistryStore(pool),
     skills: new SkillStore(pool),
-    releases: new ReleaseStore(pool),
     projects: new ProjectStore(pool),
     teams: new TeamStore(pool),
     orgKv: new OrgKvStore(pool),

@@ -4,7 +4,7 @@
 // thread or the device dialog is, so deep links, reloads and back/forward
 // land exactly where the user was.
 
-import type { EditorMode } from "./SkillEditor";
+import type { EditorMode } from "../../../../control-center/src/skills/SkillEditor";
 import type { SkillFilterKind, SkillSortKey } from "./SkillsPanel";
 
 /** The catalog list's search, filter and sort (`?q=&filter=&sort=`). */
@@ -24,6 +24,7 @@ export const SKILL_ENTRY_FILE = "SKILL.md";
  *  with them, so the parser can tell a tab from a detail page without a
  *  lookup. */
 export interface SkillsRoute {
+  management?: true;
   view: "catalog" | "activity" | "machine";
   /** Detail page slug; null on the tab views. */
   slug: string | null;

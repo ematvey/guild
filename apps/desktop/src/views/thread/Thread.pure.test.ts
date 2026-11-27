@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
   agentDeleting,
   busyFrom,
-  composerAgent,
   pendingAfterFrame,
   sendButtonState,
   threadAccess,
@@ -13,7 +12,6 @@ import {
   pruneStopping,
   statusAfterGenerating,
   statusFromThreads,
-  offlineMachine,
   remoteMachine,
   tabPaneLayout,
 } from "./status";
@@ -351,6 +349,7 @@ describe("parseChatRoute / chatRoutePath", () => {
     });
     expect(parseChatRoute("/skills/activity").skills).toEqual({
       view: "activity",
+      management: true,
       slug: null,
       editor: null,
     });
@@ -364,6 +363,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       view: "catalog",
       slug: null,
       editor: "new",
+      management: true,
     });
     expect(parseChatRoute("/skills/code-review").skills).toEqual({
       view: "catalog",
@@ -374,6 +374,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       view: "catalog",
       slug: "code-review",
       editor: "code-review",
+      management: true,
     });
     // activity/machine/new are reserved: a slug can never collide with
     // them, so tabs parse without a slug lookup.
@@ -1099,7 +1100,7 @@ describe("pruneStopping (a stop click lifts when the chat's own generating settl
   });
 });
 
-describe("remoteMachine (one rule for the chip and the banner)", () => {
+describe("remoteMachine (one rule for the header and composer)", () => {
   const machines = [{ machine_id: "m1", name: "BOX", connected: true }] as any;
   it("names a remote machine with its presence", () => {
     expect(remoteMachine({ machineId: "m1", machines, localMachineId: "local" })).toEqual({
@@ -1111,6 +1112,13 @@ describe("remoteMachine (one rule for the chip and the banner)", () => {
       "Row label",
     );
   });
+  it("reports a disconnected machine as offline", () => {
+    expect(remoteMachine({
+      machineId: "m1",
+      machines: [{ ...machines[0], connected: false }],
+      localMachineId: undefined,
+    })).toMatchObject({ label: "BOX", online: false });
+  });
   it("is null for no machine or this client's own engine; presence unknown stays undefined", () => {
     expect(remoteMachine({ machineId: null, machines, localMachineId: "local" })).toBeNull();
     expect(remoteMachine({ machineId: "local", machines, localMachineId: "local" })).toBeNull();
@@ -1119,52 +1127,6 @@ describe("remoteMachine (one rule for the chip and the banner)", () => {
       online: undefined,
       label: "m2",
     });
-  });
-});
-
-describe("offlineMachine (offline bound-machine banner)", () => {
-  const base = { id: "chat-1", title: "t", created_at: "x" } as any;
-  const bound = (
-    machine_id: string,
-    _connected: boolean | undefined,
-    machine_label?: string,
-    project_id: string | null = "p1",
-  ) => ({ ...base, machine_id, machine_label, project_id }) as any;
-  const machines = (connected: boolean, name = "WORKSTATION", machine_id = "m1") =>
-    [{ machine_id, name, connected }] as any;
-
-  it("shows the label when the open chat's project-bound machine is offline", () => {
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), "chat-1", "local")).toEqual({
-      label: "WORKSTATION",
-    });
-    // no label: fall back to the machine name, then the raw machine id
-    expect(offlineMachine([bound("m1", false)], machines(false), "chat-1", "local")).toEqual({ label: "WORKSTATION" });
-    expect(
-      offlineMachine(
-        [bound("m1", false)],
-        [{ machine_id: "m1", name: "", connected: false }] as any,
-        "chat-1",
-        "local",
-      ),
-    ).toEqual({ label: "m1" });
-  });
-
-  it("stays hidden for unbound chats, machine-bound-without-project rows, and online/unknown machines", () => {
-    expect(offlineMachine([base], machines(false), "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], machines(false), "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(true), "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], [], "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, "chat-1", "local")).toBeNull();
-    expect(offlineMachine([bound("m1", false, "WORKSTATION")], machines(false), null, "local")).toBeNull();
-  });
-
-  it("skips the local machine on desktop, but banners every project binding on web", () => {
-    expect(
-      offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", "local"),
-    ).toBeNull();
-    expect(
-      offlineMachine([bound("local", false, "SELF")], machines(false, "SELF", "local"), "chat-1", undefined),
-    ).toEqual({ label: "SELF" });
   });
 });
 
@@ -1636,21 +1598,5 @@ describe("child thread navigation", () => {
     expect(path).toBe("/thread/child-chat");
     expect(parseChatRoute(path).chatId).toBe("child-chat");
     expect(parseChatRoute(path).agents).toBeNull();
-  });
-});
-
-describe("composerAgent", () => {
-  const seed = { id: "a1", name: "Old name", visibility: "shared" };
-  it("names the agent as the pushed list describes it", () => {
-    const list = [{ id: "a1", name: "New name", visibility: "shared" }];
-    expect(composerAgent(seed, list, null)?.name).toBe("New name");
-  });
-  it("falls back to the chat tree's name for the same agent", () => {
-    const tree = { agent_id: "a1", agent_name: "Tree name" };
-    expect(composerAgent(seed, [], tree)).toEqual({ ...seed, name: "Tree name" });
-  });
-  it("ignores a tree that names another agent, and keeps an unknown pick", () => {
-    expect(composerAgent(seed, null, { agent_id: "a2", agent_name: "Other" })).toBe(seed);
-    expect(composerAgent(null, [seed], null)).toBeNull();
   });
 });

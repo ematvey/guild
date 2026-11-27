@@ -11,7 +11,7 @@ import type { Project } from "../../lib/api/projects";
 import { DeviceSetupDialog } from "../device-setup";
 import { InstallSteps, OnboardingGuide, type OnboardingExit } from "../onboarding";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
-import type { RoutePatch } from "./route";
+import { type RoutePatch } from "./route";
 
 /** The `/install` dialog: the address a help link or a colleague can share. */
 function InstallGuide({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {

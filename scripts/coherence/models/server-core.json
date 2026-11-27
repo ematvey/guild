@@ -209,7 +209,7 @@
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/integrations/integrations-api.ts",
+          "where": "apps/control-center/src/integrations/integrations-api.ts",
           "role": "ui"
         },
         {
@@ -247,15 +247,15 @@
           "role": "domain"
         },
         {
-          "where": "apps/desktop/src/views/agents/TraceDetail.tsx",
+          "where": "apps/control-center/src/agents/TraceDetail.tsx",
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/agents/trace-views.tsx",
+          "where": "apps/control-center/src/agents/trace-views.tsx",
           "role": "ui"
         },
         {
-          "where": "apps/desktop/src/views/agents/span-detail.tsx",
+          "where": "apps/control-center/src/agents/span-detail.tsx",
           "role": "ui"
         }
       ],
@@ -482,11 +482,9 @@
     },
     {
       "id": "release",
-      "definition": "One approved signed desktop version, with platform artifacts hosted on GitHub.",
-      "canonical": "apps/server/src/platform/store/releases.ts",
+      "definition": "The signed desktop version of the running server build, with platform artifacts hosted on GitHub.",
+      "canonical": "apps/server/src/platform/http/releases.ts",
       "types": [
-        "ReleaseRow",
-        "GithubReleaseArtifact",
         "UpdateChannel",
         "UpdateStatus",
         "UpdateState"
@@ -495,10 +493,6 @@
         "build"
       ],
       "representations": [
-        {
-          "where": "apps/server/src/platform/store/releases.ts",
-          "role": "db"
-        },
         {
           "where": "apps/server/src/platform/http/releases.ts",
           "role": "wire"
@@ -533,11 +527,6 @@
         }
       ],
       "translations": [
-        {
-          "from": "db",
-          "to": "wire",
-          "at": "apps/server/src/platform/http/releases.ts"
-        },
         {
           "from": "executor",
           "to": "domain",

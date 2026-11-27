@@ -47,7 +47,7 @@ import type { UserMcpRuntime } from "./user-mcp.js";
 import type { ConversationExecutors } from "./executors.js";
 import type { MachineTargets } from "../machines/targets.js";
 import { createRoutedCodingTools, directBaseTools } from "./agent-tools.js";
-import { composeAgentInstructions, type MachineContext } from "./instructions.js";
+import { attachMemoryRevision, composeAgentInstructions, type MachineContext } from "./instructions.js";
 import { shellOf } from "../machines/targets.js";
 import type { SubmitTurnInput } from "./turn-backend.js";
 
@@ -228,7 +228,7 @@ export class TurnTools {
     projectInstructions: string | undefined,
     machine: MachineContext | null,
     chatId: string,
-    acceptedScope?: string,
+    acceptedScope: string | undefined,
   ): Promise<string> {
     const dir = agentWorkspaceDir(this.deps.config.agentWorkspaceWriteRoot, agent.org_id, agent.id);
     let config: AgentConfigFiles;
@@ -243,15 +243,20 @@ export class TurnTools {
     const thread = (await this.deps.binding.threadContext(chatId)) ?? undefined;
     const canDelegate =
       spawnedBy === undefined ? agent.tools_mode === "all" || agent.tools.includes("subagents") : spawnedBy.can_spawn;
-    const instructions = composeAgentInstructions(agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread);
-    if (acceptedScope === undefined) return instructions;
-    return instructions + "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
-      "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +
-      "For a lookup, discover and try the authorized tools before judging access. Distinguish an unavailable tool, denied access or approval, a provider error, and a successful lookup with no results. " +
-      "Use report_work with ready when you have checked and can deliver the requested result, waiting when an external dependency is pending, or failed with the specific failure after feasible attempts. Include what you checked and any material limitation. Keep routine progress internal. In messages visible to the Member, describe the work, its result, or a decision the Member needs to make. Keep execution and routing details in the internal report. " +
-      "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
-      "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
-
+    let memoryRevision: string | undefined;
+    let instructions = composeAgentInstructions(
+      agent, config, projectInstructions, machine, spawnedBy, canDelegate, thread,
+      (hash) => { memoryRevision = hash; },
+    );
+    if (acceptedScope !== undefined) {
+      instructions += "\n\nAccepted work scope: " + JSON.stringify(acceptedScope) +
+        "\nStay within this scope and use the Member’s request and its constraints as your evidence. " +
+        "For a lookup, discover and try the authorized tools before judging access. Distinguish an unavailable tool, denied access or approval, a provider error, and a successful lookup with no results. " +
+        "Use report_work with ready when you have checked and can deliver the requested result, waiting when an external dependency is pending, or failed with the specific failure after feasible attempts. Include what you checked and any material limitation. Keep routine progress internal. In messages visible to the Member, describe the work, its result, or a decision the Member needs to make. Keep execution and routing details in the internal report. " +
+        "Use a blocked report and a concrete question if the Member needs to decide something. Use hand_back for a Member follow-up outside the accepted scope. " +
+        "When available, use followed_threads to find related Threads you followed for context. Treat their content as background within the existing scope.";
+    }
+    return attachMemoryRevision(instructions, memoryRevision);
   }
 
   /** The conversation tools that exist only for agent threads: send_message,

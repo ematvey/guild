@@ -19,7 +19,10 @@ Product surfaces:
   Rust backend process hosts execution, the file bridge, and the CLI verbs;
   the webview is a pure interface that owns context assembly.
 - **Web UI** — served by the org server; a browser tab is a full chat client
-  and carries the admin surfaces.
+  with the same work navigation as the desktop app.
+- **Control Center** — role-scoped web app for workspace and agent setup,
+  integration configuration, usage, and administrative activity. It is built
+  independently and served at `/control`. The desktop ships the Work frontend.
 - **Headless CLI / engine callers** — scripts and tools that drive the local
   backend process over the engine protocol.
 
@@ -256,12 +259,12 @@ content only.
 - Installing an unapproved item is refused.
 
 **PRD-21 — Client releases.**
-The org approves signed GitHub desktop releases through its server.
+The server offers the signed desktop release that matches its deployed build.
 
 - GitHub hosts installers and updater artifacts. Clients verify updater signatures
   against their baked public key.
-- An installation chooses stable or develop. Its server offers only approved
-  releases up to the server’s own version; clients update themselves.
+- The deployed version and source commit identify the release. Clients update
+  themselves when its verified manifest becomes available.
 
 ### 3.8 Tool artifacts
 
@@ -297,12 +300,15 @@ run on the server without a chat open.
 A browser tab is a full chat client.
 
 - Web chats support projects, approvals, tools, attachments, and artifacts.
+- The work app includes Skills, Apps, Machines, personal routines, and
+  personal preferences. Members choose and follow agents in conversations.
 - A project-bound web chat dispatches tools to the project's machine, and
   the workspace instructions are fetched machine-mediated.
 - A web chat with no project runs tools in the server sandbox.
 
 **PRD-26 — Admin surfaces.**
-Admins manage the org from the web UI Settings sections.
+Members open the web Control Center for configuration they can manage.
+Admins also manage the workspace there.
 
 - Users, teams, provider keys and routes, integrations and their tools,
   registry review, org approval defaults, and prompts are all manageable.

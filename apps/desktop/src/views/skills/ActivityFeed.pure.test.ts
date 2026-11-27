@@ -13,7 +13,7 @@ import {
   activityRows,
   activityText,
   activityTime,
-} from "./ActivityFeed";
+} from "../../../../control-center/src/skills/ActivityFeed";
 import type { SkillActivityEvent } from "./skills-api";
 
 const published: SkillActivityEvent = {

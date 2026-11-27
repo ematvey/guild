@@ -295,7 +295,7 @@
           "role": "wire"
         },
         {
-          "where": "apps/desktop/src/views/settings/sections/GeneralSection.tsx",
+          "where": "apps/control-center/src/settings/GeneralSection.tsx",
           "role": "ui"
         }
       ],
@@ -308,7 +308,7 @@
         {
           "from": "domain",
           "to": "ui",
-          "at": "apps/desktop/src/views/settings/sections/GeneralSection.tsx"
+          "at": "apps/control-center/src/settings/GeneralSection.tsx"
         }
       ]
     }

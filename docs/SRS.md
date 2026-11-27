@@ -373,8 +373,7 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
   `GET /api/v1/registry/{kind}/{slug}`, 
   `GET .../{version}/bundle`, `POST .../install`, `POST .../review`.
 - Releases: `GET /api/v1/releases`, `/api/v1/releases/{id}/download*`, 
-  `/api/v1/updates/latest.json`, admin GitHub approval at `/api/v1/admin/releases/github`,
-  and admin metadata listing/deletion under `/api/v1/admin/releases`.
+  `/api/v1/updates/latest.json` for the signed release matching the running build.
 - Integrations script API: `GET /api/v1/integrations`, 
   `GET /api/v1/integrations/{slug}/tools`, 
   `POST /api/v1/integrations/{slug}/tools/{tool}`.
@@ -388,6 +387,8 @@ All HTTP lives under `/api/v1` (plus the OpenAI-compatible
   `GET .../{id}/secrets` (masked), plus 
   `/api/v1/admin/{approval-policy-prompt,assistant-prompt}`.
 - WebSocket: `POST /api/v1/ws/ticket`, `GET /api/v1/ws` (upgrade).
+
+Work and Control Center use the namespaced HTTP and member socket contracts in [API examples](api.md#application-contracts). A ticket minted by one contract is accepted by its own upgrade route. The engine and installed clients use the compatibility endpoints listed above.
 
 ## 9. Daemon JSON-RPC verbs
 

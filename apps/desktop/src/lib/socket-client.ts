@@ -17,7 +17,7 @@ import type {
 } from "@guild/wire/rest";
 import { parseServerFrame, serializeClientFrame } from "@guild/wire/parse";
 
-import { SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
+import { clientApiPath, SessionExpiredError, mintTicket, refreshSession, wsUrl } from "./session";
 import { clientId } from "./machine-rpc";
 import { traceEvent } from "./telemetry";
 import type { StreamEvent, ThreadEventRow, ThreadState } from "./thread-events";
@@ -102,7 +102,7 @@ export interface SocketHandlers {
 
 /** Optional server frames this client applies: one changed chat-list row
  *  instead of the whole list. */
-export const SOCKET_FEATURES = "chat_row,coordination_watch";
+export const SOCKET_FEATURES = import.meta.env.MODE === "control" ? "coordination_watch" : "chat_row";
 
 /** Converts the current HTTP origin into the WebSocket origin. */
 
@@ -382,7 +382,7 @@ export function startSocket(
       const ticket = await mintTicket();
       if (stopped) return;
       // `features` names the optional frames this client applies.
-      const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}&features=${SOCKET_FEATURES}`;
+      const url = `${wsUrl()}${clientApiPath("/api/v1/ws")}?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}&features=${SOCKET_FEATURES}`;
       // One live socket per connection: a prior one still open (a half-open
       // socket a wake-up gave up on) is detached first, so its late frames
       // and its close cannot reach this connection.

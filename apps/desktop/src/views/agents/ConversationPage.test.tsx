@@ -17,7 +17,7 @@ vi.mock("./agents-api", async (importOriginal) => ({
   ...api,
 }));
 
-import { ActivityPage, ConversationPage } from "./ActivityPage";
+import { ActivityPage, ConversationPage } from "../../../../control-center/src/agents/ActivityPage";
 import { AGENTS_ACTIVITY } from "./agents-route";
 import { applyActivityConversation, applyActivityRun, resetAgentSlices, traceFromRun } from "./agents-store";
 import { makeRun } from "./test-fixtures";

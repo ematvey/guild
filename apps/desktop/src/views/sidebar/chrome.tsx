@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PanelLeftClose, X } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { DesktopTooltip } from "../../components/desktop-tooltip";
 
@@ -36,17 +36,19 @@ export function FadeTitle({ text, fadeWidth = 22 }: { text: string; fadeWidth?: 
 /** Collapse button shared by every sidebar header (desktop only): the chat,
  *  project, settings, apps and integrations lists all offer it. The tooltip
  *  carries the toggle hotkey like the rail's tooltips do. */
-export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
+export function CollapseButton({ onCollapse, expanded }: { onCollapse?: () => void; expanded?: boolean }) {
   return onCollapse ? (
     <DesktopTooltip label="Toggle sidebar" hotkey="mod+B">
       <Button
         variant="ghost"
         size="icon"
-        className="size-9 text-muted-foreground pointer-coarse:size-10"
+        className="size-9 text-foreground pointer-coarse:size-10"
         onClick={onCollapse}
         aria-label="Toggle sidebar"
+        aria-expanded={expanded}
+        aria-controls={expanded === undefined ? undefined : "work-sidebar"}
       >
-        <PanelLeftClose />
+        {expanded === false ? <PanelLeftOpen /> : <PanelLeftClose />}
       </Button>
     </DesktopTooltip>
   ) : null;

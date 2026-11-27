@@ -1,62 +1,39 @@
-//! Sidebar account badge: the shared Avatar (photo when set, initials
-//! otherwise), display name, and a dropdown whose items the caller supplies.
+// Sidebar account button and its caller-supplied menu.
 
-import { ChevronUp } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Avatar } from "@guild/ui/components/avatar";
+import { Button } from "@guild/ui/components/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
-import { DesktopTooltip } from "./desktop-tooltip";
+import { FadeTitle } from "../views/sidebar/chrome";
 import { avatarChip } from "../lib/format";
 
 export function UserBadge({
   email,
   displayName,
   avatarUrl,
-  compact,
   children,
 }: {
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
-  /** Icon-only trigger (avatar/initials, no name row) for narrow rails. */
-  compact?: boolean;
-  /** Dropdown menu contents (DropdownMenuItem and friends). */
   children?: React.ReactNode;
 }) {
-  const initials = avatarChip(displayName ?? email);
-  const trigger = (
-    <button
-      className={
-        compact
-          ? "flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-          : "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
-      }
-      title="Account"
-    >
-      <Avatar
-        src={avatarUrl}
-        fallback={initials}
-        className="size-7"
-        fallbackClassName="bg-primary text-xs font-semibold text-primary-foreground"
-      />
-      {!compact && (
-        <>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={email}>
-            {displayName ?? email}
-          </span>
-          <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
-        </>
-      )}
-    </button>
-  );
+  const name = displayName ?? email;
   return (
     <DropdownMenu>
-      {compact ? (
-        <DesktopTooltip label={displayName ?? email} side="right">
-          <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-        </DesktopTooltip>
-      ) : (
-        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      )}
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" title="Account" aria-label={name}
+          className="max-w-full justify-start gap-2 px-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring">
+          <Avatar
+            src={avatarUrl}
+            fallback={avatarChip(name)}
+            className="size-6 shrink-0"
+            fallbackClassName="bg-primary font-semibold text-primary-foreground"
+          />
+          <span className="flex min-w-0 text-left"><FadeTitle text={name} /></span>
+          <ChevronDown className="text-muted-foreground" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
         {children}
       </DropdownMenuContent>

@@ -110,9 +110,14 @@ dbDescribe("routine store", () => {
     expect(hourly.schedule).toBe("0 * * * *");
     expect(hourly.next_run_at).not.toBeNull();
 
-    const disabled = await updateRoutine(env!.db, agentId, routine.id, { enabled: false });
+    await Promise.all([
+      updateRoutine(env!.db, agentId, routine.id, { enabled: false }),
+      updateRoutine(env!.db, agentId, routine.id, { delivery: "new_chat" }),
+    ]);
+    const disabled = await getRoutine(env!.db, agentId, routine.id);
     expect(disabled.enabled).toBe(false);
     expect(disabled.next_run_at).toBeNull();
+    expect(disabled.delivery).toBe("new_chat");
     const enabled = await updateRoutine(env!.db, agentId, routine.id, { enabled: true });
     expect(enabled.next_run_at).not.toBeNull();
 

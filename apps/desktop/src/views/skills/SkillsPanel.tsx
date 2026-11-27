@@ -20,8 +20,8 @@ import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
 import { avatarChip } from "../../lib/format";
 import { compareVersions } from "./version";
 import { count } from "../../lib/format";
-import { SkillEditor } from "./SkillEditor";
-import { ActivityFeed } from "./ActivityFeed";
+import { SkillEditor } from "../../../../control-center/src/skills/SkillEditor";
+import { ActivityFeed } from "../../../../control-center/src/skills/ActivityFeed";
 import LocalSkills from "./LocalSkills";
 import { skillsPageState, withCatalogQuery, withSkillFile, type SkillsRoute } from "./skills-route";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
@@ -201,8 +201,10 @@ export function SkillsPanel({
   me,
   route,
   onNavigate,
+  onCreateSkill,
 }: {
   me: SkillMe;
+  onCreateSkill?: () => void;
   /** The /skills... route this page renders (already clamped to what this
    *  session can show — see clampSkillsRoute). Tab, detail slug and editor
    *  all derive from it; search/filter/sort stay local (not URL state). */
@@ -235,7 +237,7 @@ export function SkillsPanel({
   const empty =
     skills === null ? null : skillsEmptyState(query, filtered.length, filterKind !== "all" || query.trim() !== "");
 
-  if (editor !== null) {
+  if (import.meta.env.MODE === "control" && editor !== null) {
     return (
       <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col">
         <SkillEditor
@@ -254,12 +256,12 @@ export function SkillsPanel({
 
   if (selected !== null) {
     return (
-      // Full column width: the detail's top bar spans the page and caps its
-      // own body, like the prototype's topbar over the 56rem inner column.
       <div className="flex min-h-0 w-full flex-1 flex-col">
         <SkillDetail
           slug={selected}
           me={me}
+          management={route.management === true}
+          onManage={() => onNavigate({ ...route, management: true })}
           onBack={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: null }))}
           onOpenSkill={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: null }))}
           onEdit={(slug) => onNavigate(toCatalog({ view: "catalog", slug, editor: slug }))}
@@ -270,40 +272,71 @@ export function SkillsPanel({
     );
   }
 
+  const searchField = (
+    <div className="relative w-full sm:w-[280px]">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={query}
+        placeholder="Search skills"
+        aria-label="Search skills"
+        className="pl-8"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+    </div>
+  );
+  const publishAction = route.management ? (
+    <Button size="sm" onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}>
+      <Plus />
+      New skill
+    </Button>
+  ) : onCreateSkill && (
+    <Button size="icon" variant="ghost" aria-label="Create skill in chat" title="Create skill in chat" onClick={onCreateSkill}>
+      <Plus />
+    </Button>
+  );
+  const catalogFilters = (
+    <>
+      <Select value={filterKind} onValueChange={(v) => setFilterKind(v as SkillFilterKind)}>
+        <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {skillFilterOptions.map(([value, label]) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
+        <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {skillSortOptions.map(([value, label]) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </>
+  );
+
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      {/* Row 1: title, search and New skill; row 2: the underline tabs and
-          the catalog's filter and sort. */}
       <PageHeader
-        variant="bar"
-        title="Skills"
-        actions={
-          <>
-            <div className="relative w-full sm:w-[280px]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={query}
-                placeholder="Search skills"
-                aria-label="Search skills"
-                className="pl-8"
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-            <Button
-              size="sm"
-              aria-label="New skill"
-              onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new" }))}
-            >
-              <Plus />
-              New skill
-            </Button>
-          </>
-        }
+        variant={route.management ? "bar" : "work"}
+        title={route.management ? "Skills" : "Customize"}
+        actions={route.management ? <>{searchField}{publishAction}</> : publishAction}
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
-              {panelTabs(HAS_ENGINE).map(([value, label]) => (
+              {panelTabs(HAS_ENGINE && !route.management)
+                .filter(([value]) => value !== "activity" || route.management)
+                .map(([value, label]) => [value, !route.management && value === "catalog" ? "Skills" : label] as const)
+                .map(([value, label]) => (
                 <button
                   key={value}
                   role="tab"
@@ -312,7 +345,7 @@ export function SkillsPanel({
                   onClick={() => onNavigate({ view: value, slug: null, editor: null })}
                   className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-sm outline-none transition-colors ${
                     tab === value
-                      ? "border-foreground text-foreground"
+                      ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -320,46 +353,24 @@ export function SkillsPanel({
                 </button>
               ))}
             </div>
-            <div className="flex-1" />
-            {tab === "catalog" && (
-              <>
-                <Select value={filterKind} onValueChange={(v) => setFilterKind(v as SkillFilterKind)}>
-                  <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {skillFilterOptions.map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
-                  <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {skillSortOptions.map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </>
+            {route.management && tab === "catalog" && (
+              <><div className="flex-1" />{catalogFilters}</>
             )}
           </>
         }
       />
-      {/* page body: full-width background fill, content capped so the row
-          list and detail panes don't stretch absurdly on wide monitors */}
+      {!route.management && tab === "catalog" && (
+        <div className="work-page-content flex shrink-0 flex-wrap items-center gap-2 pt-3">
+          {searchField}
+          {catalogFilters}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
-        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
-          {tab === "activity" && <ActivityFeed />}
+        <div className={route.management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pb-8 pt-3"}>
+          {import.meta.env.MODE === "control" && tab === "activity" && <ActivityFeed />}
           {tab === "machine" && HAS_ENGINE && <LocalSkills />}
           {tab === "catalog" && (
-            <div className="flex flex-col gap-1.5">
+            <div className={route.management ? "flex flex-col gap-1.5" : "grid gap-3 lg:grid-cols-2"}>
               {skills === null && [0, 1, 2, 3, 4, 5].map((i) => <SkeletonRows key={i} rows={1} />)}
               {skills !== null &&
                 filtered.map((item) => {
@@ -370,7 +381,7 @@ export function SkillsPanel({
                       role="button"
                       tabIndex={0}
                       aria-label={`Open skill ${row.slug}`}
-                      className="cursor-pointer rounded-lg border border-border bg-card px-3.5 py-[11px] transition-colors hover:bg-accent hover:text-accent-foreground"
+                      className="cursor-pointer rounded-xl border border-border bg-card p-4 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => onNavigate({ view: "catalog", slug: row.slug, editor: null })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -379,7 +390,7 @@ export function SkillsPanel({
                         }
                       }}
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className={route.management ? "flex items-start justify-between gap-3" : "flex flex-col gap-3"}>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="text-sm font-semibold">{row.slug}</span>

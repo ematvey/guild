@@ -4,8 +4,8 @@ import {
   createAgentPayload,
   reachableStep,
   validateAgentStep,
-} from "./AgentCreate";
-import { AgentRow } from "./AgentsDirectory";
+} from "../../../../control-center/src/agents/AgentCreate";
+import { AgentRow } from "../../../../control-center/src/agents/AgentsDirectory";
 import type { Agent } from "./agents-api";
 import { makeAgent } from "./test-fixtures";
 

@@ -534,7 +534,7 @@ export class GuildRuntime {
         },
       },
       toolHooks: [
-        createRunHook((chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
+        createRunHook(this.pool, (chatId, inputs) => this.agentRuns.runStart(chatId, inputs), chatOfConversation),
         createCoordinationCompactionHook(this.pool, this.agents, chatOfConversation),
         createConflictHook(this.conflicts, chatOfConversation),
         ...(deps.trace !== undefined ? [createTraceHook(deps.trace, this.agents, chatOfConversation)] : []),

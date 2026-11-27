@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ChatListItem, ProjectHeader } from "./rows";
 import { ChatsPanel } from "./chats-panel";
+import { WorkNavigation } from "../sidebar-rail";
 import { SettingsPanel } from "./settings-panel";
 
 const idle = { generating: false, unread: false };
@@ -33,7 +34,7 @@ describe("ChatListItem", () => {
       <ChatListItem title="Jira digest" active={false} status={idle} onClick={() => {}} routine="Jira digest" />,
     );
     expect(marked).toContain("data-routine-mark");
-    expect(marked).toContain("Routine: Jira digest");
+    expect(marked).toContain("Scheduled task: Jira digest");
     const plain = renderToStaticMarkup(
       <ChatListItem title="Deploy notes" active={false} status={idle} onClick={() => {}} />,
     );
@@ -90,23 +91,31 @@ describe("ProjectHeader", () => {
   };
 
   it("carries the machine name and its online dot", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} machine={{ name: "dev-1", online: true }} />);
+    const html = renderToStaticMarkup(<ProjectHeader {...base} open={undefined} machine={{ name: "dev-1", online: true }} />);
     expect(html).toContain("dev-1");
     expect(html).toContain("bg-emerald-500");
+    expect(html.indexOf('aria-label="Online"')).toBeLessThan(html.indexOf(">dev-1<"));
     expect(html).toContain('title="/home/u/guild"');
   });
 
   it("hides the dot while the machine state is unknown", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} machine={{ name: "dev-1", online: undefined }} />);
+    const html = renderToStaticMarkup(<ProjectHeader {...base} open={undefined} machine={{ name: "dev-1", online: undefined }} />);
     expect(html).toContain("dev-1");
     expect(html).not.toContain("bg-emerald-500");
     expect(html).not.toContain("bg-muted-foreground/40");
   });
 
-  it("shows an open folder when expanded and offers the project's new chat", () => {
-    const html = renderToStaticMarkup(<ProjectHeader {...base} open onNewChat={() => {}} />);
+  it("shows the folder and a persistent new-chat action without machine details in the sidebar", () => {
+    const html = renderToStaticMarkup(
+      <ProjectHeader {...base} open machine={{ name: "dev-1", online: true }} onNewChat={() => {}} onPin={() => {}} />,
+    );
     expect(html).toContain("lucide-folder-open");
-    expect(html).toContain("New chat in this project");
+    expect(html).not.toContain("dev-1");
+    expect(html).not.toContain("bg-emerald-500");
+    expect(html.indexOf("New chat in this project")).toBeLessThan(html.indexOf("max-w-0 shrink-0"));
+    expect(html).not.toContain('aria-label="Pin"');
+    const pinned = renderToStaticMarkup(<ProjectHeader {...base} pinned onPin={() => {}} />);
+    expect(pinned).toContain('aria-label="Unpin"');
   });
 });
 
@@ -140,7 +149,6 @@ describe("panels", () => {
           grouping={sidebarGrouping(chats)}
           loadingChats={false}
           chatId={null}
-          onNewChat={() => {}}
           onOpenChat={() => {}}
           onRenameChat={() => {}}
           onArchiveChat={() => {}}
@@ -154,39 +162,43 @@ describe("panels", () => {
     expect(html.match(/title="Row actions"/g)).toHaveLength(2);
   });
 
-  it("names each tab and offers the new-chat control", () => {
-    const chats = renderToStaticMarkup(
-      <ChatsPanel
-        grouping={sidebarGrouping([])}
-        projects={[]}
-        onNewProject={() => {}}
-        loadingChats={false}
-        chatId={null}
-        onNewChat={() => {}}
-        onOpenChat={() => {}}
-      />,
+  it("keeps New and Search above history and Projects on its own page", () => {
+    const props = {
+      grouping: sidebarGrouping([]),
+      projects: [],
+      onNewProject: () => {},
+      loadingChats: false,
+      chatId: null,
+      onOpenChat: () => {},
+    };
+    const history = renderToStaticMarkup(<ChatsPanel {...props} />);
+    const projects = renderToStaticMarkup(<ChatsPanel {...props} mode="projects" />);
+    const search = renderToStaticMarkup(<ChatsPanel {...props} mode="search" />);
+    const navigation = renderToStaticMarkup(
+      <WorkNavigation active="projects" onNewChat={() => {}} onSearch={() => {}}
+        onProjects={() => {}} onTabChange={() => {}} />,
     );
-    expect(chats).toContain(">Chats<");
-    expect(chats).toContain(">New chat<");
-    expect(chats).toContain("lucide-square-pen");
-    expect(chats).toContain("No conversations yet.");
-
-    expect(chats).toContain(">Projects<");
-    expect(chats).toContain("New project");
-    expect(chats).toContain('aria-label="Projects"');
+    expect(navigation).toContain(">New<");
+    expect(navigation).toContain('aria-haspopup="dialog"');
+    expect(navigation).toContain(">Search<");
+    expect(history).toContain("No conversations yet.");
+    expect(history).not.toContain('aria-label="Projects"');
+    expect(projects).toContain("New project");
+    expect(projects).toContain('aria-label="Projects"');
+    expect(search).toContain('aria-label="Search chats by title"');
   });
 
   it("hides admin-only settings sections from a member", () => {
     const html = renderToStaticMarkup(<SettingsPanel role="member" activeSection={null} onSelectSection={() => {}} />);
-    expect(html).toContain("User");
+    expect(html).not.toContain(">User<");
     expect(html).not.toContain("Workspace");
   });
 
-  it("shows the workspace group to an admin and marks the active section", () => {
+  it("keeps work settings focused for admins and marks the active section", () => {
     const html = renderToStaticMarkup(
-      <SettingsPanel role="admin" activeSection="general" onSelectSection={() => {}} />,
+      <SettingsPanel role="admin" activeSection="appearance" onSelectSection={() => {}} />,
     );
-    expect(html).toContain("Workspace");
+    expect(html).not.toContain("Workspace");
     expect(html).toContain("bg-sidebar-accent");
   });
 });

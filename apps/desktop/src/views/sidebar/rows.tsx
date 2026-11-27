@@ -3,6 +3,7 @@ import { FadeTitle } from "./chrome";
 import {
   Archive,
   ArchiveRestore,
+  CalendarClock,
   Folder,
   FolderOpen,
   EllipsisVertical,
@@ -55,12 +56,12 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
 }
 
 const ROW_FOCUS =
-  "has-[>button:focus-visible]:ring-1 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring";
+  "has-[>button:focus-visible]:bg-sidebar-accent";
 const PIN_INDICATOR =
   "size-3 shrink-0 text-muted-foreground group-hover/row:hidden group-focus-within/row:hidden group-has-[[data-state=open]]/row:hidden pointer-coarse:hidden";
 
 const ROW_BUTTON =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  "flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground data-[state=open]:bg-sidebar-accent";
 const ROW_ACTIONS =
   "flex max-w-0 shrink-0 items-center overflow-hidden group-hover/row:max-w-none group-focus-within/row:max-w-none group-has-[[data-state=open]]/row:max-w-none pointer-coarse:max-w-none";
 
@@ -68,7 +69,7 @@ function PinButton({ pinned, onPin }: { pinned?: boolean; onPin?: () => void }) 
   if (!onPin) return null;
   const label = pinned ? "Unpin" : "Pin";
   return (
-    <button type="button" className={ROW_BUTTON} aria-label={label} title={label} onClick={onPin}>
+    <button type="button" className={`${ROW_BUTTON}${pinned ? "" : " max-md:hidden pointer-coarse:hidden"}`} aria-label={label} title={label} onClick={onPin}>
       <Pin aria-hidden="true" className="size-3.5 fill-current" />
     </button>
   );
@@ -95,7 +96,7 @@ function RowActions({
 }) {
   if (!onRename && !onArchive && !onDelete && !onPin) return null;
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button type="button" aria-label="Row actions" title="Row actions" className={ROW_BUTTON}>
           <EllipsisVertical aria-hidden="true" className="size-4" />
@@ -187,13 +188,19 @@ export function ChatListItem({
   archiveLabel,
   showChatIcon,
   routine,
+  scheduledTask,
+  project,
+  lastActivity,
 }: {
   title: string;
   active: boolean;
   status: RowState;
   showChatIcon?: boolean;
-  /** The routine whose output this chat is: the row leads with its mark. */
+  /** The scheduled task that produced this chat, when known. */
   routine?: string;
+  scheduledTask?: boolean;
+  project?: boolean;
+  lastActivity?: string;
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
@@ -231,9 +238,9 @@ export function ChatListItem({
             }
           : undefined
       }
-      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg pr-1 transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
-          ? "bg-sidebar-accent text-sidebar-foreground"
+          ? "guild-sidebar-selected bg-sidebar-accent text-sidebar-foreground"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
       }`}
     >
@@ -241,29 +248,33 @@ export function ChatListItem({
         {...dragProps}
         onClick={onClick}
         title={title}
+        aria-current={active ? "page" : undefined}
         type="button"
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
+        className="flex h-8 min-w-0 flex-1 items-center gap-1.5 pl-2 text-left outline-none"
       >
-        {routine !== undefined ? (
-          <Repeat
-            data-routine-mark
-            aria-label={`Routine: ${routine}`}
-            className={`${showChatIcon ? "size-4" : "size-3.5"} shrink-0 text-muted-foreground`}
-          >
-            <title>{`Routine: ${routine}`}</title>
-          </Repeat>
-        ) : showChatIcon ? (
-          <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        ) : null}
-        {title === "" ? (
-          <span data-title-placeholder className="block min-w-0 flex-1 whitespace-nowrap text-muted-foreground">
-            New thread
+        {showChatIcon && <MessageCircle aria-hidden="true" className="mr-0.5 size-4 shrink-0 text-muted-foreground" />}
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="flex min-w-0">
+            {title === "" ? (
+              <span data-title-placeholder className="truncate text-muted-foreground">New thread</span>
+            ) : <FadeTitle text={title} fadeWidth={10} />}
           </span>
-        ) : (
-          <FadeTitle text={title} fadeWidth={10} />
+        </span>
+        <RowStatus status={status} />
+        {project && <Folder aria-label="Project chat" className="size-3.5 shrink-0 text-muted-foreground" />}
+        {routine !== undefined ? (
+          <Repeat data-routine-mark aria-label={`Scheduled task: ${routine}`} className="size-3.5 shrink-0 text-muted-foreground">
+            <title>{`Scheduled task: ${routine}`}</title>
+          </Repeat>
+        ) : scheduledTask && (
+          <CalendarClock aria-label="Scheduled task run" className="size-3.5 shrink-0 text-muted-foreground" />
         )}
         {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
-        <RowStatus status={status} />
+        {lastActivity && (
+          <time dateTime={lastActivity} className="shrink-0 whitespace-nowrap text-muted-foreground">
+            {new Date(lastActivity).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+          </time>
+        )}
       </button>
       {hasActions && (
         <div className={ROW_ACTIONS}>
@@ -288,6 +299,7 @@ export function ChatListItem({
 export function ProjectHeader({
   name,
   folder,
+  createdAt,
   machine,
   status,
   open,
@@ -302,14 +314,13 @@ export function ProjectHeader({
 }: {
   name: string;
   folder: string;
-  /** The machine the project is bound to: its name rides the row title
-   *  with an online/offline dot (hidden while the socket state is
-   *  unknown — e.g. the machines list has not landed yet). */
+  createdAt?: string;
+  /** Machine and presence displayed on the standalone Projects page. */
   machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
   status: RowState;
-  open: boolean;
+  open?: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
   onArchive: () => void;
@@ -323,6 +334,33 @@ export function ProjectHeader({
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const standalone = open === undefined;
+  const machineLabel = standalone && machine?.name && (
+    <span
+      title={machine.name}
+      className="flex w-32 min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 text-base text-muted-foreground"
+    >
+      {machine.online !== undefined && (
+        <span
+          role="img"
+          aria-label={machine.online ? "Online" : "Offline"}
+          className={`size-2 shrink-0 rounded-full ${machine.online ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+        />
+      )}
+      <FadeTitle text={machine.name} fadeWidth={10} />
+    </span>
+  );
+  const newChatButton = onNewChat && (
+    <button
+      type="button"
+      title="New chat in this project"
+      aria-label="New chat in this project"
+      className={ROW_BUTTON}
+      onClick={onNewChat}
+    >
+      <Plus aria-hidden="true" className="size-4" />
+    </button>
+  );
   if (editing) {
     return (
       <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
@@ -338,7 +376,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground`}
+      className={`${ROW_FOCUS} group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground ${standalone ? "pr-2" : "pr-1"}`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
@@ -350,9 +388,9 @@ export function ProjectHeader({
         onClick={onToggle}
         aria-expanded={open}
         title={folder}
-        className="flex h-9 min-w-0 flex-1 items-center gap-2 px-2 text-left outline-none"
+        className="flex h-9 min-w-0 flex-1 items-center gap-2 pl-2 text-left outline-none"
       >
-        {open ? (
+        {standalone ? machineLabel : open ? (
           <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
         ) : (
           <Folder aria-hidden="true" className="size-4 shrink-0" />
@@ -360,36 +398,19 @@ export function ProjectHeader({
         <span className="flex min-w-10 flex-1">
           <FadeTitle text={name} fadeWidth={10} />
         </span>
-        {machine?.name && (
-          <span
-            title={machine.name}
-            className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground"
-          >
-            <span className="hidden max-w-20 truncate @min-[16rem]:inline">{machine.name}</span>
-            {machine.online !== undefined &&
-              (machine.online ? (
-                <span className="inline-flex size-2 shrink-0 rounded-full bg-emerald-500" />
-              ) : (
-                <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
-              ))}
-          </span>
-        )}
-        {onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
+        {standalone && onPin && pinned && <Pin aria-label="Pinned" className={`${PIN_INDICATOR} fill-current`} />}
         <RowStatus status={status} />
-      </button>
-      <div className={ROW_ACTIONS}>
-        {onNewChat && (
-          <button
-            type="button"
-            title="New chat in this project"
-            aria-label="New chat in this project"
-            className={ROW_BUTTON}
-            onClick={onNewChat}
-          >
-            <Plus aria-hidden="true" className="size-4" />
-          </button>
+        {standalone && createdAt && (
+          <time dateTime={createdAt} className="shrink-0 whitespace-nowrap text-muted-foreground">
+            {new Date(createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+          </time>
         )}
-        <PinButton pinned={pinned} onPin={onPin} />
+      </button>
+      {!standalone && newChatButton}
+      {!standalone && pinned && <PinButton pinned onPin={onPin} />}
+      <div className={ROW_ACTIONS}>
+        {standalone && newChatButton}
+        {standalone && <PinButton pinned={pinned} onPin={onPin} />}
         <RowActions
           open={menuOpen}
           onOpenChange={setMenuOpen}

@@ -148,7 +148,7 @@ The reply stays Markdown. A fenced block tagged `openui` renders in place as com
 - `@OpenUrl(url)` opens an `http`, `https` or `mailto` link outside the app; any other scheme is dropped.
 - `Query`, `Mutation` and custom actions have no provider: a block never calls a Tool, so every Tool still passes the Approval and exec-policy gates of a Turn.
 
-Images in agent content — Generated UI and chat Markdown alike — come from three sources. A Guild attachment (`attachment:<id>`, the id `send_file` returns) and an inline `data:image` URL always show. A remote `http(s)` image follows the Org's **remote-image policy**, an admin setting on Settings → Security: `auto` (the default) loads it at once, `click` shows a placeholder with its description and full URL until the reader clicks, `never` shows only its description and full URL (the path and query are where an exfiltration attempt would sit, so the reader sees all of it). A remote request goes out without a referrer, but its host sees the full URL, so content that steers the model can carry data out in an image URL; the policy is the admin's trade-off. The policy reaches clients on the `workspace_identity` frame.
+Images in agent content — Generated UI and chat Markdown alike — come from three sources. A Guild attachment (`attachment:<id>`, the id `send_file` returns) and an inline `data:image` URL always show. A remote `http(s)` image follows the Org's **remote-image policy**, an admin setting in Control Center → Security: `auto` (the default) loads it at once, `click` shows a placeholder with its description and full URL until the reader clicks, `never` shows only its description and full URL (the path and query are where an exfiltration attempt would sit, so the reader sees all of it). A remote request goes out without a referrer, but its host sees the full URL, so content that steers the model can carry data out in an image URL; the policy is the admin's trade-off. The policy reaches clients on the `workspace_identity` frame.
 
 A block is a dialog: it takes one answer. Once any user message follows it in the Thread (a click on one of its buttons, or anything the Member typed), its buttons and fields settle, and the button whose message answered it stays marked. The state comes from the transcript, so it holds on reload and on every device; Tabs still switch and `@OpenUrl` buttons still open. Controls are also disabled while the block streams and wherever the transcript is read-only (Activity, traces). A block that renders nothing shows as its code.
 
@@ -207,19 +207,13 @@ An admin can replace two built-in prompts, each up to 10,000 characters; an empt
 ## Desktop releases
 
 A Release names signed desktop artifacts for one product version. GitHub hosts
-six artifacts for four platforms; a server imports their checked metadata and
-approves one complete version per channel for its paired clients. A stable stack accepts
-stable versions; a develop stack also accepts `-dev.<build-number>` versions.
-Every installer, listing and updater candidate is capped at the running server
-version. An installation persists its own stable/develop preference across
-sign-out and pairing changes. Native offers bind to the paired server, channel
-and observed server version and are revalidated before installation.
-Deployment release pairing imports the published tag for the exact version
-reported by the running server when the image and release record the same
-source commit. The approved version and all artifact rows
-become visible together. The updater
-manifest is absent if an approved updater artifact is missing. The database stores GitHub metadata and approvals; artifact bytes are hosted
-only on GitHub.
+six artifacts for four platforms. The running server's embedded version and
+source commit identify the only release it can offer. The server resolves the
+exact tag in its configured repository and checks its commit, artifact names,
+sizes, digests and signature metadata before serving any of it. The updater
+manifest is absent until a complete matching release is available.
+The client persists its stable/develop preference and revalidates each offer
+against its paired server, channel and observed server version.
 
 Only a stable release on master changes the committed product version. Branch
 and local builds stamp a temporary preview version in their build checkout.

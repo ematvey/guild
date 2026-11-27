@@ -3,7 +3,7 @@
 // draft carry the saved value, and every reader of the routes list sees it.
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RouteRow } from "./model-providers";
+import type { RouteRow } from "../../../../../control-center/src/settings/model-providers";
 
 const http = vi.hoisted(() => ({ request: vi.fn(), put: vi.fn() }));
 vi.mock("../../../lib/api/request", () => ({ request: http.request }));
@@ -15,7 +15,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { SETTINGS_PATHS } from "../../../lib/api/settings";
 import { clearSettingsCaches, useCachedGet } from "../use-cached-api";
-import { RouteDetail } from "./model-routes";
+import { RouteDetail } from "../../../../../control-center/src/settings/model-routes";
 
 const route: RouteRow = {
   model: "auto",

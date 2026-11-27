@@ -23,10 +23,10 @@ describe("skills route: files and catalog query", () => {
   it("round-trips the file a detail or editor shows", () => {
     for (const path of [
       "/skills/code-review/files/scripts/run.sh",
-      "/skills/code-review/edit/files/docs/a%20b.md",
-      "/skills/new/files/notes.md",
+      "/control/skills/code-review/edit/files/docs/a%20b.md",
+      "/control/skills/new/files/notes.md",
       "/skills/code-review",
-      "/skills/code-review/edit",
+      "/control/skills/code-review/edit",
     ]) {
       expect(roundTrip(path)).toBe(path);
     }
@@ -71,7 +71,7 @@ describe("skills route: files and catalog query", () => {
   });
 
   it("tabs carry no query or file", () => {
-    expect(roundTrip("/skills/activity?q=x")).toBe("/skills/activity");
+    expect(roundTrip("/skills/activity?q=x")).toBe("/control/skills/activity");
     expect(roundTrip("/skills/machine")).toBe("/skills/machine");
   });
 });

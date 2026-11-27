@@ -238,30 +238,28 @@ export async function listRoutines(id: string): Promise<AgentRoutine[]> {
   ).routines;
 }
 
-/** Sets where a routine's runs deliver. The routine row comes back over the
- *  member socket's agent_routines frame. */
-export async function setRoutineDelivery(
+/** The updated routine comes back over the member socket. */
+export async function updateRoutine(
   id: string,
   routineId: string,
-  delivery: AgentRoutine["delivery"],
+  changes: Partial<Pick<AgentRoutine, "delivery" | "enabled">>,
 ): Promise<void> {
   await request(
     "PATCH",
     `${agentBase(id)}/routines/${encodeURIComponent(routineId)}`,
-    { delivery },
+    changes,
   );
 }
 
-export async function runRoutine(
-  id: string,
-  routineId: string,
-): Promise<AgentRun> {
-  return (
-    await request<{ run: AgentRun }>(
-      "POST",
-      `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
-    )
-  ).run;
+export function runRoutine(id: string, routineId: string): Promise<{ run: AgentRun; chat_id: string | null }> {
+  return request(
+    "POST",
+    `${agentBase(id)}/routines/${encodeURIComponent(routineId)}/run`,
+  );
+}
+
+export function getScheduledTaskDeliveryChat(agentId: string, taskId: string): Promise<{ chat_id: string | null }> {
+  return request("GET", `${agentBase(agentId)}/routines/${encodeURIComponent(taskId)}/delivery-chat`);
 }
 
 export async function listRoutineRuns(
@@ -373,35 +371,35 @@ export const SAFE_BASELINE_TOOLS: AgentToolInfo[] = [
   {
     name: "schedule_reminder",
     label: "Schedule reminder",
-    group: "Routines",
+    group: "Scheduled tasks",
     description: "Schedule a one-shot reminder for this agent.",
     safe: true,
   },
   {
     name: "list_routines",
     label: "List routines",
-    group: "Routines",
+    group: "Scheduled tasks",
     description: "List this agent's routines and their schedules.",
     safe: true,
   },
   {
     name: "create_routine",
     label: "Create routine",
-    group: "Routines",
+    group: "Scheduled tasks",
     description: "Create a recurring routine from a cron or interval schedule.",
     safe: true,
   },
   {
     name: "update_routine",
     label: "Update routine",
-    group: "Routines",
+    group: "Scheduled tasks",
     description: "Change a routine's schedule, prompt or enabled state.",
     safe: true,
   },
   {
     name: "delete_routine",
     label: "Delete routine",
-    group: "Routines",
+    group: "Scheduled tasks",
     description: "Delete a routine and stop its schedule.",
     safe: true,
   },

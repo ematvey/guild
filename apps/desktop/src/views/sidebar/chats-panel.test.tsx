@@ -37,7 +37,6 @@ describe("ChatsPanel archived section", () => {
         grouping={sidebarGrouping([chat("c-live", "Live chat", null)])}
         archivedChats={[chat("c-arch", "Archived chat", archived.id)]}
         loadingChats={false}
-        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -59,7 +58,6 @@ describe("ChatsPanel archived section", () => {
         grouping={sidebarGrouping([])}
         archivedChats={[]}
         loadingChats={false}
-        onNewChat={() => {}}
         projects={[]}
         archivedProjects={[archived]}
         chatId={null}
@@ -95,13 +93,12 @@ it("shows synced pins, keeps project threads in Recent, and hides archived proje
       loadingChats={false}
       chatId={liveChat.id}
       projectId={liveProject.id}
-      onNewChat={() => {}}
       onOpenChat={() => {}}
       onPinChat={onPinChat}
     />,
   );
   const pinned = within(screen.getByRole("region", { name: "Pinned" }));
-  const recent = within(screen.getByRole("region", { name: "Recent" }));
+  const recent = within(screen.getByRole("region", { name: "Chats and tasks" }));
   expect(pinned.getAllByText("Active conversation")).toHaveLength(1);
   expect(recent.getByText("Active conversation")).toBeDefined();
   expect(screen.queryByText("Hidden conversation")).toBeNull();
@@ -122,23 +119,43 @@ it("keeps sidebar sections and project folders as the member left them when swit
       loadingChats={false}
       chatId={chatId}
       projectId={projectId}
-      onNewChat={() => {}}
       onOpenChat={() => {}}
     />
   );
   const { rerender } = render(panel("c-plain", null));
-  const projects = screen.getByRole("button", { name: /^Projects$/ });
   const pins = screen.getByRole("button", { name: /^Pinned$/ });
   fireEvent.click(pins);
   rerender(panel("c-project", folder.id));
-  expect(projects.getAttribute("aria-expanded")).toBe("false");
-  fireEvent.click(projects);
-  expect(screen.getByText("Project folder").closest("button")!.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Project folder")).toBeNull();
   rerender(panel("c-pinned-project", pinned.id));
   expect(pins.getAttribute("aria-expanded")).toBe("false");
-  expect(projects.getAttribute("aria-expanded")).toBe("true");
 
   rerender(panel(null, pinned.id));
   expect(pins.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByText("Pinned folder").closest("button")!.getAttribute("aria-expanded")).toBe("true");
+});
+
+it("opens a project destination from its list row", () => {
+  const folder = project("p-work", "Work folder");
+  const onOpenProject = vi.fn();
+  const props = {
+    grouping: sidebarGrouping([]),
+    mode: "projects" as const,
+    projects: [folder],
+    loadingChats: false,
+    chatId: null,
+    onOpenChat: vi.fn(),
+    onOpenProject,
+  };
+  const { rerender } = render(<ChatsPanel {...props} />);
+  const row = screen.getByRole("button", { name: /Work folder/ });
+  expect(row.textContent?.startsWith("dev-1Work folder")).toBe(true);
+  expect(row.querySelector("time")?.getAttribute("dateTime")).toBe(folder.created_at);
+  expect(row.querySelector(".lucide-folder")).toBeNull();
+  fireEvent.click(row);
+  expect(onOpenProject).toHaveBeenCalledWith(folder.id);
+
+  rerender(<ChatsPanel {...props} projectId={folder.id} />);
+  expect(screen.getByRole("heading", { name: folder.name })).toBeDefined();
+  expect(screen.getByText("No chats yet.")).toBeDefined();
 });
