@@ -481,6 +481,12 @@ const UNDECLARED_DEFS_ALLOW = new Map([
     "rest.DateTime",
     "an RFC 3339 timestamp; TypeScript carries it as a plain `string`, and the shape check inlines it as one",
   ],
+  // These composed schemas narrow the shared socket unions at the HTTP
+  // boundary. The server contract test checks them against the runtime gate.
+  ["socket.WorkServerFrame", "surface restriction of ServerFrame checked by client-contract.test.ts"],
+  ["socket.ControlServerFrame", "surface restriction of ServerFrame checked by client-contract.test.ts"],
+  ["socket.WorkClientFrame", "surface restriction of ClientFrame checked by client-contract.test.ts"],
+  ["socket.ControlClientFrame", "surface restriction of ClientFrame checked by client-contract.test.ts"],
 ]);
 
 // Known schema/TypeScript drift the gate tolerates until the two sides are
