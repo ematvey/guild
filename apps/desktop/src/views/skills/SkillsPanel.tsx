@@ -270,36 +270,65 @@ export function SkillsPanel({
     );
   }
 
+  const searchField = (
+    <div className="relative w-full sm:w-[280px]">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={query}
+        placeholder="Search skills"
+        aria-label="Search skills"
+        className="pl-8"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+    </div>
+  );
+  const publishAction = (
+    <Button
+      size="sm"
+      variant={route.management ? "default" : "outline"}
+      aria-label={import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
+      onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
+    >
+      <Plus />
+      {import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
+    </Button>
+  );
+  const catalogFilters = (
+    <>
+      <Select value={filterKind} onValueChange={(v) => setFilterKind(v as SkillFilterKind)}>
+        <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {skillFilterOptions.map(([value, label]) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
+        <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {skillSortOptions.map(([value, label]) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </>
+  );
+
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      {/* Row 1: title, search and New skill; row 2: the underline tabs and
-          the catalog's filter and sort. */}
       <PageHeader
         variant={route.management ? "bar" : "work"}
         title={route.management ? "Skills" : "Customize"}
-        actions={
-          <>
-            <div className="relative w-full sm:w-[280px]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={query}
-                placeholder="Search skills"
-                aria-label="Search skills"
-                className="pl-8"
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-            <Button
-              size="sm"
-              aria-label={import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
-              onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
-            >
-              <Plus />
-              {import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
-            </Button>
-          </>
-        }
+        actions={route.management ? <>{searchField}{publishAction}</> : undefined}
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
@@ -323,40 +352,19 @@ export function SkillsPanel({
                 </button>
               ))}
             </div>
-            <div className="flex-1" />
-            {tab === "catalog" && (
-              <>
-                <Select value={filterKind} onValueChange={(v) => setFilterKind(v as SkillFilterKind)}>
-                  <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {skillFilterOptions.map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
-                  <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {skillSortOptions.map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </>
+            {route.management && tab === "catalog" && (
+              <><div className="flex-1" />{catalogFilters}</>
             )}
           </>
         }
       />
-      {/* page body: full-width background fill, content capped so the row
-          list and detail panes don't stretch absurdly on wide monitors */}
+      {!route.management && tab === "catalog" && (
+        <div className="work-page-content flex shrink-0 flex-wrap items-center gap-2 pt-3">
+          {searchField}
+          {catalogFilters}
+          <div className="sm:ml-auto">{publishAction}</div>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <div className={route.management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pb-8 pt-3"}>
           {import.meta.env.MODE === "control" && tab === "activity" && <ActivityFeed />}
