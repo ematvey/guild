@@ -27,5 +27,6 @@
 ## Interaction and checks
 
 - Keep pages, tabs, and dialogs addressable through the Work route model. Back, forward, and reload should restore the visible destination.
+- Show the bound machine and live presence before the project name in the chat header and composer. The header machine opens Devices.
 - Use the current chat-title search inside the Search dialog. Keep the chat transcript and composer centered as a unit in the usable pane, with sensible gutters when the sidebar is open.
 - Check changes at a narrow sidebar width and a mobile width, with the sidebar open and collapsed. Verify keyboard focus, menu triggers, hover states, and long names. Check the native title-bar spacing on each desktop platform affected by a toolbar change.

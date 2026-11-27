@@ -29,7 +29,7 @@ import { ThreadOverlays } from "./ThreadOverlays";
 import {
   agentDeleting,
   busyFrom,
-  offlineMachine,
+  remoteMachine,
   pruneStopping,
   tabPaneLayout,
   threadAccess,
@@ -551,7 +551,12 @@ function ThreadView(props: ThreadProps) {
     await deleteChat(viewChatId);
     pushRoute(CHAT_ROOT);
   }, [viewChatId, deleteChat, pushRoute]);
-  const offlineMachineBanner = offlineMachine(chats, machines, viewChatId, localMachineId);
+  const boundProject = projects?.find((project) => project.id === currentProject?.id);
+  const projectChat = currentProject && openRow?.project_id === currentProject.id ? openRow : undefined;
+  const projectMachineId = projectChat?.machine_id ?? boundProject?.machine_id;
+  const machineLabel = projectChat?.machine_label ?? currentProject?.machine_label;
+  const machine = remoteMachine({ machineId: projectMachineId, rowLabel: machineLabel, machines, localMachineId });
+  const projectMachineLabel = machine?.label ?? machineLabel;
 
   const loadEarlierNearTop = useCallback(() => {
     void loadEarlier();
@@ -564,7 +569,7 @@ function ThreadView(props: ThreadProps) {
     earlierAnchor,
     displayedChatId,
     blocks,
-    repinKeys: [subagentNodes, compacting, busy, hasMore, offlineMachineBanner?.label],
+    repinKeys: [subagentNodes, compacting, busy, hasMore],
     onNearTop: loadEarlierNearTop,
   });
   // A first send on the scratch surface, from the click until the server
@@ -699,8 +704,16 @@ function ThreadView(props: ThreadProps) {
     if (projectId) pushRoute({ projectId }, { replace: true });
   }, [route.chatId, route.projectId, chats, archivedChats, pushRoute]);
 
-  // The main column: a route page (agents, skills, settings) owns the whole
-  // column right of the rail; the chat comes back on any chat route.
+  const openCreationChat = (request: string) => {
+    const draft = readDraft(draftStorage, null);
+    const prompt = draft === request || draft?.startsWith(`${request}\n\n`)
+      ? draft
+      : draft ? `${request}\n\n${draft}` : request;
+    writeDraft(draftStorage, null, prompt);
+    composer.setPrompt(prompt);
+    newChat();
+  };
+  // A route page takes the column right of the rail until the member returns to chat.
   const routePage =
     controlRoute ? (
       <RoutePage isMobile={isMobile} onOpenDrawer={openDrawer}>
@@ -741,21 +754,20 @@ function ThreadView(props: ThreadProps) {
       </RoutePage>
     ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (
       <RoutePage isMobile={isMobile} title="Apps" onOpenDrawer={openDrawer}>
-        <AppsSurface route={route.apps} isMobile={isMobile} pushRoute={pushRoute} onOpenChat={openChat} />
+        <AppsSurface
+          route={route.apps}
+          isMobile={isMobile}
+          pushRoute={pushRoute}
+          onOpenChat={openChat}
+          onCreateApp={() => openCreationChat("Help me build an app. Ask what it should do, who will use it, and what data it needs.")}
+        />
       </RoutePage>
     ) : paneLayout.mainPane === "skillsPage" && route.skills !== null ? (
       <RoutePage isMobile={isMobile} title="Customize" onOpenDrawer={openDrawer}>
         <SkillsPage
           route={route.skills}
           me={{ email, displayName: displayName ?? undefined, role }}
-          onCreateSkill={() => {
-            const request = "Help me create a reusable skill. Ask what it should do, when to use it, and what examples or files it needs.";
-            const draft = readDraft(draftStorage, null);
-            const prompt = draft ? `${draft}\n\n${request}` : request;
-            writeDraft(draftStorage, null, prompt);
-            composer.setPrompt(prompt);
-            newChat();
-          }}
+          onCreateSkill={() => openCreationChat("Help me create a reusable skill. Ask what it should do, when to use it, and what examples or files it needs.")}
           pushRoute={pushRoute}
         />
       </RoutePage>
@@ -935,6 +947,9 @@ function ThreadView(props: ThreadProps) {
                     : route.newChat && pickedProject?.name && pickedProject.id === route.projectId
                       ? pickedProject
                       : null}
+                  machineLabel={projectMachineLabel}
+                  machineOnline={machine?.online}
+                  onOpenDevices={() => openSettingsSection("machine")}
                   onOpenProject={(projectId) => {
                     pushRoute({ ...CHAT_ROOT, projectId });
                     if (!isMobile) sidebarState.setCollapsed(false);
@@ -964,15 +979,6 @@ function ThreadView(props: ThreadProps) {
                   }
                   onDelete={headerDelete}
                 />
-
-                {offlineMachineBanner && (
-                  <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
-                    {offlineMachineBanner.label} is offline. Tools can run once it reconnects.
-                    <button type="button" className="ml-2 underline" onClick={() => openSettingsSection("machine")}>
-                      Open Machines
-                    </button>
-                  </div>
-                )}
 
                 <NotificationsOffer />
 
@@ -1031,7 +1037,8 @@ function ThreadView(props: ThreadProps) {
                     onUnarchive: () => void headerArchive(),
                   }}
                   currentProject={currentProject}
-                  localMachineId={localMachineId}
+                  machineLabel={projectMachineLabel}
+                  machineOnline={machine?.online}
                   setComposerEl={scroll.setComposerEl}
                   agentModelUnavailable={agentModelUnavailable}
                   onConfigureModels={configureModels}

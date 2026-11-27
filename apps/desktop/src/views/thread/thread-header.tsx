@@ -27,6 +27,7 @@ import { CAPTION_BUTTONS_INSET, TOP_ROW, titleBarDragDeep } from "../../lib/titl
 import { ChildThreadHeader } from "../agents/ChildThreadHeader";
 import type { ChatTree } from "../../lib/api/chats";
 import { shareableUrl } from "../../lib/session";
+import { FadeTitle } from "../sidebar/chrome";
 import { ThreadTitle } from "./blocks";
 import type { PickedProject } from "../projects/projects";
 
@@ -37,6 +38,9 @@ export function ThreadHeader({
   title,
   titleLoading,
   project,
+  machineLabel,
+  machineOnline,
+  onOpenDevices,
   onOpenProject,
   childTree,
   isSubagent,
@@ -56,6 +60,9 @@ export function ThreadHeader({
   title: string;
   titleLoading: boolean;
   project?: PickedProject | null;
+  machineLabel?: string | null;
+  machineOnline?: boolean;
+  onOpenDevices?: () => void;
   onOpenProject?: (id: string) => void;
   childTree: ChatTree | null;
   isSubagent: boolean;
@@ -105,10 +112,29 @@ export function ThreadHeader({
         <div className="flex min-w-0 items-center gap-2">
           {project && (
             <>
+              {machineLabel && (
+                <button
+                  type="button"
+                  onClick={onOpenDevices}
+                  title={machineOnline === false
+                    ? `${machineLabel} is offline. Tools can run once it reconnects. Open Devices.`
+                    : `Open Devices for ${machineLabel}`}
+                  className="flex min-w-0 max-w-[30%] items-center gap-1.5 rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  {machineOnline !== undefined && (
+                    <span
+                      role="img"
+                      aria-label={machineOnline ? "Online" : "Offline"}
+                      className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/60"}`}
+                    />
+                  )}
+                  <FadeTitle text={machineLabel} />
+                </button>
+              )}
               <a
                 href={`/project/${encodeURIComponent(project.id)}`}
                 title={project.name}
-                className="max-w-[45%] shrink-0 truncate rounded-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex min-w-0 max-w-[35%] rounded-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
                 onClick={(event) => {
                   if (
                     !onOpenProject ||
@@ -123,7 +149,7 @@ export function ThreadHeader({
                   onOpenProject(project.id);
                 }}
               >
-                {project.name}
+                <FadeTitle text={project.name} />
               </a>
               <span aria-hidden="true" className="shrink-0 text-muted-foreground">
                 /

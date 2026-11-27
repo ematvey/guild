@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   ChevronDown,
+  Plus,
   Globe,
   LayoutGrid,
   MessageSquare,
@@ -426,11 +427,13 @@ export function AppsPage({
   navigate,
   isMobile,
   onOpenChat,
+  onCreateApp,
 }: {
   route: AppsRoute;
   navigate: Navigate;
   isMobile: boolean;
   onOpenChat: ((chatId: string) => void) | null;
+  onCreateApp?: () => void;
 }) {
   const apps = useApps();
   const [query, setQuery] = useState("");
@@ -483,7 +486,11 @@ export function AppsPage({
     ];
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <PageHeader variant="work" title="Apps" />
+        <PageHeader variant="work" title="Apps" actions={onCreateApp && (
+          <Button variant="ghost" size="icon" aria-label="Create app in chat" title="Create app in chat" onClick={onCreateApp}>
+            <Plus />
+          </Button>
+        )} />
         <div className="work-page-content pb-2">
           <Input className="w-full sm:w-[280px]" type="search" aria-label="Search apps" placeholder="Search apps"
             value={query} onChange={(event) => setQuery(event.target.value)} />

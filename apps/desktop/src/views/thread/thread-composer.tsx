@@ -32,14 +32,12 @@ import { projectChipLabel, type PickedProject } from "../projects/projects";
 import type { ChatApprovalMode } from "../../lib/api/approvals";
 import type { OutgoingCommand } from "../../lib/outgoing-command";
 import type { RenderBlock } from "../../lib/thread-reducer";
-import { useMachines } from "../../lib/machines-store";
 import type { Agent } from "../agents/agents-api";
 import { AttachmentImageThumb, AttachmentFileChip } from "./attachments";
 import { APPROVAL_MODES } from "./approval";
-import { remoteMachine, sendButtonState, type ThreadFacts } from "./status";
+import { sendButtonState, type ThreadFacts } from "./status";
 import { CHAT_COLUMN_CLASS } from "./blocks";
 import { isImeEnter } from "./route";
-import { chatsStore, projectsStore } from "./chat-stores";
 import type { ComposerHandle } from "./hooks/use-composer";
 import type { AgentPick } from "./hooks/use-agent-pick";
 
@@ -67,50 +65,30 @@ function readOnlyNotice(facts: ThreadFacts, foreign: boolean, deletingAgent: Age
  *  for a remote machine (on desktop the local machine executes its own
  *  tools) whose live socket state is known in the machines store. */
 function ProjectChip({
-  chatId,
   project,
-  localMachineId,
+  machineLabel,
+  machineOnline,
 }: {
-  chatId: string | null;
   project: PickedProject | null;
-  localMachineId: string | undefined;
+  machineLabel?: string | null;
+  machineOnline?: boolean;
 }) {
-  const chats = chatsStore.use();
-  const projects = projectsStore.use();
-  const machines = useMachines();
   if (!project) return null;
-  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  const bound = !!(row?.machine_id && row.project_id);
-  // The chat row may be absent right after a create (route pushed before
-  // the list lands) — the chip then renders without a live socket state.
-  const remote = remoteMachine({
-    machineId: bound ? row?.machine_id : projects?.find((p) => p.id === project.id)?.machine_id,
-    rowLabel: bound ? row?.machine_label : undefined,
-    machines,
-    localMachineId,
-  });
-  const machineOnline = remote?.online;
-  const showMachine = remote !== null && machineOnline !== undefined;
+  const label = projectChipLabel({ ...project, machine_label: machineLabel });
   return (
     <span
       className="flex h-8 min-w-0 max-w-44 items-center gap-1.5 rounded-full px-2 text-muted-foreground pointer-coarse:h-10"
-      title={
-        showMachine
-          ? `${project.name} — Machine: ${remote?.label}${machineOnline ? " (online)" : " (offline)"}`
-          : `${project.name} — ${project.machine_label ?? "project"}`
-      }
+      title={machineOnline === undefined ? label : `${label} (${machineOnline ? "online" : "offline"})`}
     >
-      {showMachine && (
+      {machineOnline !== undefined && (
         <span
-          className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+          role="img"
+          aria-label={machineOnline ? "Online" : "Offline"}
+          className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/60"}`}
         />
       )}
-      <span className="flex min-w-0 items-center gap-1">
-        <FolderOpen className="size-4 shrink-0" />
-        <span className="hidden min-w-0 sm:block sm:flex-1">
-          <FadeTitle text={projectChipLabel(project)} />
-        </span>
-      </span>
+      <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
+      <FadeTitle text={label} />
     </span>
   );
 }
@@ -257,7 +235,8 @@ export function ThreadComposer({
   model,
   access,
   currentProject,
-  localMachineId,
+  machineLabel,
+  machineOnline,
   setComposerEl,
   onManageAgents,
   onConfigureModels,
@@ -292,7 +271,8 @@ export function ThreadComposer({
     onUnarchive: () => void;
   };
   currentProject: PickedProject | null;
-  localMachineId: string | undefined;
+  machineLabel?: string | null;
+  machineOnline?: boolean;
   setComposerEl: (el: HTMLDivElement | null) => void;
   onManageAgents: () => void;
   onConfigureModels?: () => void;
@@ -595,7 +575,7 @@ export function ThreadComposer({
               >
                 <Plus className="size-4" />
               </Button>
-              <ProjectChip chatId={viewChatId} project={currentProject} localMachineId={localMachineId} />
+              <ProjectChip project={currentProject} machineLabel={machineLabel} machineOnline={machineOnline} />
               {!assistantInbox && <ApprovalModeMenu {...approval} />}
               {(models?.length === 0 || agentModelUnavailable) && (
                 onConfigureModels

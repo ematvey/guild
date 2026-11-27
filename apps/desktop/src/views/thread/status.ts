@@ -108,22 +108,6 @@ export function remoteMachine(input: {
   };
 }
 
-/** The open chat's remote bound machine when its socket is down — the
- * offline warning banner's subject. Machine binding is project-derived, so
- * only project-bound chats can have one. Null when unbound, bound to this
- * client's engine, online, or presence unknown. */
-export function offlineMachine(
-  chats: ChatSummary[] | null,
-  machines: MachineInfo[] | null,
-  chatId: string | null,
-  localMachineId: string | undefined,
-): { label: string } | null {
-  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  if (!row?.project_id) return null;
-  const remote = remoteMachine({ machineId: row.machine_id, rowLabel: row.machine_label, machines, localMachineId });
-  return remote?.online === false ? { label: remote.label } : null;
-}
-
 /** The independent facts about a thread: what it is, whether the user
  *  archived or deleted it, and whether the user owns it. They are not one
  *  state: an archived user thread stays a user thread, and a deleted thread
