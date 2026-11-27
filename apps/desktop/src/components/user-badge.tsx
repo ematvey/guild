@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { Avatar } from "@guild/ui/components/avatar";
 import { Button } from "@guild/ui/components/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@guild/ui/components/dropdown-menu";
+import { FadeTitle } from "../views/sidebar/chrome";
 import { avatarChip } from "../lib/format";
 
 export function UserBadge({
@@ -29,7 +30,7 @@ export function UserBadge({
             className="size-6 shrink-0"
             fallbackClassName="bg-primary font-semibold text-primary-foreground"
           />
-          <span className="min-w-0 truncate text-left">{name}</span>
+          <span className="flex min-w-0 text-left"><FadeTitle text={name} /></span>
           <ChevronDown className="text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
