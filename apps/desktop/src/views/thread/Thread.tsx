@@ -22,7 +22,7 @@ import { runningWebBundle, useWorkspaceIdentity, webBundleOutdated } from "../..
 import { machineId } from "../../lib/machine-rpc";
 import { chatProjectOf, type PickedProject } from "../projects/projects";
 import { SKILLS_CATALOG } from "../skills/skills-route";
-import { AGENTS_DIRECTORY, agentTabRoute } from "../agents/agents-route";
+import { agentTabRoute } from "../agents/agents-route";
 import { SidebarMenu, WorkNavigation, WorkSidebarHeader, type RailTab } from "../sidebar-rail";
 import { TITLE_BAR_INSET, titleBarDrag, titleBarDragDeep } from "../../lib/titlebar";
 import { ThreadOverlays } from "./ThreadOverlays";
@@ -57,7 +57,7 @@ import { useComposer } from "./hooks/use-composer";
 import { useOutgoing } from "./hooks/use-outgoing";
 import { useMemberSocket } from "./hooks/use-member-socket";
 import { useApprovalMode } from "./hooks/use-approval-mode";
-import { useAgentPick } from "./hooks/use-agent-pick";
+import { useAgentList } from "../agents/agents-store";
 import { useChatActions } from "./hooks/use-chat-actions";
 import { Sidebar, useSidebar } from "../sidebar/sidebar";
 import { useMobileGestures } from "./hooks/use-mobile-gestures";
@@ -209,7 +209,12 @@ function ThreadView(props: ThreadProps) {
     draftStorage,
   } = composer;
   const models = useModelOptions();
-  const agent = useAgentPick(viewChatId, childTree);
+  const allAgents = useAgentList();
+  const personalAgent = pushed
+    ? allAgents?.find((item) => item.is_personal && item.owner_user_id === pushed.id && item.status === "active")
+    : undefined;
+  const boundAgentId = childTree?.chat_id === viewChatId ? childTree.agent_id : null;
+  const chatAgent = boundAgentId ? allAgents?.find((item) => item.id === boundAgentId) : personalAgent;
   const [model, setModel] = useState("");
   // The open chat's server-side turn flag, from its status entry — the same
   // truth the sidebar spinner shows.
@@ -259,7 +264,6 @@ function ThreadView(props: ThreadProps) {
       openRow,
       currentProject,
       pickedProjectRef,
-      pickedAgentRef: agent.pickedAgentRef,
       approvalMode: approval.approvalMode,
     },
     justCreatedApprovalRef,
@@ -509,7 +513,7 @@ function ThreadView(props: ThreadProps) {
   const facts = threadFacts({ chatId: viewChatId, chats, archivedChats, childTree });
   // The chat's agent as the pushed tree binds it and the pushed list
   // describes it: an agent being deleted leaves its threads read-only.
-  const deletingAgent = agentDeleting(viewChatId !== null ? (childTree?.agent_id ?? null) : null, agent.allAgents);
+  const deletingAgent = agentDeleting(viewChatId !== null ? (childTree?.agent_id ?? null) : null, allAgents);
   const access = threadAccess({
     chatId: viewChatId,
     chats,
@@ -642,8 +646,8 @@ function ThreadView(props: ThreadProps) {
   const openControl = (destination: RoutePatch) => {
     openExternal(serverUrl() + routePath(applyRoutePatch(route, { ...CHAT_ROOT, ...destination })), { link: true });
   };
-  const manageAgent = agent.shownAgent?.can_manage ? agent.shownAgent : null;
-  const agentModel = agent.shownAgent?.model;
+  const manageAgent = chatAgent?.can_manage ? chatAgent : null;
+  const agentModel = chatAgent?.model;
   const agentModelUnavailable = !!agentModel && models !== null && !models.some((option) => option.id === agentModel);
   const configureModels =
     models?.length === 0 && role === "admin"
@@ -729,11 +733,11 @@ function ThreadView(props: ThreadProps) {
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
       <RoutePage isMobile={isMobile} title="Scheduled tasks" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {agent.personalAgent?.id === route.agents.agentId ? (
+          {personalAgent?.id === route.agents.agentId ? (
             <div>
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
                 routineRunId={route.agents.routineRunId}
-                canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
+                canManage={personalAgent.can_manage} onOpenChat={openChat}
                 onNavigate={(next) => {
                   if (next.view === "agent" && next.tab === "routines") {
                     pushRoute({ ...CHAT_ROOT, agents: { ...next, personalRoutines: true } });
@@ -744,7 +748,7 @@ function ThreadView(props: ThreadProps) {
             <>
               <PageHeader variant="work" title="Scheduled tasks" />
               <div className="work-page-content">
-                {agent.agentsList === null
+                {allAgents === null || pushed === null
                   ? <LoadingRows rows={3} />
                   : <p className="text-muted-foreground">Scheduled tasks are unavailable.</p>}
               </div>
@@ -787,11 +791,11 @@ function ThreadView(props: ThreadProps) {
     return () => cancelAnimationFrame(frame);
   }, [isMobile, composerVisible, composerEnabled, chatId, route.projectId, route.newChat, access, navigating, overlay, route.searchOpen, ta]);
 
-  const openRoutines = agent.personalAgent ? () => {
-    if (!agent.personalAgent) return;
+  const openRoutines = personalAgent ? () => {
+    if (!personalAgent) return;
     if (isMobile) setOpen(false);
     pushRoute({ ...CHAT_ROOT, agents: {
-      view: "agent", agentId: agent.personalAgent.id, tab: "routines", personalRoutines: true,
+      view: "agent", agentId: personalAgent.id, tab: "routines", personalRoutines: true,
     } });
   } : undefined;
   const openSearch = () => {
@@ -937,7 +941,7 @@ function ThreadView(props: ThreadProps) {
                   of its own; the preview pane carries the minimum width. It is
                   the positioning box for the composer, so the card stays under
                   the chat and not under the pane. */}
-              <div className={`guild-chat-surface relative flex min-h-0 min-w-0 flex-1 flex-col bg-background ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:64rem]" : ""}`}>
+              <div className={`guild-chat-surface relative flex min-h-0 min-w-0 flex-1 flex-col bg-background ${!isMobile && !sidebarState.collapsed ? "[--chat-column-width:58rem]" : ""}`}>
                 <ThreadHeader
                   isMobile={isMobile}
                   onOpenDrawer={openDrawer}
@@ -969,7 +973,7 @@ function ThreadView(props: ThreadProps) {
                   onRename={renameOpenChat}
                   onArchiveToggle={headerArchive}
                   onMakeRecurring={
-                    viewChatId !== null && access === "writable" && facts.type === "user" && agent.shownAgent?.id === agent.personalAgent?.id && agent.personalAgent
+                    viewChatId !== null && access === "writable" && facts.type === "user" && chatAgent?.id === personalAgent?.id && personalAgent
                       ? () => {
                         const request = "Help me turn the work in this conversation into a scheduled task. Ask me to confirm what it should do, when it should run, and the timezone before creating it.";
                         const draft = composer.promptRef.current;
@@ -1018,7 +1022,6 @@ function ThreadView(props: ThreadProps) {
                   assistantInbox={assistantInbox}
                   composer={composer}
                   sending={outgoing}
-                  agent={agent}
                   approval={approval}
                   viewChatId={viewChatId}
                   blocks={blocks}
@@ -1043,11 +1046,6 @@ function ThreadView(props: ThreadProps) {
                   setComposerEl={scroll.setComposerEl}
                   agentModelUnavailable={agentModelUnavailable}
                   onConfigureModels={configureModels}
-                  onManageAgents={() => openControl({
-                    agents: manageAgent
-                      ? agentTabRoute(manageAgent.id, "settings")
-                      : AGENTS_DIRECTORY,
-                  })}
                 />
               </div>
               {previewRef !== null && (

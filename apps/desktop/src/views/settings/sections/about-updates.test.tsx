@@ -38,8 +38,6 @@ beforeEach(() => {
       push();
       return Promise.resolve({ ...native.status });
     }
-    if (command === "daemon_trace_state")
-      return Promise.resolve({ enabled: false, path: "/home/user/.cache/guild/trace.log" });
     return Promise.resolve();
   });
   applyWorkspaceIdentity({ name: "Workspace", telemetry: false, server_version: "0.6.127-dev.200" });
