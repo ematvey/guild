@@ -210,9 +210,7 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
   );
 }
 
-/** The slim top bar shared by every detail state: the "Skills › slug"
- *  breadcrumb (the Skills segment navigates back), and the action row at
- *  the right edge. */
+/** The slim breadcrumb bar shared by every detail state. */
 function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => void; actions?: ReactNode }) {
   if (import.meta.env.MODE !== "control") {
     return <PageHeader variant="work" title={slug} back={{ label: "Customize", onClick: onBack }} actions={actions} />;
@@ -382,6 +380,7 @@ export function SkillDetail({
     );
   }
 
+  const control = import.meta.env.MODE === "control";
   const actions = detailActions(detail, me);
   const managementActions = new Set(["Edit", "Fork", "Unpublish", "Allow anyone to edit", "Restrict editing"]);
   const visibleActions = import.meta.env.MODE === "control" && management ? actions : actions.filter((label) => !managementActions.has(label));
@@ -552,12 +551,16 @@ export function SkillDetail({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <DetailHeader slug={detail.slug} onBack={onBack} actions={actionButtons} />
+      <DetailHeader slug={detail.slug} onBack={onBack} actions={control ? actionButtons : undefined} />
       <div className={`min-h-0 flex-1 overflow-y-auto ${management ? "" : "bg-muted/25"}`} data-scrollable>
         <div className={management ? "mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12" : "work-page-content pt-4 pb-12"}>
           <section className={management ? undefined : "rounded-xl border border-border bg-card p-4 sm:p-6"}>
           <div className="flex flex-wrap items-center gap-2.5">
-            {management && <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>}
+            {control ? (
+              management && <h1 className="text-xl font-semibold leading-tight">{detail.slug}</h1>
+            ) : (
+              <h2 className="min-w-0 break-words text-base font-bold">{detail.slug}</h2>
+            )}
             {detail.maintainer_gated && (
               <Badge variant="secondary" className="gap-1">
                 <Lock className="size-3" /> {editAccessLabel(editAccess(detail), detail.owner?.label)}
@@ -581,7 +584,7 @@ export function SkillDetail({
             )}
             {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
           </div>
-          {detail.description !== "" && <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>}
+          {detail.description !== "" && <p className="mt-1.5 max-w-prose text-base text-muted-foreground">{detail.description}</p>}
           {detail.owner !== null && (
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
               owned by
@@ -597,6 +600,11 @@ export function SkillDetail({
             </p>
           )}
 
+            {!control && (
+              <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Skill actions">
+                {actionButtons}
+              </div>
+            )}
           </section>
 
           {/* publish-gate notice */}

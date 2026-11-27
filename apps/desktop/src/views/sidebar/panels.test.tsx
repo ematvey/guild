@@ -182,7 +182,7 @@ describe("panels", () => {
 
   it("hides admin-only settings sections from a member", () => {
     const html = renderToStaticMarkup(<SettingsPanel role="member" activeSection={null} onSelectSection={() => {}} />);
-    expect(html).toContain("User");
+    expect(html).not.toContain(">User<");
     expect(html).not.toContain("Workspace");
   });
 

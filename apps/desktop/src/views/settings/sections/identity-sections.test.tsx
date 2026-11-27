@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // General and About read the pushed workspace identity: the name field fills
-// when the first identity lands (a direct load) without clobbering an edit,
-// and About's telemetry line follows the pushed switch.
+// when the first identity lands without clobbering an edit,
+// and About follows the server version.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -55,12 +55,10 @@ describe("General", () => {
 });
 
 describe("About", () => {
-  it("shows the pushed telemetry switch and follows it", () => {
+  it("shows the pushed server version without telemetry details", () => {
     render(<AboutSection />);
-    expect(screen.queryByText(/^On —|^Off —/)).toBeNull();
-    act(() => applyWorkspaceIdentity(identity("w", true)));
-    expect(screen.getByText(/^On —/)).toBeTruthy();
-    act(() => applyWorkspaceIdentity(identity("w", false)));
-    expect(screen.getByText(/^Off —/)).toBeTruthy();
+    act(() => applyWorkspaceIdentity({ ...identity("Workspace", true), server_version: "0.7.9" }));
+    expect(screen.getAllByText("0.7.9")).toHaveLength(2);
+    expect(screen.queryByText("Telemetry")).toBeNull();
   });
 });

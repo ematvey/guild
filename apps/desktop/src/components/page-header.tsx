@@ -50,7 +50,7 @@ export function PageHeader({
           ? `work-page-content shrink-0 bg-background ${CAPTION_BUTTONS_INSET}`
           : bar
           ? `shrink-0 border-b border-border bg-background px-4 pt-3 sm:px-6 ${CAPTION_BUTTONS_INSET}`
-          : `sticky top-0 z-10 mb-6 flex min-h-11 flex-col justify-center border-b border-border bg-[var(--page-section-background,var(--background))] py-1.5 ${CAPTION_BUTTONS_INSET}`
+          : `sticky top-0 z-10 ${inlineActions ? "mb-3" : "mb-6"} flex min-h-11 flex-col justify-center border-b border-border bg-[var(--page-section-background,var(--background))] py-1.5 ${CAPTION_BUTTONS_INSET}`
       }
     >
       {!work && backLink}
@@ -73,13 +73,13 @@ export function PageHeader({
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <h1 className="min-w-0 grow basis-32 truncate text-lg font-semibold tracking-tight">{title}</h1>
+            <h1 className={inlineActions ? "min-w-0 text-base font-bold" : "min-w-0 grow basis-32 truncate text-lg font-semibold tracking-tight"}>{title}</h1>
             {actions !== undefined && (
-              <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>
+              <div className={`flex flex-wrap items-center gap-2 ${inlineActions ? "" : "ml-auto"}`}>{actions}</div>
             )}
           </div>
           {description !== undefined && description !== "" && (
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
+            <p className={`mt-1 max-w-2xl text-muted-foreground ${inlineActions ? "text-base" : "text-sm"}`}>{description}</p>
           )}
         </>
       )}

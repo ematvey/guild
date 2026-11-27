@@ -5,10 +5,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { BellRing } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../../../components/page-header";
-import { FactCard, FactGrid } from "../components/fact-card";
 import {
   currentSubscription,
   disablePush,
@@ -16,7 +14,6 @@ import {
   notificationPermission,
   pushBlocker,
   pushErrorMessage,
-  sendTestPush,
   type PushBlocker,
 } from "../../../lib/push";
 import { getPushSubscriptions, type PushSubscriptionInfo } from "../../../lib/api/settings";
@@ -63,26 +60,14 @@ export function NotificationsSection() {
     }
   };
 
-  const test = async () => {
-    setBusy(true);
-    try {
-      const result = await sendTestPush();
-      if (result.delivered === 0) toast.error("No device is registered for this account");
-      else toast.success(`Sent to ${result.delivered} device${result.delivered === 1 ? "" : "s"}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
-      <PageHeader title="Notifications" description="Manage alerts when an agent finishes a run." />
-      <FactGrid>
-        <FactCard label="This device">
+      <PageHeader inlineActions title="Notifications" description="Manage alerts when an agent finishes a run." />
+      <div className="divide-y divide-border">
+        <section className="space-y-2 py-3">
+          <h2 className="font-semibold">This device</h2>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-muted-foreground">
+            <span className="text-base text-muted-foreground">
               {blocker !== null
                 ? BLOCKER_TEXT[blocker]
                 : device === "checking"
@@ -104,16 +89,17 @@ export function NotificationsSection() {
               </Button>
             )}
           </div>
-        </FactCard>
-        <FactCard label="Devices on this account">
+        </section>
+        <section className="space-y-2 py-3">
+          <h2 className="font-semibold">Devices on this account</h2>
           {rows === null ? (
-            <span className="text-sm text-muted-foreground">Unavailable</span>
+            <span className="text-base text-muted-foreground">Unavailable</span>
           ) : rows.length === 0 ? (
-            <span className="text-sm text-muted-foreground">None</span>
+            <span className="text-base text-muted-foreground">None</span>
           ) : (
-            <ul className="space-y-1 text-sm text-muted-foreground">
+            <ul className="divide-y divide-border text-base text-muted-foreground">
               {rows.map((row) => (
-                <li key={row.device_id}>
+                <li key={row.device_id} className="py-2">
                   {row.platform === "android" ? "Android" : "Browser"} · registered{" "}
                   {new Date(row.created_at).toLocaleDateString()}
                   {row.last_error !== null && <span className="text-destructive"> · last error: {row.last_error}</span>}
@@ -121,21 +107,7 @@ export function NotificationsSection() {
               ))}
             </ul>
           )}
-        </FactCard>
-      </FactGrid>
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || rows === null || rows.length === 0}
-          onClick={() => void test()}
-        >
-          <BellRing className="mr-1 size-3.5" />
-          Send a test notification
-        </Button>
-        <span className="text-sm text-muted-foreground">
-          Test alerts include the thread and run status.
-        </span>
+        </section>
       </div>
     </div>
   );

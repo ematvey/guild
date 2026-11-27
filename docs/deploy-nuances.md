@@ -14,8 +14,7 @@ forwards to `GUILD_FARO_URL` (an empty value disables forwarding).
 The switch is the workspace's: `telemetry_enabled` in `org_kv`, **on when
 absent**, admin-only (`Settings → General`, `PUT /api/v1/org/telemetry`).
 The value rides the `workspace_identity` frame, so every client starts or
-stops collecting live. There is no per-device toggle; About shows the state
-read-only.
+stops collecting live.
 
 Tests use isolated databases and buckets on the configured test services.
 Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`, and
