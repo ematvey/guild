@@ -792,6 +792,10 @@ function ThreadView(props: ThreadProps) {
   const menu = (
     <SidebarMenu
       onOpenSettings={openSettingsSection}
+      onSetupDevice={() => {
+        if (isMobile) setOpen(false);
+        pushRoute({ overlay: { kind: "device" } });
+      }}
       onOpenControl={() => {
         if (isMobile) setOpen(false);
         pushRoute({ ...CHAT_ROOT, tab: "settings", settingsSection: role === "admin" ? "general" : "gateway" });

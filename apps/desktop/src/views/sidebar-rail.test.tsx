@@ -6,6 +6,7 @@ function menu(extra: Partial<Parameters<typeof SidebarMenu>[0]> = {}) {
   return renderToStaticMarkup(
     <SidebarMenu
       onOpenSettings={() => {}}
+      onSetupDevice={() => {}}
       onOpenControl={() => {}}
       onOpenHelp={() => {}}
       email="member@example.com"

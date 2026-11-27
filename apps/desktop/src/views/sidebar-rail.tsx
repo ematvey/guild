@@ -97,6 +97,7 @@ export function WorkNavigation({
 
 export function SidebarMenu({
   onOpenSettings,
+  onSetupDevice,
   onOpenControl,
   onOpenHelp,
   email,
@@ -107,6 +108,7 @@ export function SidebarMenu({
   workspaceName,
 }: {
   onOpenSettings: (section: string) => void;
+  onSetupDevice: () => void;
   onOpenControl?: () => void;
   onOpenHelp: () => void;
   email: string;
@@ -119,7 +121,7 @@ export function SidebarMenu({
   return (
     <div className="flex shrink-0 items-center gap-1 border-t border-border/60 px-2 py-2">
       <div className="min-w-0 flex-1">
-        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} workspaceName={workspaceName}>
+        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
           {onAddWorkspace ? (
             <>
               <ServerMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
@@ -145,9 +147,9 @@ export function SidebarMenu({
         </UserBadge>
       </div>
       <Button variant="ghost" size="icon"
-        aria-label="Devices" title="Devices" aria-haspopup="dialog"
+        aria-label="Set up a device" title="Set up a device" aria-haspopup="dialog"
         className="shrink-0 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-        onClick={() => onOpenSettings("machine")}
+        onClick={onSetupDevice}
       >
         <MonitorSmartphone />
       </Button>

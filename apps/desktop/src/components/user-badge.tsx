@@ -10,20 +10,18 @@ export function UserBadge({
   email,
   displayName,
   avatarUrl,
-  workspaceName,
   children,
 }: {
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
-  workspaceName?: string;
   children?: React.ReactNode;
 }) {
   const name = displayName ?? email;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" title="Account" aria-label={workspaceName ? `${name}, ${workspaceName}` : name}
+        <Button variant="ghost" title="Account" aria-label={name}
           className="max-w-full justify-start gap-2 px-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent focus-visible:ring-1 focus-visible:ring-ring">
           <Avatar
             src={avatarUrl}
@@ -31,10 +29,7 @@ export function UserBadge({
             className="size-6 shrink-0"
             fallbackClassName="bg-primary font-semibold text-primary-foreground"
           />
-          <span className="min-w-0 truncate text-left">
-            {name}
-            {workspaceName && <span className="font-normal text-muted-foreground"> · {workspaceName}</span>}
-          </span>
+          <span className="min-w-0 truncate text-left">{name}</span>
           <ChevronDown className="text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
