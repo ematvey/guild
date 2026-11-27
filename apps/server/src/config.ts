@@ -33,10 +33,8 @@ export interface Config {
   /** API base other components call back to (GUILD_API_URL) — shapes the
    *  OIDC redirect_uri and post-login app redirect. */
   apiUrl: string;
-  /** Public GitHub repository that supplies approved desktop releases. */
+  /** Public GitHub repository that supplies signed desktop releases. */
   releaseRepository: string | null;
-  /** Preview adoption is explicit on development stacks. */
-  releaseChannel: "stable" | "develop";
   /** ClickHouse HTTP interface (GUILD_CLICKHOUSE_URL/DATABASE/USER/PASSWORD)
    *  — usage_events sink and usage/quota queries. Empty user = no auth. */
   clickhouseUrl: string;
@@ -278,7 +276,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     s3SecretAccessKey: env.GUILD_S3_SECRET_ACCESS_KEY ?? DEFAULT_S3_SECRET_ACCESS_KEY,
     apiUrl,
     releaseRepository: env.GUILD_RELEASE_REPOSITORY || null,
-    releaseChannel: env.GUILD_RELEASE_CHANNEL === "develop" ? "develop" : "stable",
     poolMax,
     dataDir,
     agentWorkspaceRoot: env.GUILD_AGENT_WORKSPACE_ROOT || "/workspaces",

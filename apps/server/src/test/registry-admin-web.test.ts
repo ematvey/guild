@@ -5,7 +5,6 @@
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { ReleaseStore } from "../platform/store/releases.js";
 import { createServer } from "node:http";
 
 import { tmpdir } from "node:os";
@@ -13,7 +12,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createObjectStoreStack, packBundle, type ObjectStoreStack } from "./support/object-store-stack.js";
 import { hashPassword } from "../platform/crypto.js";
-import { versionGt, toRfc3339Offset } from "../platform/http/releases.js";
+import { toRfc3339Offset } from "../platform/http/releases.js";
 
 const PASSWORD = "hunter226";
 
@@ -31,7 +30,7 @@ let e: Env;
 beforeAll(async () => {
   const env = await createObjectStoreStack(
     "error",
-    { GUILD_RELEASE_REPOSITORY: "alice/guild", GUILD_RELEASE_CHANNEL: "develop" },
+    { GUILD_RELEASE_REPOSITORY: "alice/guild" },
     "m6",
   );
   const orgId = crypto.randomUUID();
@@ -297,9 +296,9 @@ describe("GitHub releases", () => {
     expect((await inject("GET", "/api/v1/updates/latest.json", e.memberToken)).statusCode).toBe(204);
   });
 
-  it("adopts complete GitHub releases atomically, preserves downloads, and isolates previews", async () => {
+  it("serves only the verified release of the running version and commit", async () => {
     const version = "0.8.0-dev.42";
-    const previousVersion = e.env.config.serverVersion;
+    const { serverVersion, serverCommit } = e.env.config;
     e.env.config.serverVersion = version;
     const tag = `client-v${version}`;
     const base = `https://github.com/alice/guild/releases/download/${tag}`;
@@ -322,12 +321,14 @@ describe("GitHub releases", () => {
       }));
     });
     const sourceCommit = "a".repeat(40);
+    e.env.config.serverCommit = sourceCommit;
     const metadata = { version, tag, repository: "alice/guild", commit: "b".repeat(40), artifacts };
     const release = {
       tag_name: tag,
       draft: false,
       prerelease: true,
       body: "Preview release",
+      published_at: "2026-10-03T23:57:44Z",
       assets: [
         { name: "release.json", browser_download_url: `${base}/release.json`, size: 100, digest: "sha256:metadata" },
         ...artifacts.flatMap((a) => [
@@ -353,145 +354,66 @@ describe("GitHub releases", () => {
       if (url === `${base}/release.json`) return Response.json(metadata);
       return realFetch(input, init);
     });
+    const manifestPath = "/api/v1/updates/latest.json";
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.memberToken, { tag })).statusCode).toBe(403);
-      e.env.config.releaseChannel = "stable";
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
-      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
-      e.env.config.releaseChannel = "develop";
-      artifacts[0]!.size_bytes = 11;
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
-      artifacts[0]!.size_bytes = 10;
-      const before = json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as { version: string }[];
-      expect(before.some((r) => r.version === version)).toBe(false);
-      release.draft = true;
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
-      release.draft = false;
-      e.env.config.serverVersion = "0.7.0";
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(400);
-      e.env.config.serverVersion = version;
-      e.env.config.serverCommit = sourceCommit;
-      const pairing = { tag, source_commit: sourceCommit };
-      const mismatched = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
-      expect(mismatched.statusCode).toBe(400);
-      expect(mismatched.body).toContain("client release source commit does not match this server");
-      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(404);
+      expect((await e.env.app.inject({ url: manifestPath })).statusCode).toBe(204);
+      expect(json(await inject("GET", "/api/v1/releases", e.memberToken)).releases).toEqual([]);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
       metadata.commit = sourceCommit;
-      const accepted = await inject("POST", "/api/v1/admin/releases/github", e.adminToken, pairing);
-      expect(accepted.statusCode).toBe(200);
-      expect(json(accepted)).toEqual({ version, artifacts: 6 });
-      expect((await inject("POST", "/api/v1/admin/releases/github", e.adminToken, { tag })).statusCode).toBe(200);
-      const rows = (
-        json(await inject("GET", "/api/v1/releases", e.adminToken)).releases as {
-          id: string;
-          version: string;
-          filename: string;
-        }[]
-      ).filter((r) => r.version === version);
-      expect(rows).toHaveLength(6);
-      const manifest = json(await inject("GET", "/api/v1/updates/latest.json", e.adminToken)) as {
+      artifacts[0]!.size_bytes = 11;
+      clock.mockReturnValue(now + 61_000);
+      expect((await e.env.app.inject({ url: manifestPath })).statusCode).toBe(204);
+      artifacts[0]!.size_bytes = 10;
+      clock.mockReturnValue(now + 122_000);
+
+      const responses = await Promise.all([
+        e.env.app.inject({ url: manifestPath }),
+        e.env.app.inject({ url: manifestPath }),
+      ]);
+      expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+      expect(fetchSpy).toHaveBeenCalledTimes(6);
+      const manifest = responses[0]!.json() as {
         version: string;
-        platforms: Record<string, { url: string }>;
+        platforms: Record<string, { url: string; signature: string }>;
       };
+      expect(responses[0]!.headers["cache-control"]).toBe("no-store");
       expect(manifest.version).toBe(version);
       expect(Object.keys(manifest.platforms)).toHaveLength(4);
-      expect(Object.values(manifest.platforms).every((p) => p.url.startsWith(`${base}/`))).toBe(true);
-      const row = rows.find((r) => r.filename.endsWith(".AppImage"))!;
+      expect(Object.values(manifest.platforms).every((p) =>
+        p.url.startsWith(`${base}/`) && p.signature === "signed-artifact"
+      )).toBe(true);
+
+      const rows = json(await inject("GET", "/api/v1/releases", e.memberToken)).releases as {
+        id: string;
+        version: string;
+        filename: string;
+      }[];
+      expect(rows).toHaveLength(6);
+      expect(rows.every((row) => row.version === version)).toBe(true);
+      const row = rows.find((item) => item.filename.endsWith(".AppImage"))!;
       const download = await inject("GET", `/api/v1/releases/${row.id}/download-url`, e.memberToken);
       expect(json(download).url).toBe(`${base}/${row.filename}`);
       expect((await inject("GET", `/api/v1/releases/${row.id}/download`, e.memberToken)).statusCode).toBe(302);
-      expect((await inject("DELETE", `/api/v1/admin/releases/${row.id}`, e.adminToken)).statusCode).toBe(200);
-      expect((await inject("GET", "/api/v1/updates/latest.json", e.adminToken)).statusCode).toBe(204);
+      expect((await inject("DELETE", `/api/v1/admin/releases/${row.id}`, e.adminToken)).statusCode).toBe(404);
+      expect((await e.env.app.inject({ url: `${manifestPath}?channel=stable` })).statusCode).toBe(204);
+      expect((await e.env.app.inject({ url: `${manifestPath}?channel=other` })).statusCode).toBe(400);
+
+      e.env.config.serverCommit = "b".repeat(40);
+      expect((await e.env.app.inject({ url: manifestPath })).statusCode).toBe(204);
+      expect((await inject("GET", `/api/v1/releases/${row.id}/download`, e.memberToken)).statusCode).toBe(404);
     } finally {
-      e.env.config.serverVersion = previousVersion;
-      e.env.config.releaseChannel = "develop";
+      e.env.config.serverVersion = serverVersion;
+      e.env.config.serverCommit = serverCommit;
+      clock.mockRestore();
       fetchSpy.mockRestore();
     }
   });
 
-  it("caps both channels, listings and download redirects at the running server version", async () => {
-    const previousVersion = e.env.config.serverVersion;
-    await e.env.db.query("DELETE FROM releases WHERE kind = 'desktop'");
-    await e.env.db.query("DELETE FROM server_kv WHERE key LIKE 'desktop_release_version:%'");
-    const put = async (version: string) => {
-      const artifacts = ["linux-x86_64", "windows-x86_64", "darwin-aarch64", "darwin-x86_64"].map((platform) => {
-        const filename =
-          platform === "linux-x86_64"
-            ? `Guild-${version}.AppImage`
-            : platform === "windows-x86_64"
-              ? `Guild-${version}-setup.exe`
-              : `Guild-${version}-${platform}.app.tar.gz`;
-        return {
-          id: crypto.randomUUID(),
-          version,
-          platform,
-          filename,
-          size_bytes: 1,
-          sha256: "a".repeat(64),
-          updater_signature: "signature",
-          notes: "",
-          download_url: `https://github.com/alice/guild/releases/download/client-v${version}/${filename}`,
-        };
-      });
-      await new ReleaseStore(e.env.db).importGithub(artifacts);
-      return artifacts[0]!.id;
-    };
-    try {
-      e.env.config.serverVersion = "0.6.128-dev.200";
-      e.env.config.releaseChannel = "develop";
-      await put("0.6.128");
-      await put("0.6.127");
-      const future = await put("0.6.128-dev.250");
-      await put("0.6.128-dev.150");
-      const stable = json(await inject("GET", "/api/v1/updates/latest.json?channel=stable", e.memberToken));
-      const develop = json(await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken));
-      expect(stable.version).toBe("0.6.127");
-      expect(develop.version).toBe("0.6.128-dev.150");
-      expect(develop.server_version).toBe("0.6.128-dev.200");
-      expect(develop.channel).toBe("develop");
-      const rows = json(await inject("GET", "/api/v1/releases?channel=develop", e.memberToken)).releases as {
-        kind: string;
-        version: string;
-      }[];
-      expect([...new Set(rows.map((r) => r.version))]).toEqual(["0.6.128-dev.150"]);
-      expect(
-        (await inject("GET", `/api/v1/releases/${future}/download-url?channel=develop`, e.memberToken)).statusCode,
-      ).toBe(404);
-      expect(
-        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
-      ).toBe(404);
-      e.env.config.serverVersion = "0.6.128-dev.300";
-      await e.env.db.query(
-        "UPDATE server_kv SET value = '0.6.128-dev.250' WHERE key = 'desktop_release_version:develop'",
-      );
-      expect(
-        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
-      ).toBe(302);
-      e.env.config.serverVersion = "0.6.128-dev.200";
-      expect(
-        (await inject("GET", `/api/v1/releases/${future}/download?channel=develop`, e.memberToken)).statusCode,
-      ).toBe(404);
-      expect((await inject("GET", "/api/v1/updates/latest.json?channel=other", e.memberToken)).statusCode).toBe(400);
-      e.env.config.releaseChannel = "stable";
-      expect((await inject("GET", "/api/v1/updates/latest.json?channel=develop", e.memberToken)).statusCode).toBe(204);
-    } finally {
-      e.env.config.serverVersion = previousVersion;
-      e.env.config.releaseChannel = "develop";
-    }
-  });
-
-  it("orders versions by semver rules and renders pub_date like chrono to_rfc3339", () => {
-    expect(versionGt("1.0.1", "1.0.0")).toBe(true);
-    expect(versionGt("1.10.0", "1.9.0")).toBe(true);
-    expect(versionGt("1.0.0", "1.0.0")).toBe(false);
-    expect(versionGt("1.0.0+build.9", "1.0.0")).toBe(false);
-    expect(versionGt("1.0.0", "1.0.0+build.9")).toBe(false);
-    expect(versionGt("1.0.0", "1.0.0-beta")).toBe(true);
-    expect(versionGt("1.0.0-beta.2", "1.0.0-beta.1")).toBe(true);
-    expect(versionGt("1.0.0-alpha", "1.0.0-beta")).toBe(false);
-    expect(versionGt("1.0.0-1", "1.0.0-alpha")).toBe(false);
-    expect(versionGt("1.0.0-alpha", "1.0.0-1")).toBe(true);
-    expect(versionGt("1.0.0-beta.2.1", "1.0.0-beta.2")).toBe(true);
+  it("renders pub_date like chrono to_rfc3339", () => {
     expect(toRfc3339Offset("2026-10-03T23:57:44.123456Z")).toBe("2026-10-03T23:57:44.123456+00:00");
     expect(toRfc3339Offset("2026-10-03T23:57:44.000000Z")).toBe("2026-10-03T23:57:44+00:00");
   });

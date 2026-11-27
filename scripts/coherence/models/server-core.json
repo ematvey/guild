@@ -482,11 +482,9 @@
     },
     {
       "id": "release",
-      "definition": "One approved signed desktop version, with platform artifacts hosted on GitHub.",
-      "canonical": "apps/server/src/platform/store/releases.ts",
+      "definition": "The signed desktop version of the running server build, with platform artifacts hosted on GitHub.",
+      "canonical": "apps/server/src/platform/http/releases.ts",
       "types": [
-        "ReleaseRow",
-        "GithubReleaseArtifact",
         "UpdateChannel",
         "UpdateStatus",
         "UpdateState"
@@ -495,10 +493,6 @@
         "build"
       ],
       "representations": [
-        {
-          "where": "apps/server/src/platform/store/releases.ts",
-          "role": "db"
-        },
         {
           "where": "apps/server/src/platform/http/releases.ts",
           "role": "wire"
