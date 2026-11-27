@@ -18,7 +18,7 @@
 ## Pages and detail views
 
 - Use one bold page heading and the full available content pane. Detail headers use `Section / Item name` on the shared toolbar row, with the section clickable and the item name bold. Use consistent 16 px side gutters. Align the header with the sidebar toolbar when the sidebar is open. Keep the space above the header limited to the platform’s window chrome.
-- Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available.
+- Put a ghost plus immediately after the heading for create actions. Give icon-only buttons an accessible action label. Put search, filters, and sorting on the row below the heading or inside the relevant tab. Keep secondary commands together in a menu when several are available. Chat and app title menus use a down chevron beside the title. The app menu includes app metadata and the source chat when available.
 - When a fixed-width label overflows, fade its trailing edge. Let longer content wrap where space permits. Preserve the full text for assistive technology and expose it through a tooltip when useful.
 - Use the `text-base` size throughout Guild, including menus, tooltips, and dialogs. Use font weight and muted color to distinguish headings and secondary text. Use existing theme tokens for colors.
 - Projects uses a list and opens each project on its own route. Customize is the section and Skills is its tab. Its create action starts a chat with an editable prompt. The desktop composer takes focus when ready.

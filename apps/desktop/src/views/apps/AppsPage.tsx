@@ -8,6 +8,7 @@ import { PageHeader } from "../../components/page-header";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   Globe,
   LayoutGrid,
   MessageSquare,
@@ -221,17 +222,35 @@ function AppHeader({
   const asks = (detail?.functions ?? []).some(
     (fn) => fn.available && fn.confirm,
   );
-  const actions = (canShare ||
-    canDelete ||
-    asks ||
-    (onOpenChat !== null && app.chat_id !== null)) && (
+  const work = import.meta.env.MODE !== "control";
+  const metadata = (
+    <p className={work ? "whitespace-normal break-words text-muted-foreground" : "truncate text-xs text-muted-foreground"}>
+      {app.visibility === "org" ? "Shared with the org" : "Private"} · by {app.owner_label}
+      {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v{app.version} · updated {relativeTime(app.updated_at)}
+    </p>
+  );
+  const hasActions = canShare || canDelete || asks || (onOpenChat !== null && app.chat_id !== null);
+  const actions = (work || hasActions) && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" disabled={busy}>
-          Manage
+        <Button
+          variant={work ? "ghost" : "outline"}
+          size={work ? "icon" : "sm"}
+          className={work ? "size-8 text-muted-foreground" : undefined}
+          aria-label={work ? "App options" : undefined}
+          title={work ? "App options" : undefined}
+          disabled={busy}
+        >
+          {work ? <ChevronDown aria-hidden="true" /> : "Manage"}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align={work ? "start" : "end"} className="w-56">
+        {work && (
+          <>
+            <div className="px-2 py-1.5">{metadata}</div>
+            {hasActions && <DropdownMenuSeparator />}
+          </>
+        )}
         {onOpenChat !== null && app.chat_id !== null && (
           <DropdownMenuItem onSelect={() => onOpenChat(app.chat_id!)}>
             <MessageSquare className="size-4" /> Open the chat that built
@@ -281,20 +300,10 @@ function AppHeader({
       </DropdownMenuContent>
     </DropdownMenu>
   );
-  const work = import.meta.env.MODE !== "control";
-  const metadata = (
-    <p className="truncate text-xs text-muted-foreground">
-      {app.visibility === "org" ? "Shared with the org" : "Private"} · by {app.owner_label}
-      {app.agent_name !== null ? ` with ${app.agent_name}` : ""} · v{app.version} · updated {relativeTime(app.updated_at)}
-    </p>
-  );
   return (
     <div className={`shrink-0 border-b border-border bg-background ${work ? "" : `px-4 py-3 ${CAPTION_BUTTONS_INSET}`}`}>
       {work ? (
-        <>
-          <PageHeader variant="work" title={app.name} back={{ label: "Apps", onClick: onBack }} actions={actions || undefined} />
-          <div className="work-page-content pb-2">{metadata}</div>
-        </>
+        <PageHeader variant="work" inlineActions title={app.name} back={{ label: "Apps", onClick: onBack }} actions={actions || undefined} />
       ) : (
         <div className="flex items-center gap-2">
           {showBack && (
