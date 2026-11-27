@@ -391,7 +391,7 @@ export const ChatsPanel = memo(function ChatsPanel({
           {!loadingChats && query !== "" && matches.length === 0 && (
             <p className="px-2 py-2 text-base text-muted-foreground">No matching chats.</p>
           )}
-          {matches.map((chat) => renderChat(chat, { restricted: true, showChatIcon: true }))}
+          {matches.map((chat) => renderChat(chat, { restricted: true }))}
         </section>
       </>
     );

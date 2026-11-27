@@ -252,6 +252,7 @@ export function ChatListItem({
         type="button"
         className="flex h-8 min-w-0 flex-1 items-center gap-1.5 pl-2 text-left outline-none"
       >
+        {showChatIcon && <MessageCircle aria-hidden="true" className="mr-0.5 size-4 shrink-0 text-muted-foreground" />}
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="flex min-w-0">
             {title === "" ? (
@@ -260,7 +261,6 @@ export function ChatListItem({
           </span>
         </span>
         <RowStatus status={status} />
-        {showChatIcon && <MessageCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
         {project && <Folder aria-label="Project chat" className="size-3.5 shrink-0 text-muted-foreground" />}
         {routine !== undefined ? (
           <Repeat data-routine-mark aria-label={`Scheduled task: ${routine}`} className="size-3.5 shrink-0 text-muted-foreground">
