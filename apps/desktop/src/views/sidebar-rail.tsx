@@ -16,6 +16,8 @@ import {
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { Button } from "@guild/ui/components/button";
+import { modKey } from "../components/hotkey-hint";
+import { HAS_SHELL } from "../lib/session";
 import { UserBadge } from "../components/user-badge";
 import { ServerMenuItems } from "./server-menu";
 import { CloseSidebarButton, CollapseButton } from "./sidebar/chrome";
@@ -60,6 +62,7 @@ export function WorkNavigation({
   onProjects,
   onTabChange,
   onOpenRoutines,
+  showNewChatShortcut = true,
 }: {
   active: RailTab | "routines" | "projects";
   onNewChat: () => void;
@@ -67,7 +70,9 @@ export function WorkNavigation({
   onProjects: () => void;
   onTabChange: (tab: RailTab) => void;
   onOpenRoutines?: () => void;
+  showNewChatShortcut?: boolean;
 }) {
+  const newChatShortcut = showNewChatShortcut ? `${modKey()}${HAS_SHELL ? "" : "+Alt"}+N` : null;
   const items = [
     { label: "New", icon: SquarePen, open: onNewChat },
     { label: "Search", icon: Search, open: onSearch },
@@ -83,7 +88,7 @@ export function WorkNavigation({
           key={label}
           variant="ghost"
           size="sm"
-          className="guild-sidebar-current h-8 w-full justify-start px-2 text-base font-normal pointer-coarse:h-10"
+          className="guild-sidebar-current group h-8 w-full justify-start px-2 text-base font-normal pointer-coarse:h-10"
           aria-current={id === active ? "page" : undefined}
           aria-haspopup={label === "Search" ? "dialog" : undefined}
           onClick={open}
@@ -91,6 +96,11 @@ export function WorkNavigation({
         >
           <Icon aria-hidden="true" />
           {label}
+          {label === "New" && newChatShortcut && (
+            <kbd className="invisible whitespace-nowrap font-sans text-muted-foreground group-hover:visible group-focus-visible:visible">
+              {newChatShortcut}
+            </kbd>
+          )}
         </Button>
       ))}
     </nav>

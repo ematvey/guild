@@ -806,6 +806,7 @@ function ThreadView(props: ThreadProps) {
     <WorkNavigation
       active={projectsDestination ? "projects" : route.agents?.view === "agent" && route.agents.personalRoutines ? "routines" : railTab}
       onNewChat={newChat}
+      showNewChatShortcut={!isMobile}
       onSearch={openSearch}
       onProjects={openProjects}
       onTabChange={isMobile ? mobileSwitchTab : switchTab}
