@@ -61,7 +61,7 @@ const PIN_INDICATOR =
   "size-3 shrink-0 text-muted-foreground group-hover/row:hidden group-focus-within/row:hidden group-has-[[data-state=open]]/row:hidden pointer-coarse:hidden";
 
 const ROW_BUTTON =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground data-[state=open]:bg-sidebar-accent";
+  "flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground data-[state=open]:bg-sidebar-accent";
 const ROW_ACTIONS =
   "flex max-w-0 shrink-0 items-center overflow-hidden group-hover/row:max-w-none group-focus-within/row:max-w-none group-has-[[data-state=open]]/row:max-w-none pointer-coarse:max-w-none";
 
@@ -238,7 +238,7 @@ export function ChatListItem({
             }
           : undefined
       }
-      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg pr-2 transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+      className={`${ROW_FOCUS} group/row relative z-0 flex w-full items-center overflow-hidden rounded-lg pr-1 transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "guild-sidebar-selected bg-sidebar-accent text-sidebar-foreground"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -366,7 +366,7 @@ export function ProjectHeader({
   }
   return (
     <div
-      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg pr-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground`}
+      className={`${ROW_FOCUS} @container group/row relative flex w-full items-center overflow-hidden rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground ${standalone ? "pr-2" : "pr-1"}`}
       onContextMenu={(event) => {
         event.preventDefault();
         setMenuOpen(true);
