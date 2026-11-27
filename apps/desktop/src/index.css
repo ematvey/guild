@@ -61,3 +61,27 @@ html.dark[data-work-palette] .guild-sidebar-theme {
   --guild-sidebar-selection: oklch(0.31 0.055 var(--work-hue, 255));
   --guild-sidebar-selection-text: oklch(0.87 0.068 var(--work-hue, 255));
 }
+
+/* Keep the native thumb draggable and its gutter stable as the pointer
+   enters and leaves the window. The mobile drawer uses the same scroller. */
+.work-sidebar-scroll {
+  --work-scroll-thumb: transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--work-scroll-thumb) transparent;
+}
+
+html:hover .work-sidebar-scroll,
+.work-sidebar-scroll:focus-visible {
+  --work-scroll-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+.work-sidebar-scroll::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+
+.work-sidebar-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--work-scroll-thumb);
+}
