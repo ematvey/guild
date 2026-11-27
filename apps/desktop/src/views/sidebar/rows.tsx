@@ -56,12 +56,12 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
 }
 
 const ROW_FOCUS =
-  "has-[>button:focus-visible]:ring-1 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring";
+  "has-[>button:focus-visible]:bg-sidebar-accent";
 const PIN_INDICATOR =
   "size-3 shrink-0 text-muted-foreground group-hover/row:hidden group-focus-within/row:hidden group-has-[[data-state=open]]/row:hidden pointer-coarse:hidden";
 
 const ROW_BUTTON =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  "flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground data-[state=open]:bg-sidebar-accent";
 const ROW_ACTIONS =
   "flex max-w-0 shrink-0 items-center overflow-hidden group-hover/row:max-w-none group-focus-within/row:max-w-none group-has-[[data-state=open]]/row:max-w-none pointer-coarse:max-w-none";
 
@@ -96,7 +96,7 @@ function RowActions({
 }) {
   if (!onRename && !onArchive && !onDelete && !onPin) return null;
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button type="button" aria-label="Row actions" title="Row actions" className={ROW_BUTTON}>
           <EllipsisVertical aria-hidden="true" className="size-4" />
