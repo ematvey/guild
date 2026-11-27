@@ -329,8 +329,8 @@ export const ChatsPanel = memo(function ChatsPanel({
           title={project?.name ?? "Projects"}
           back={projectId ? { label: "Projects", onClick: () => onBackToProjects?.() } : undefined}
           actions={project
-            ? !archivedProject && <Button className="text-base" onClick={() => onNewChatInProject?.(project)}><Plus />New chat</Button>
-            : !projectId && <Button className="text-base" onClick={onNewProject}><Plus />New project</Button>}
+            ? !archivedProject && <Button variant="ghost" size="icon" aria-label="New chat" title="New chat" onClick={() => onNewChatInProject?.(project)}><Plus /></Button>
+            : !projectId && <Button variant="ghost" size="icon" aria-label="New project" title="New project" onClick={onNewProject}><Plus /></Button>}
         />
         <div className="work-page-content pb-8 pt-3">
           {projectId ? (

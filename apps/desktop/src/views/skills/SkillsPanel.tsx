@@ -285,13 +285,14 @@ export function SkillsPanel({
   );
   const publishAction = (
     <Button
-      size="sm"
-      variant={route.management ? "default" : "outline"}
+      size={route.management ? "sm" : "icon"}
+      variant={route.management ? "default" : "ghost"}
+      title={route.management ? undefined : "Publish a skill"}
       aria-label={import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
       onClick={() => onNavigate(toCatalog({ view: "catalog", slug: null, editor: "new", management: true }))}
     >
       <Plus />
-      {import.meta.env.MODE === "control" ? "New skill" : "Publish a skill"}
+      {route.management && "New skill"}
     </Button>
   );
   const catalogFilters = (
@@ -328,7 +329,7 @@ export function SkillsPanel({
       <PageHeader
         variant={route.management ? "bar" : "work"}
         title={route.management ? "Skills" : "Customize"}
-        actions={route.management ? <>{searchField}{publishAction}</> : undefined}
+        actions={route.management ? <>{searchField}{publishAction}</> : tab === "catalog" ? publishAction : undefined}
         tabs={
           <>
             <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
@@ -362,7 +363,6 @@ export function SkillsPanel({
         <div className="work-page-content flex shrink-0 flex-wrap items-center gap-2 pt-3">
           {searchField}
           {catalogFilters}
-          <div className="sm:ml-auto">{publishAction}</div>
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>

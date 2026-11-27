@@ -708,18 +708,24 @@ function ThreadView(props: ThreadProps) {
     ) : route.agents?.view === "agent" && route.agents.personalRoutines ? (
       <RoutePage isMobile={isMobile} title="Scheduled" onOpenDrawer={openDrawer}>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {!route.agents.routineId && <PageHeader variant="work" title="Scheduled" />}
-          <div className={`work-page-content pb-8 ${route.agents.routineId ? "" : "pt-3"}`}>
-          {agent.agentsList === null ? <p>Loading routines…</p> :
-            agent.personalAgent?.id !== route.agents.agentId ? <p>This personal agent is unavailable.</p> :
+          {agent.personalAgent?.id === route.agents.agentId ? (
+            <div className={route.agents.routineId ? "work-page-content pb-8" : undefined}>
               <AgentRoutinesPage agentId={route.agents.agentId} routineId={route.agents.routineId}
                 canManage={agent.personalAgent.can_manage} onOpenChat={openChat}
                 onNavigate={(next) => {
                   if (next.view === "agent" && next.tab === "routines") {
                     pushRoute({ ...CHAT_ROOT, agents: { ...next, personalRoutines: true } });
                   }
-                }} />}
-          </div>
+                }} />
+            </div>
+          ) : (
+            <>
+              <PageHeader variant="work" title="Scheduled" />
+              <p className="work-page-content">
+                {agent.agentsList === null ? "Loading routines…" : "This personal agent is unavailable."}
+              </p>
+            </>
+          )}
         </div>
       </RoutePage>
     ) : paneLayout.mainPane === "appsPage" && route.apps !== undefined && route.apps !== null ? (

@@ -471,8 +471,11 @@ export function AppsPage({
     ];
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <PageHeader variant="work" title="Apps"
-          actions={<Input type="search" aria-label="Search apps" placeholder="Search apps" value={query} onChange={(event) => setQuery(event.target.value)} />} />
+        <PageHeader variant="work" title="Apps" />
+        <div className="work-page-content pb-2">
+          <Input className="w-full sm:w-[280px]" type="search" aria-label="Search apps" placeholder="Search apps"
+            value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="work-page-content space-y-6 pb-8 pt-3">
             {visible === undefined ? <SkeletonRows rows={4} /> : apps?.length === 0 ? (

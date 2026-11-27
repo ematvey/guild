@@ -51,14 +51,14 @@ export function PageHeader({
         </button>
       )}
       {bar ? (
-        <div className="flex flex-wrap items-center gap-3 pb-3">
-          <div className="min-w-0 w-full sm:w-auto sm:flex-1">
+        <div className={work ? "flex items-center gap-1.5 pb-3" : "flex flex-wrap items-center gap-3 pb-3"}>
+          <div className={work ? "min-w-0" : "min-w-0 w-full sm:w-auto sm:flex-1"}>
             <h1 className={work ? "truncate text-base font-semibold" : "truncate text-lg font-semibold tracking-tight"}>{title}</h1>
             {description !== undefined && description !== "" && (
               <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
             )}
           </div>
-          {actions !== undefined && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+          {actions !== undefined && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
         </div>
       ) : (
         <>

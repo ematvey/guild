@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Clock, Loader2, Pencil, Play, Plus } from "lucide-react";
+import { PageHeader } from "../../components/page-header";
 import { Button } from "@guild/ui/components/button";
 import { nextRunLabel, relativeTime } from "../../lib/relative-time";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
@@ -156,69 +157,76 @@ function RoutineList({
     }
   };
 
+  const work = import.meta.env.MODE !== "control";
+  const create = canManage && (
+    <Button variant={work ? "ghost" : "default"} size={work ? "icon" : "sm"}
+      aria-label="New routine" title={work ? "New routine" : undefined}
+      onClick={() => void start()} disabled={starting}>
+      {starting ? <Loader2 className="animate-spin" /> : <Plus />}
+      {!work && "New routine"}
+    </Button>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm text-muted-foreground">
-          Routines run on a schedule in an isolated context. Ask the agent to create or change one.
-        </p>
-        <div className="flex-1" />
-        {canManage && (
-          <Button size="sm" onClick={() => void start()} disabled={starting}>
-            {starting ? <Loader2 className="animate-spin" /> : <Plus />}
-            New routine
-          </Button>
+    <>
+      {work && <PageHeader variant="work" title="Scheduled" actions={create || undefined} />}
+      <div className={work ? "work-page-content space-y-4 pb-8" : "space-y-4"}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            Routines run on a schedule in an isolated context. Ask the agent to create or change one.
+          </p>
+          {!work && create}
+        </div>
+        {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
+        {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
+        {routines === null && loadError === null && <LoadingRows rows={3} />}
+        {routines !== null && routines.length === 0 && (
+          <EmptyState
+            icon={Clock}
+            title="No routines yet"
+            hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
+          />
+        )}
+        {routines !== null && routines.length > 0 && (
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            {routines.map((routine) => (
+              <button
+                key={routine.id}
+                type="button"
+                onClick={() =>
+                  onNavigate({
+                    view: "agent",
+                    agentId,
+                    tab: "routines",
+                    routineId: routine.id,
+                  })
+                }
+                className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
+              >
+                <Clock className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-sm font-medium">{routine.name}</span>
+                    <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
+                      {routine.enabled ? "Enabled" : "Paused"}
+                    </ToneBadge>
+                    {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
+                  </span>
+                  <span
+                    className="mt-0.5 block truncate text-xs text-muted-foreground"
+                    title={routine.schedule ?? undefined}
+                  >
+                    {scheduleLabel(routine)}
+                    {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
+                  </span>
+                </span>
+                {routine.last_run && <RunStatusBadge status={routine.last_run.status} />}
+              </button>
+            ))}
+          </div>
         )}
       </div>
-      {error !== null && <ErrorState title="Could not open a routine thread" message={error} />}
-      {loadError !== null && <ErrorState title="Could not load routines" message={loadError} onRetry={retry} />}
-      {routines === null && loadError === null && <LoadingRows rows={3} />}
-      {routines !== null && routines.length === 0 && (
-        <EmptyState
-          icon={Clock}
-          title="No routines yet"
-          hint={canManage ? "Start a chat with the agent and describe what should run, when, and in which timezone." : undefined}
-        />
-      )}
-      {routines !== null && routines.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          {routines.map((routine) => (
-            <button
-              key={routine.id}
-              type="button"
-              onClick={() =>
-                onNavigate({
-                  view: "agent",
-                  agentId,
-                  tab: "routines",
-                  routineId: routine.id,
-                })
-              }
-              className="flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-accent/50"
-            >
-              <Clock className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">{routine.name}</span>
-                  <ToneBadge tone={routine.enabled ? "success" : "neutral"}>
-                    {routine.enabled ? "Enabled" : "Paused"}
-                  </ToneBadge>
-                  {routine.kind === "once" && <ToneBadge tone="info">Reminder</ToneBadge>}
-                </span>
-                <span
-                  className="mt-0.5 block truncate text-xs text-muted-foreground"
-                  title={routine.schedule ?? undefined}
-                >
-                  {scheduleLabel(routine)}
-                  {routine.next_run_at ? ` · next ${nextRunLabel(routine.next_run_at)}` : ""}
-                </span>
-              </span>
-              {routine.last_run && <RunStatusBadge status={routine.last_run.status} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
