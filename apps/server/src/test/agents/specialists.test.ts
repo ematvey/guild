@@ -138,6 +138,6 @@ describe("specialist pack", () => {
   it("the base template invites delegation before its red lines", () => {
     expect(AGENTS_TEMPLATE).toContain("## Delegation");
     expect(AGENTS_TEMPLATE.indexOf("## Delegation")).toBeLessThan(AGENTS_TEMPLATE.indexOf("## Red Lines"));
-    expect(AGENTS_TEMPLATE).toContain("list_agents");
+    expect(AGENTS_TEMPLATE).toContain("subagents.spawn");
   });
 });

@@ -357,7 +357,8 @@ export function claimCoordinationLaunches<T extends QueryResultRow>(db: Database
 
 export function settleCoordinationLaunch(db: Database, values: unknown[]) {
   return db.query(
-    `UPDATE agent_coordination_inputs SET launched_run_id=$2, launch_error=$3
+    `UPDATE agent_coordination_inputs SET launched_run_id=$2, launch_error=$3,
+       accepted_agent_id=COALESCE((SELECT agent_id FROM agent_runs WHERE id=$2), accepted_agent_id)
      WHERE id=$1 AND launched_run_id IS NULL AND launch_error IS NULL AND launch_attempt=$4`,
     values,
   );

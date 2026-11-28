@@ -154,7 +154,7 @@ const AGENT_TOOL_CATALOG = [
     label: "Subagents",
     group: "Agents",
     description:
-      "Discover agents with list_agents, then spawn child threads and send, read, list, cancel or close them.",
+      "Spawn general workers, then send, read, list, cancel or close their child threads.",
     safe: false,
   },
   {

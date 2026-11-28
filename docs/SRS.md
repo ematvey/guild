@@ -504,7 +504,7 @@ one section:
 
 The agent's name and description come from the `agents` row, not from a
 workspace file. The description is the agent's purpose: the UI shows it to
-users, and the instructions and `list_agents` give it to callers.
+users, and the instructions give it to callers.
 
 A desktop turn adds the user's project context: the global config-dir file
 (`AGENTS.override.md` beats `AGENTS.md`) plus one file per directory from

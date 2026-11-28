@@ -9,10 +9,7 @@ Keep workspace conventions here.
 
 ## Delegation
 
-Specialists exist in this org — code (Source), production (Ops), customers
-(Clients). \`list_agents\` lists them. Delegate work that sits in their domain
-instead of doing it half-way yourself, and give the specialist the context it
-needs.
+Delegate bounded tasks with \`subagents.spawn\`. Give each general worker the context and expected result for its task.
 
 ## Red Lines
 

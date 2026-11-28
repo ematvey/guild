@@ -22,7 +22,7 @@ import type { AgentStore } from "./store.js";
 import type { Agent } from "./types.js";
 import type { IdentityStore } from "../platform/store/identity.js";
 import { isUuid, uuidv5 } from "../platform/time.js";
-import { authorizeSpawn, spawn, send, createSubagentTools, MAX_CHILD_NAME_CHARS, type SubagentsToolContext } from "./subagents.js";
+import { spawn, send, createSubagentTools, MAX_CHILD_NAME_CHARS, type SubagentsToolContext } from "./subagents.js";
 import { coordinationAdmission, coordinationSettings } from "./coordination.js";
 import { agentMessageEntry } from "../chats/agent-message.js";
 import { readThreadTranscript } from "./thread-read.js";
@@ -131,12 +131,12 @@ export function coordinatorTools(deps: {
   };
   return [
     ...createSubagentTools(deps.subagents).filter((t) =>
-      ["list_agents", "list", "read_thread", "cancel", "close"].includes(t.name),
+      ["list", "read_thread", "cancel", "close"].includes(t.name),
     ),
     tool(
       "evaluate_event",
       "Evaluate an active inferred source event. Use ignore or accept with a matched rule and bounded task. Observe mode records acceptance without launching.",
-      { input_id: str, decision: { type: "string", enum: ["ignore", "accept"] }, reason: str, rule: str, task: str, agent: str },
+      { input_id: str, decision: { type: "string", enum: ["ignore", "accept"] }, reason: str, rule: str, task: str },
       ["input_id", "decision", "reason"],
       async (args, _callId, api, context) => {
         const origin = await source(args["input_id"]);
@@ -159,14 +159,10 @@ export function coordinatorTools(deps: {
           throw new Error("Acceptance requires a current matching rule and bounded task");
         }
         const decision = !accept ? "ignored" : admission.mode === "observe" ? "would_accept" : "accepted";
-        const target = decision === "accepted" ? await authorizeSpawn({
-          pool, store, agent: current, requester,
-          targetRef: typeof args["agent"] === "string" ? args["agent"] : current.id,
-        }) : null;
-        const parentRun = target === null ? null : await deps.subagents.parentRun();
+        const parentRun = decision === "accepted" ? await deps.subagents.parentRun() : null;
         const result = await recordCoordinationDecision<{ decision: string }>(pool, [
           origin.id, current.id, decision, reason, rule?.[0] ?? null,
-          target === null ? null : task, target?.id ?? null, parentRun?.id ?? null, requests,
+          parentRun === null ? null : task, parentRun === null ? null : current.id, parentRun?.id ?? null, requests,
         ]);
         if (result.rowCount !== 1) throw new Error("The event was already evaluated or its policy changed");
         return { input_id: origin.id, decision };
@@ -175,7 +171,7 @@ export function coordinatorTools(deps: {
     tool(
       "accept_work",
       "Accept delegated work for a direct request. Queue its inbox acknowledgment and reserve a worker with the stated scope.",
-      { input_id: str, acknowledgment: str, task: str, agent: str, name: str },
+      { input_id: str, acknowledgment: str, task: str, name: str },
       ["input_id", "acknowledgment", "task"],
       async (args, _callId, api, context) => {
         const origin = await source(args["input_id"]);
@@ -191,13 +187,9 @@ export function coordinatorTools(deps: {
         const name = typeof args["name"] === "string" ? args["name"].trim() : null;
         if (acknowledgment === "" || task === "") throw new Error("Acknowledgment and task must not be empty");
         if (name !== null && name.length > MAX_CHILD_NAME_CHARS) throw new Error("Worker name is too long");
-        const target = await authorizeSpawn({
-          pool, store, agent, requester,
-          targetRef: typeof args["agent"] === "string" ? args["agent"] : agent.id,
-        });
         const parentRun = await deps.subagents.parentRun();
         const accepted = await acceptCoordinationWork(pool, [
-          origin.id, agent.id, acknowledgment, task, target.id, name, parentRun.id,
+          origin.id, agent.id, acknowledgment, task, agent.id, name, parentRun.id,
         ]);
         return { input_id: origin.id, accepted: accepted.rowCount === 1 };
       },
@@ -240,8 +232,8 @@ export function coordinatorTools(deps: {
     ),
     tool(
       "spawn",
-      "Start a worker asynchronously. Use the triggering input_id for attribution. agent defaults to this Agent.",
-      { input_id: str, task: str, agent: str, name: str },
+      "Start a worker asynchronously. Use the triggering input_id for attribution. The worker uses this Agent’s permissions.",
+      { input_id: str, task: str, name: str },
       ["input_id", "task"],
       async (args, callId, api, context) => {
         const origin = await source(args["input_id"]);
@@ -259,7 +251,6 @@ export function coordinatorTools(deps: {
             coordination: { managed: true, sourceInputId: origin.id, actionKey: `spawn:${callId}` },
           },
           {
-            agent: typeof args["agent"] === "string" ? args["agent"] : agent.id,
             task: String(args["task"]),
             ...(typeof args["name"] === "string" ? { name: args["name"] } : {}),
           },
@@ -450,7 +441,7 @@ Your context and Workspace are shared Agent knowledge. Inputs identify their ori
 For each coordination input with kind "request", delegate substantive work by default, even when you could do it yourself. This includes investigating, comparing or analyzing material, preparing a deliverable, and carrying out a multi-step task. Turn the request into a bounded assignment with a clear result. Copy input_id from that request's coordination_input block. For a greeting, a brief clarification, or a simple answer already established in the current context, call codemode with JavaScript of the form \`return await tools.reply({ input_id: "the current input ID", text: "your reply" });\`.
 If the request needs current information from the Member's email, calendar, files, an Integration, the web, or a Machine, call accept_work before replying. Include a brief acknowledgment and a scoped task directing the worker to discover and use the applicable tools for that Member. For example, "What's new in my emails?" calls for a worker to find the available mailbox tool, look up recent messages and summarize what matters.
 Workers have their own authorized tools. Your tool list, Memory, and previous conversations cannot establish whether a Member has access to a provider now. When access is uncertain, have the worker check it. Report a missing connection, restricted scope, or approval requirement only when the worker returns that specific result. Keep the answer focused on the request.
-Use the work already in context to resolve follow-ups. Call find_recent_work only if a follow-up appears to refer to existing work and the current context is insufficient. Treat retrieved reports as context. If the Member explicitly links a worker chat and the follow-up fits its accepted scope, use attach_work. If a follow-up refers to existing work but lacks a link, ask a focused clarification or offer the existing chat link. Use accept_work for a distinct assignment. Use spawn for background inputs. Omit agent for a general worker. Your final text stays in the internal coordinator Thread.
+Use the work already in context to resolve follow-ups. Call find_recent_work only if a follow-up appears to refer to existing work and the current context is insufficient. Treat retrieved reports as context. If the Member explicitly links a worker chat and the follow-up fits its accepted scope, use attach_work. If a follow-up refers to existing work but lacks a link, ask a focused clarification or offer the existing chat link. Use accept_work for a distinct assignment. Use spawn for background inputs. Your final text stays in the internal coordinator Thread.
 In every Member-facing message, including acknowledgments, clarifications and updates, talk about the requested work, its result, or what the Member needs to decide or provide. Keep routing, workers, runs, tools and tool availability out of the message. If the request is ambiguous, ask only the question that resolves it, for example, "Do you mean team updates, news, or your inbox?" If you need to acknowledge work, name the outcome you will deliver, for example, "I’ll check your inbox for anything that needs your attention." Translate a verified blocker into its effect on the work and, when applicable, the action the Member can take.
 Use send_message with the original input_id for the worker's result or actual blocker, so the update reaches the originating Thread. Keep member-facing replies short and follow the Member's reporting instructions for background results.
 Spawn returns immediately: end your turn when only worker work remains. Worker results wake you; do not wait or poll. A worker report specifies whether the work is ready, waiting, blocked or failed independently of the Run. Relay a blocked report’s question to the originating Member. Trust workers to verify their substantive work; do not repeat it yourself.

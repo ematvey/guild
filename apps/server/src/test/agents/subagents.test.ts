@@ -16,11 +16,9 @@ import {
   close,
   createSubagentTools,
   list,
-  listAgents,
   read,
   send,
   spawn,
-  resolveSpawnTarget,
   subagentsContextForChat,
   type SubagentsRuntime,
   type SubagentsToolContext,
@@ -84,10 +82,8 @@ dbDescribe("subagent tree tools", () => {
   let threads: ThreadStore;
   let orgId: string;
   let owner: UserRow;
-  let outsider: UserRow;
   let parentAgent: Awaited<ReturnType<AgentStore["create"]>>;
   let targetAgent: Awaited<ReturnType<AgentStore["create"]>>;
-  let privateTarget: Awaited<ReturnType<AgentStore["create"]>>;
 
   async function makeRun(args: {
     agentId: string;
@@ -138,10 +134,8 @@ dbDescribe("subagent tree tools", () => {
     orgId = randomUUID();
     await env.db.query("INSERT INTO orgs (id, name) VALUES ($1, 'agents-subagents-org')", [orgId]);
     owner = await makeUser(orgId, "subagents-owner@example.test");
-    outsider = await makeUser(orgId, "subagents-outsider@example.test");
     parentAgent = await store.create(owner, { name: "Parent", model: "GLM-Test", visibility: "org" });
     targetAgent = await store.create(owner, { name: "Researcher", model: "GLM-Test", visibility: "org" });
-    privateTarget = await store.create(outsider, { name: "Private", model: "GLM-Test", visibility: "private" });
   }, 60_000);
 
   afterAll(async () => {
@@ -159,8 +153,8 @@ dbDescribe("subagent tree tools", () => {
       ...(await contextFor({ thread, run, fake, maxChildrenPerNode: 1 })),
       coordination: { managed: true, actionKey: "durable-action-1" },
     };
-    const a = await spawn(context, { agent: parentAgent.id, task: "Inspect a document" });
-    const b = await spawn(context, { agent: parentAgent.id, task: "Inspect a document" });
+    const a = await spawn(context, { task: "Inspect a document" });
+    const b = await spawn(context, { task: "Inspect a document" });
     expect(b.thread_id).toBe(a.thread_id);
     expect(b.run_id).toBe(a.run_id);
     expect(
@@ -169,7 +163,7 @@ dbDescribe("subagent tree tools", () => {
     await expect(
       spawn(
         { ...context, coordination: { managed: true, actionKey: "durable-action-2" } },
-        { agent: parentAgent.id, task: "Another task" },
+        { task: "Another task" },
       ),
     ).rejects.toMatchObject({ code: "child_limit" });
     await store.runs.updateRun(a.run_id, { status: "succeeded", finished_at: new Date().toISOString() });
@@ -191,11 +185,10 @@ dbDescribe("subagent tree tools", () => {
     const context = await contextFor({ thread, run: parentRun, fake });
 
     const result = await spawn(context, {
-      agent: targetAgent.name,
       task: "Write the report",
       name: "quarterly report",
     });
-    expect(result.agent_name).toBe(targetAgent.name);
+    expect(result.agent_name).toBe(parentAgent.name);
     expect(result.title).toBe("quarterly report");
     expect(result.status).toBe("running");
     // Queued until the child's pi-durable run takes the turn.
@@ -204,10 +197,12 @@ dbDescribe("subagent tree tools", () => {
     expect(childRun.trigger).toBe("delegation");
     expect(childRun.depth).toBe(1);
     expect(childRun.parent_run_id).toBe(parentRun.id);
-    expect(childRun.delegate_agent_id).toBe(targetAgent.id);
+    expect(childRun.delegate_agent_id).toBe(parentAgent.id);
 
     const childThread = await store.threads.threadById(result.thread_id);
     expect(childThread?.type).toBe("subagent");
+    expect(childThread?.agent_id).toBe(thread.agent_id);
+    expect(childThread?.user_id).toBe(thread.user_id);
     expect(childThread?.parent_thread_id).toBe(thread.id);
     expect(childThread?.depth).toBe(1);
     expect(childThread?.closed_at).toBeNull();
@@ -225,7 +220,7 @@ dbDescribe("subagent tree tools", () => {
       thread_id: result.thread_id,
       run_id: result.run_id,
       chat_id: result.chat_id,
-      agent_name: targetAgent.name,
+      agent_name: parentAgent.name,
       title: "quarterly report",
       status: "running",
       task: "Write the report",
@@ -240,7 +235,7 @@ dbDescribe("subagent tree tools", () => {
     const thread = await store.threads.createThread(parentAgent.id, owner.id, "Unnamed child");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const context = await contextFor({ thread, run: parentRun, fake: fakeRuntime() });
-    const result = await spawn(context, { agent: targetAgent.name, task: "Check the inbox\nthen report" });
+    const result = await spawn(context, { task: "Check the inbox\nthen report" });
     const child = await store.threads.threadById(result.thread_id);
     expect(result.title).toBe("Spawned: Check the inbox");
     expect(child?.title_locked).toBe(false);
@@ -250,7 +245,7 @@ dbDescribe("subagent tree tools", () => {
     const thread = await store.threads.createThread(parentAgent.id, owner.id, "Long name");
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const context = await contextFor({ thread, run: parentRun, fake: fakeRuntime() });
-    await expect(spawn(context, { agent: targetAgent.name, task: "x", name: "n".repeat(81) })).rejects.toThrow(
+    await expect(spawn(context, { task: "x", name: "n".repeat(81) })).rejects.toThrow(
       /at most 80 characters/,
     );
   });
@@ -263,7 +258,7 @@ dbDescribe("subagent tree tools", () => {
     const deepRun = await makeRun({ agentId: parentAgent.id, threadId: depth3.id, depth: 3 });
     const fake = fakeRuntime();
     const deepContext = await contextFor({ thread: depth3, run: deepRun, fake });
-    await expect(spawn(deepContext, { agent: targetAgent.name, task: "too deep" })).rejects.toMatchObject({
+    await expect(spawn(deepContext, { task: "too deep" })).rejects.toMatchObject({
       code: "depth_limit",
     });
 
@@ -273,7 +268,7 @@ dbDescribe("subagent tree tools", () => {
       await store.threads.createChildThread(cappedThread.id, targetAgent.id, owner.id, `Child ${index}`);
     }
     const cappedContext = await contextFor({ thread: cappedThread, run: cappedRun, fake });
-    await expect(spawn(cappedContext, { agent: targetAgent.name, task: "one too many" })).rejects.toMatchObject({
+    await expect(spawn(cappedContext, { task: "one too many" })).rejects.toMatchObject({
       code: "child_limit",
     });
   });
@@ -284,7 +279,7 @@ dbDescribe("subagent tree tools", () => {
     const fake = fakeRuntime();
     const context = await contextFor({ thread: parent, run: parentRun, fake, maxChildrenPerNode: 3 });
     const results = await Promise.allSettled(
-      Array.from({ length: 8 }, (_, index) => spawn(context, { agent: targetAgent.name, task: `task ${index}` })),
+      Array.from({ length: 8 }, (_, index) => spawn(context, { task: `task ${index}` })),
     );
     const spawned = results.filter((result) => result.status === "fulfilled");
     const refused = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -294,98 +289,15 @@ dbDescribe("subagent tree tools", () => {
     expect(await store.tree.childCount(parent.id)).toBe(3);
   });
 
-  it("requires the requester to be able to use the target agent", async () => {
-    const thread = await store.threads.createThread(parentAgent.id, owner.id, "Access");
+  it("exposes a general spawn tool without a saved-agent selector", async () => {
+    const thread = await store.threads.createThread(parentAgent.id, owner.id, "General worker");
     const run = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
-    const fake = fakeRuntime();
-    const context = await contextFor({ thread, run, fake });
-    // Another user's private agent is invisible: the same answer as a
-    // missing one, by name or by id.
-    await expect(spawn(context, { agent: privateTarget.name, task: "secret" })).rejects.toMatchObject({
-      code: "target_not_found",
-    });
-    await expect(spawn(context, { agent: privateTarget.id, task: "secret" })).rejects.toMatchObject({
-      code: "target_not_found",
-    });
-    await expect(spawn(context, { agent: "No Such Agent", task: "x" })).rejects.toMatchObject({
-      code: "target_not_found",
-      message: expect.stringContaining("list_agents"),
-    });
-
-    const failedThread = await store.threads.createThread(parentAgent.id, owner.id, "Failed spawn");
-    const failedRun = await makeRun({ agentId: parentAgent.id, threadId: failedThread.id });
-    const failedContext = await contextFor({ thread: failedThread, run: failedRun, fake });
-    const before = await threads.listEvents(orgId, failedThread.chat_id);
-    await expect(spawn(failedContext, { agent: "No Such Agent", task: "x" })).rejects.toMatchObject({
-      code: "target_not_found",
-    });
-    const after = await threads.listEvents(orgId, failedThread.chat_id);
-    expect(after).toHaveLength(before.length);
-    expect(after.some((row) => row.event.type === "child_spawned")).toBe(false);
-  });
-
-  it("a name several visible agents share resolves to the requester's own, or is ambiguous", async () => {
-    const mine = await store.create(owner, { name: "Scout", model: "GLM-Test", visibility: "org" });
-    await store.create(outsider, { name: "scout", model: "GLM-Test", visibility: "org" });
-    expect((await resolveSpawnTarget(store, owner, "Scout")).id).toBe(mine.id);
-    const third = await makeUser(orgId, "subagents-third@example.test");
-    await expect(resolveSpawnTarget(store, third, "Scout")).rejects.toMatchObject({ code: "ambiguous_target" });
-  });
-
-  it("list_agents is the caller user's directory and never leaks another personal agent", async () => {
-    const admin = await makeUser(orgId, "subagents-admin@example.test", "admin");
-    await env!.db.query(
-      `INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd)
-       VALUES ($1, 'GLM-Test', 'guild', true, 0, 0)`,
-      [orgId],
-    );
-    const ownerPersonal = (await store.ensurePersonalAgent(owner))!;
-    const outsiderPersonal = (await store.ensurePersonalAgent(outsider))!;
-    expect(ownerPersonal.is_personal).toBe(true);
-    const described = await store.create(outsider, {
-      name: "Directory described",
-      model: "GLM-Test",
-      description: "Writes launch notes.",
-      visibility: "org",
-    });
-
-    const ownerThread = await store.threads.createThread(parentAgent.id, owner.id, "Directory owner");
-    const ownerRun = await makeRun({ agentId: parentAgent.id, threadId: ownerThread.id });
-    const fake = fakeRuntime();
-    const ownerContext = await contextFor({ thread: ownerThread, run: ownerRun, fake });
-    const ownerDirectory = await listAgents(ownerContext);
-    const ownerIds = ownerDirectory.map((entry) => entry.id);
-    expect(ownerIds).toContain(ownerPersonal.id);
-    expect(ownerIds).toContain(described.id);
-    expect(ownerIds).not.toContain(outsiderPersonal.id);
-    expect(ownerIds).not.toContain(privateTarget.id);
-    expect(ownerDirectory.find((entry) => entry.id === described.id)).toEqual({
-      id: described.id,
-      name: "Directory described",
-      description: "Writes launch notes.",
-      personal: false,
-    });
-    expect(ownerDirectory.find((entry) => entry.id === ownerPersonal.id)?.personal).toBe(true);
-    expect(ownerDirectory.map((entry) => entry.name)).toEqual(
-      [...ownerDirectory.map((entry) => entry.name)].sort((a, b) => a.localeCompare(b)),
-    );
-
-    // An admin sees every non-personal agent, but no other user's personal one.
-    const adminThread = await store.threads.createThread(parentAgent.id, admin.id, "Directory admin");
-    const adminRun = await makeRun({ agentId: parentAgent.id, threadId: adminThread.id });
-    const adminContext = await contextFor({ thread: adminThread, run: adminRun, fake });
-    const adminIds = (await listAgents(adminContext)).map((entry) => entry.id);
-    expect(adminIds).toContain(described.id);
-    expect(adminIds).toContain(privateTarget.id);
-    expect(adminIds).not.toContain(outsiderPersonal.id);
-    expect(adminIds).not.toContain(ownerPersonal.id);
-
-    const tool = createSubagentTools(ownerContext).find((entry) => entry.name === "list_agents");
-    expect(tool).toBeDefined();
-    const out = (await tool!.execute({}, {} as never, {} as never)) as {
-      structuredOutput?: { agents: { id: string }[] };
-    };
-    expect(out.structuredOutput?.agents.map((entry) => entry.id)).toContain(described.id);
+    const context = await contextFor({ thread, run, fake: fakeRuntime() });
+    const tools = createSubagentTools(context);
+    expect(tools.map((tool) => tool.name)).not.toContain("list_agents");
+    const tool = tools.find((entry) => entry.name === "spawn");
+    expect(tool?.parameters).toMatchObject({ required: ["task"] });
+    expect(tool?.parameters).not.toHaveProperty("properties.agent");
   });
 
   it("send to a grandchild is a notice in the grandchild's own parent conversation", async () => {
@@ -393,9 +305,9 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
     const childThread = (await store.threads.threadById(child.thread_id))!;
-    const grandchild = await store.threads.createChildThread(child.thread_id, targetAgent.id, owner.id, "Grandchild");
+    const grandchild = await store.threads.createChildThread(child.thread_id, parentAgent.id, owner.id, "Grandchild");
 
     const sent = await send(context, { thread_id: grandchild.id, text: "next step" });
     expect(sent.thread_id).toBe(grandchild.id);
@@ -421,14 +333,14 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
 
     const sent = await send(context, { thread_id: child.thread_id, text: "next step" });
     const childThread = (await store.threads.threadById(child.thread_id))!;
     expect(sent).toMatchObject({
       thread_id: child.thread_id,
       chat_id: childThread.chat_id,
-      agent_name: targetAgent.name,
+      agent_name: parentAgent.name,
       status: "running",
     });
     const run = await store.runs.getRun(sent.run_id);
@@ -449,7 +361,7 @@ dbDescribe("subagent tree tools", () => {
       thread_id: child.thread_id,
       run_id: sent.run_id,
       chat_id: childThread.chat_id,
-      agent_name: targetAgent.name,
+      agent_name: parentAgent.name,
       title: childThread.title,
       status: "running",
       task: "next step",
@@ -477,15 +389,16 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: doomed.id, task: "start" });
+    const child = await store.threads.createChildThread(thread.id, doomed.id, owner.id, "Existing worker");
+    await makeRun({ agentId: doomed.id, threadId: child.id });
     await env!.db.query("UPDATE agents SET status = 'deleting' WHERE id = $1", [doomed.id]);
     const submittedBefore = fake.submitted.length;
-    await expect(send(context, { thread_id: child.thread_id, text: "next" })).rejects.toMatchObject({
+    await expect(send(context, { thread_id: child.id, text: "next" })).rejects.toMatchObject({
       code: "agent_deleting",
     });
     expect(fake.submitted.length).toBe(submittedBefore);
     const runs = await env!.db.query<{ n: number }>("SELECT count(*)::int AS n FROM agent_runs WHERE thread_id = $1", [
-      child.thread_id,
+      child.id,
     ]);
     expect(runs.rows[0]!.n).toBe(1);
   });
@@ -495,7 +408,7 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
     const childThread = await store.threads.threadById(child.thread_id);
     await threads.appendEvent(childThread!.chat_id, userMessageEvent("the first line"));
     await threads.appendEvent(childThread!.chat_id, userMessageEvent("the second line"));
@@ -513,15 +426,15 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
     const grandchildThread = await store.threads.createChildThread(
       child.thread_id,
-      targetAgent.id,
+      parentAgent.id,
       owner.id,
       "Grandchild",
     );
     await makeRun({
-      agentId: targetAgent.id,
+      agentId: parentAgent.id,
       threadId: grandchildThread.id,
       depth: 2,
       parentRunId: (await store.runs.getRun(child.run_id)).id,
@@ -531,7 +444,7 @@ dbDescribe("subagent tree tools", () => {
     expect(children).toHaveLength(1);
     expect(children[0]).toMatchObject({
       thread_id: child.thread_id,
-      agent_name: targetAgent.name,
+      agent_name: parentAgent.name,
       status: "queued",
       depth: 1,
       closed: false,
@@ -544,16 +457,16 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
     const childThread = await store.threads.threadById(child.thread_id);
     const grandchildThread = await store.threads.createChildThread(
       child.thread_id,
-      targetAgent.id,
+      parentAgent.id,
       owner.id,
       "Grandchild",
     );
     const grandchildRun = await makeRun({
-      agentId: targetAgent.id,
+      agentId: parentAgent.id,
       threadId: grandchildThread.id,
       depth: 2,
       parentRunId: child.run_id,
@@ -573,7 +486,7 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime({ canStopChat: () => false });
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
 
     const result = await cancel(context, { thread_id: child.thread_id });
     expect(result.cancelled).toBe(1);
@@ -586,15 +499,15 @@ dbDescribe("subagent tree tools", () => {
     const parentRun = await makeRun({ agentId: parentAgent.id, threadId: thread.id });
     const fake = fakeRuntime();
     const context = await contextFor({ thread, run: parentRun, fake });
-    const child = await spawn(context, { agent: targetAgent.name, task: "start" });
+    const child = await spawn(context, { task: "start" });
     const grandchildThread = await store.threads.createChildThread(
       child.thread_id,
-      targetAgent.id,
+      parentAgent.id,
       owner.id,
       "Grandchild",
     );
     await makeRun({
-      agentId: targetAgent.id,
+      agentId: parentAgent.id,
       threadId: grandchildThread.id,
       depth: 2,
       parentRunId: child.run_id,

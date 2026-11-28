@@ -4,9 +4,9 @@ This research note concerns the existing Agent Workspace and Thread concepts. [D
 
 ## Current Guild behavior
 
-An Agent has one Workspace. [Workspace resolution](../apps/server/src/agents/workspace.ts) keys its sandbox and directory by Org and Agent, not Thread. Two Threads using the same Agent therefore reach the same files. [Spawn](../apps/server/src/agents/subagents.ts) requires an explicit target Agent and creates a child Thread with that Agent's id; it does not create a new Agent or independent workspace automatically. A worker targeting a different Agent reaches that Agent's Workspace.
+An Agent has one Workspace. [Workspace resolution](../apps/server/src/agents/workspace.ts) keys its sandbox and directory by Org and Agent, not Thread. Two Threads using the same Agent therefore reach the same files. [Spawn](../apps/server/src/agents/subagents.ts) creates a child Thread in the parent Agent’s Workspace. The worker shares that Agent’s permissions and has its own transcript.
 
-[Workspace configuration](../apps/server/src/agents/workspace-config.ts) reads `AGENTS.md` and `MEMORY.md` from that directory, and [Turn tool composition](../apps/server/src/harness/turn-tools.ts) loads them for the target Agent. File and shell tools can write the Workspace when allowed. A worker is not inherently restricted to read-only memory.
+[Workspace configuration](../apps/server/src/agents/workspace-config.ts) reads `AGENTS.md` and `MEMORY.md` from that directory, and [Turn tool composition](../apps/server/src/harness/turn-tools.ts) loads them for the Thread’s Agent. File and shell tools can write the Workspace when allowed. A worker is not inherently restricted to read-only memory.
 
 The [conflict journal](../apps/server/src/agents/conflict.ts) records observed writes and warns overlapping concurrent Turns to re-read. Its hook never blocks a write, and shell-path detection is best-effort. It is a coordination aid, not locking, isolated copies, compare-and-swap or prevention of lost updates. Sharing a directory does not establish safe concurrent editing.
 
