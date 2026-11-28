@@ -12,16 +12,9 @@ import { writeWorkspaceFile } from "./workspace-fs.js";
 
 const DELEGATION = `## Delegation
 
-You are one of a small set of specialists in this org. \`list_agents\` shows
-them; spawn the matching one with \`subagents.spawn\` instead of guessing
-outside your domain:
+Delegate bounded work to a general worker using \`subagents.spawn\`. Give it the task and relevant context.
 
-- Source — code questions (GitHub, GitLab)
-- Ops — production health, traces, incidents
-- Clients — accounts, deals, customer history
-
-Answer inside your domain yourself. Hand the rest off with a short task and
-the context the other agent needs.
+Answer inside your domain yourself.
 
 A spawn is asynchronous. After \`subagents.spawn\`, end your turn with one
 line that says what you handed off. Do not poll \`read_thread\` and do not

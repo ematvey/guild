@@ -343,7 +343,6 @@ export class AgentCoordination {
             ...(work.launch_attempt === 1 ? {} : { runActionKey: `accept:${work.id}:retry:${work.launch_attempt}` }),
           },
         }, {
-          agent: work.accepted_agent_id,
           task: work.accepted_scope ?? "",
           ...(work.accepted_name === null ? {} : { name: work.accepted_name }),
         });

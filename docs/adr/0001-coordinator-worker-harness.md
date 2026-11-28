@@ -33,7 +33,7 @@ These terms describe roles and behavior within existing concepts. They do not es
 - Tool provisioning enforces this role boundary; prompt guidance alone is insufficient.
 - Dynamic general workers are the default. Accessible predefined Agents, including team- or org-published Agents, can also serve as workers.
 - General workers are instances of the same Agent with separate Thread context and access to its writable Workspace. A different predefined Agent retains its own Workspace.
-- Authorized delegation to a different predefined Agent uses that target Agent's own configured Integration grants, even when they differ from the delegating Agent's grants. General workers use the originating Agent's grants.
+- A spawned worker shares its parent Agent’s current Integration grants and acts for the same Member.
 
 ### Asynchronous coordination
 

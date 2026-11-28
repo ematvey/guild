@@ -37,7 +37,7 @@ export const BUILTIN_TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: "subagents",
     description: "Child agent threads you start, message, read, stop and close.",
-    tools: ["list_agents", "spawn", "send", "list", "read_thread", "cancel", "close"],
+    tools: ["spawn", "send", "list", "read_thread", "cancel", "close"],
   },
   {
     name: "conversations",

@@ -150,7 +150,7 @@ An admin reads the whole Org's usage, Runs, traces and Thread history, including
 | Admins writing into a Member's Thread | Reading is oversight; writing would put words in someone else's conversation |
 | Admins seeing personal Agents | A personal Agent is the Member's private assistant, so admins get a 404 |
 | Linking an OIDC login to a password account by email | An email match is not proof of ownership |
-| Passing credentials to a child Run | A child acts for the same Member under its own Agent's allowlist. Nothing is handed down |
+| Passing credentials to a child Run | A spawned worker acts for the same Member under the parent Agent’s current allowlist. Credentials stay at the tool boundary |
 | Account impersonation by a shared Agent | Shared Agents have no account binding contract; the acting-scope setting cannot enable impersonation |
 | Guild-side argument filters (repo, channel or pipeline allowlists) | Per vendor, easy to get wrong, and the raw `api` tool goes around them. The vendor token is the scope |
 | Blocking a request on the IdP recheck | An IdP outage would become a Guild outage |

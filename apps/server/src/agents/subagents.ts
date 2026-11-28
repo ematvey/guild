@@ -73,36 +73,6 @@ export class SubagentError extends Error {
   }
 }
 
-/** Resolves a spawn reference (an agent id or name) among the agents the
- *  requester can see. A name several visible agents share resolves to the
- *  requester's own agent when there is one, and is otherwise ambiguous. */
-export async function resolveSpawnTarget(store: AgentStore, requester: UserRow, reference: string): Promise<Agent> {
-  const ref = reference.trim();
-  if (ref === "") throw new SubagentError("invalid_target", "agent must not be empty");
-  const candidates = await store.findVisible(requester, ref);
-  const own = candidates.filter((agent) => agent.owner_user_id === requester.id);
-  const pick = candidates.length === 1 ? candidates[0] : own.length === 1 ? own[0] : undefined;
-  if (pick === undefined && candidates.length > 1) {
-    throw new SubagentError(
-      "ambiguous_target",
-      "several agents have this name; call list_agents and pass the agent's id",
-    );
-  }
-  if (pick === undefined) {
-    throw new SubagentError(
-      "target_not_found",
-      "no such agent in this organization; call list_agents first to see the agents you can use",
-    );
-  }
-  if (pick.status !== "active") {
-    throw new SubagentError(
-      "target_unavailable",
-      "target agent is not active; call list_agents first to see the agents you can use",
-    );
-  }
-  return pick;
-}
-
 /** The reads that resolve a run's owner. */
 export interface RequesterReads {
   chats: Pick<ChatStore, "ownerOf">;
@@ -115,22 +85,6 @@ export async function requesterForChat(reads: RequesterReads, chatId: string): P
   const owner = await reads.chats.ownerOf(chatId);
   if (owner === null) return null;
   return reads.identity.getUser(owner.user_id).catch(() => null);
-}
-
-/** Resolves the target agent and checks that the requester may use it. */
-export async function authorizeSpawn(args: {
-  pool: PlatformPool;
-  store: AgentStore;
-  agent: Agent;
-  requester: UserRow;
-  targetRef: string;
-}): Promise<Agent> {
-  const target = await resolveSpawnTarget(args.store, args.requester, args.targetRef);
-  const access = await args.store.access(args.requester, target);
-  if (!access.can_use) {
-    throw new SubagentError("forbidden", "the requester cannot use the target agent");
-  }
-  return target;
 }
 
 /** The caller's own thread id; spawn and the tree tools need the node. */
@@ -177,13 +131,6 @@ export interface SendResult {
   title: string;
   agent_name: string;
   status: "running";
-}
-
-export interface AgentDirectoryEntry {
-  id: string;
-  name: string;
-  description: string;
-  personal: boolean;
 }
 
 export interface ChildListEntry {
@@ -249,7 +196,7 @@ async function startDelegatedRun(
  *  returns immediately. It never waits for the child and copies no files. */
 export async function spawn(
   context: SubagentsToolContext,
-  args: { agent: string; task: string; name?: string },
+  args: { task: string; name?: string },
 ): Promise<SpawnResult> {
   const task = args.task.trim();
   if (task === "") throw new SubagentError("invalid_task", "task must not be empty");
@@ -274,13 +221,8 @@ export async function spawn(
       `this thread already has ${children} children; the limit is ${context.maxChildrenPerNode} per thread`,
     );
   }
-  const target = await authorizeSpawn({
-    pool: context.pool,
-    store: context.store,
-    agent: context.agent,
-    requester: context.requester,
-    targetRef: args.agent,
-  });
+  const { agent: target } = await context.store.requireAccess(context.requester, parentThread.agent_id, "use");
+  if (target.status !== "active") throw new SubagentError("target_unavailable", "the parent agent is not active");
   // The spawner names the session; without one the task's first line is the
   // fallback label. The title is locked when the spawner chose it.
   const title = requestedName === "" ? `Spawned: ${task.split(/\r?\n/)[0]!.slice(0, 80)}` : requestedName;
@@ -378,22 +320,6 @@ export async function send(
     agent_name: target.name,
     status: "running",
   };
-}
-
-/** The directory the caller's user may use: every non-personal agent visible
- *  to that user plus their own personal agent, sorted by name. */
-export async function listAgents(context: SubagentsToolContext): Promise<AgentDirectoryEntry[]> {
-  const agents = (await context.store.list(context.requester)).filter(
-    (agent) => !agent.is_personal || agent.owner_user_id === context.requester.id,
-  );
-  return agents
-    .map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      personal: agent.is_personal,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Bounded excerpt of a descendant thread, same limits as
@@ -560,17 +486,6 @@ const sendOutput = Type.Object({
   status: Type.String(),
 });
 
-const directoryOutput = Type.Object({
-  agents: Type.Array(
-    Type.Object({
-      id: Type.String(),
-      name: Type.String(),
-      description: Type.String(),
-      personal: Type.Boolean(),
-    }),
-  ),
-});
-
 const readOutput = Type.Object({
   thread_id: Type.String(),
   thread_title: Type.String(),
@@ -618,15 +533,13 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
     defineTool({
       name: "spawn",
       description:
-        "Spawn a child agent thread and post its first task. Give the session a short `name`: it labels the row the " +
+        "Spawn a general worker using this thread’s agent and permissions. Give the session a short `name`: it labels the row the " +
         "user sees and the child thread itself, so several children stay distinguishable. Returns the child thread, " +
         "run and chat ids at once; the child reports back by ending its turn. Do not wait or poll for the child, " +
         "and do not sleep. Read it with read_thread only when you need its progress for a decision. Continue your " +
         "own work or end your turn; the result arrives as a new message. Depth and child count limits come from the " +
-        "deployment config. Call list_agents first when the target is uncertain; each entry's description says what " +
-        "that agent is for.",
+        "deployment config.",
       parameters: Type.Object({
-        agent: Type.String({ description: "Target agent id or exact name within this organization" }),
         name: Type.Optional(
           Type.String({
             description: `Short session name the row and the child thread show, at most ${MAX_CHILD_NAME_CHARS} characters`,
@@ -661,24 +574,6 @@ export function createSubagentTools(context: SubagentsToolContext): ToolRegistra
       execute: async (args) => {
         try {
           return { structuredOutput: structured(await send(context, args)) };
-        } catch (error) {
-          return errorResult(error);
-        }
-      },
-    }),
-    defineTool({
-      name: "list_agents",
-      description:
-        "List the agents you may spawn by name: every non-personal agent visible to your user plus your own " +
-        "personal agent. Each entry carries id, name, description and the personal flag.",
-      parameters: Type.Object({}),
-      structuredOutputSchema: directoryOutput,
-      replay: "safe",
-      callers: ["tools"],
-      outputLimits: { maxBytes: 32 * 1024 },
-      execute: async () => {
-        try {
-          return { structuredOutput: structured({ agents: await listAgents(context) }) };
         } catch (error) {
           return errorResult(error);
         }
